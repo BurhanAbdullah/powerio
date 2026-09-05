@@ -2,12 +2,12 @@
 //!
 //! These checks sit deliberately below parsers and above numerical consumers:
 //! they answer whether a [`MulticonductorNetwork`] is structurally safe to hand
-//! to a solver, transformer, or writer.  In particular, a missing linecode is
+//! to a solver, transformer, or writer. In particular, a missing linecode is
 //! an electrical blocker, not a request to synthesize impedance data.
 
 use std::collections::HashMap;
 
-use crate::{ConductorMatrix, MulticonductorNetwork};
+use crate::{Mat, MulticonductorNetwork};
 
 /// Severity of an electrical-readiness finding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,6 +48,15 @@ impl ElectricalReadiness {
             .filter(|finding| finding.severity == ReadinessSeverity::Error)
             .count()
     }
+
+    fn error(&mut self, code: &'static str, path: impl Into<String>, message: impl Into<String>) {
+        self.findings.push(ReadinessFinding {
+            severity: ReadinessSeverity::Error,
+            code,
+            path: path.into(),
+            message: message.into(),
+        });
+    }
 }
 
 /// Audit a distribution model before an operation that requires electrically
@@ -68,8 +77,8 @@ pub fn check_electrical_readiness(net: &MulticonductorNetwork) -> ElectricalRead
         );
     }
 
-    let buses = unique_ids(net.buses().iter().map(|bus| bus.id.as_str()), |id| id);
-    for duplicate in buses.duplicates {
+    let buses = unique_ids(net.buses().iter().map(|bus| bus.id.as_str()));
+    for duplicate in buses {
         result.error(
             "MODEL.DUPLICATE_BUS_ID",
             "/buses",
@@ -77,8 +86,8 @@ pub fn check_electrical_readiness(net: &MulticonductorNetwork) -> ElectricalRead
         );
     }
 
-    let linecodes = unique_ids(net.line_codes().iter().map(|code| code.name.as_str()), |id| id);
-    for duplicate in linecodes.duplicates {
+    let linecodes = unique_ids(net.line_codes().iter().map(|code| code.name.as_str()));
+    for duplicate in linecodes {
         result.error(
             "MODEL.DUPLICATE_LINECODE_ID",
             "/linecodes",
@@ -111,13 +120,29 @@ pub fn check_electrical_readiness(net: &MulticonductorNetwork) -> ElectricalRead
             result.error(
                 "LINE.UNRESOLVED_LINECODE",
                 format!("{path}/linecode"),
-                format!("linecode '{}' is not defined; electrical defaults are not synthesized", line.linecode),
+                format!(
+                    "linecode '{}' is not defined; electrical defaults are not synthesized",
+                    line.linecode
+                ),
             );
             continue;
         };
 
-        check_matrix(&mut result, &format!("{path}/linecode/{}", code.name), code.n_conductors, &code.r_series, "r_series");
-        check_matrix(&mut result, &format!("{path}/linecode/{}", code.name), code.n_conductors, &code.x_series, "x_series");
+        let code_path = format!("{path}/linecode/{}", code.name);
+        check_matrix(
+            &mut result,
+            &code_path,
+            code.n_conductors,
+            &code.r_series,
+            "r_series",
+        );
+        check_matrix(
+            &mut result,
+            &code_path,
+            code.n_conductors,
+            &code.x_series,
+            "x_series",
+        );
 
         check_terminal_map(
             &mut result,
@@ -191,7 +216,7 @@ fn check_matrix(
     result: &mut ElectricalReadiness,
     path: &str,
     expected: usize,
-    matrix: &ConductorMatrix,
+    matrix: &Mat,
     field: &str,
 ) {
     if matrix.len() != expected || matrix.iter().any(|row| row.len() != expected) {
@@ -210,39 +235,23 @@ fn check_matrix(
     }
 }
 
-struct UniqueIds {
-    duplicates: Vec<String>,
-}
-
-fn unique_ids<'a, I, F>(ids: I, key: F) -> UniqueIds
+fn unique_ids<'a, I>(ids: I) -> Vec<String>
 where
     I: IntoIterator<Item = &'a str>,
-    F: Fn(&str) -> &str,
 {
     let mut seen = HashMap::<String, String>::new();
     let mut duplicates = Vec::new();
     for id in ids {
-        let folded = fold(key(id));
+        let folded = fold(id);
         if seen.insert(folded, id.to_owned()).is_some() {
             duplicates.push(id.to_owned());
         }
     }
-    UniqueIds { duplicates }
+    duplicates
 }
 
 fn fold(value: &str) -> String {
     value.to_ascii_lowercase()
-}
-
-impl ElectricalReadiness {
-    fn error(&mut self, code: &'static str, path: impl Into<String>, message: impl Into<String>) {
-        self.findings.push(ReadinessFinding {
-            severity: ReadinessSeverity::Error,
-            code,
-            path: path.into(),
-            message: message.into(),
-        });
-    }
 }
 
 #[cfg(test)]
@@ -262,8 +271,16 @@ mod tests {
         ));
         net.line_codes_mut().push(DistLineCode::new(
             "lc",
-            vec![vec![0.1, 0.01, 0.01], vec![0.01, 0.1, 0.01], vec![0.01, 0.01, 0.1]],
-            vec![vec![0.2, 0.02, 0.02], vec![0.02, 0.2, 0.02], vec![0.02, 0.02, 0.2]],
+            vec![
+                vec![0.1, 0.01, 0.01],
+                vec![0.01, 0.1, 0.01],
+                vec![0.01, 0.01, 0.1],
+            ],
+            vec![
+                vec![0.2, 0.02, 0.02],
+                vec![0.02, 0.2, 0.02],
+                vec![0.02, 0.02, 0.2],
+            ],
         ));
         net.lines_mut().push(DistLine::new(
             "l1",
@@ -288,7 +305,10 @@ mod tests {
         net.lines_mut()[0].linecode = "missing".into();
         let report = check_electrical_readiness(&net);
         assert!(!report.is_ready());
-        assert!(report.findings.iter().any(|f| f.code == "LINE.UNRESOLVED_LINECODE"));
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.code == "LINE.UNRESOLVED_LINECODE"));
     }
 
     #[test]
@@ -297,7 +317,10 @@ mod tests {
         net.lines_mut()[0].terminal_map_to[0] = "99".into();
         let report = check_electrical_readiness(&net);
         assert!(!report.is_ready());
-        assert!(report.findings.iter().any(|f| f.code == "LINE.UNKNOWN_TERMINAL"));
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.code == "LINE.UNKNOWN_TERMINAL"));
     }
 
     #[test]
@@ -306,6 +329,9 @@ mod tests {
         net.line_codes_mut()[0].x_series[0].pop();
         let report = check_electrical_readiness(&net);
         assert!(!report.is_ready());
-        assert!(report.findings.iter().any(|f| f.code == "LINECODE.MATRIX_SHAPE"));
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.code == "LINECODE.MATRIX_SHAPE"));
     }
 }
