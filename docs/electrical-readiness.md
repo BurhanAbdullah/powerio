@@ -1,6 +1,6 @@
 # Electrical readiness contract
 
-`powerio_dist::check_electrical_readiness` is a fail-closed structural gate for multiconductor distribution models.
+`powerio_dist::check_electrical_readiness` is the fail-closed structural gate for multiconductor distribution models.
 
 The purpose is not to replace a numerical solver. It answers a narrower question first:
 
