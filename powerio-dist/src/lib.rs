@@ -49,8 +49,9 @@ pub mod error;
 pub mod geo;
 pub mod graph;
 pub mod model;
-pub(crate) mod nonfinite;
+pub mod nonfinite;
 pub mod pmd;
+pub mod readiness;
 #[cfg(test)]
 pub(crate) mod testkit;
 
@@ -79,3 +80,4 @@ pub use model::{
     UntypedObject, VoltVarControl, VoltWattControl, VoltageSource, unresolved_references,
 };
 pub use pmd::write_pmd_json;
+pub use readiness::{ElectricalReadiness, ReadinessFinding, ReadinessSeverity, check_electrical_readiness};
