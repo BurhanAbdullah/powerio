@@ -322,6 +322,24 @@ def test_matrix_tool_serves_the_dc_calculations_by_name():
     assert injection["row_ids"] == incidence["col_ids"]
 
 
+def test_matrix_tool_rejects_skip_zero_impedance_where_it_would_be_ignored():
+    for name in ("ptdf", "lodf"):
+        with pytest.raises(ValueError, match="does not take skip_zero_impedance"):
+            server.calc_matrix(
+                name, path=str(DATA / "case9.m"), skip_zero_impedance=True
+            )
+    # The message names the DC calculations that do take it.
+    with pytest.raises(ValueError, match="bus_phase_shift_injection"):
+        server.calc_matrix(
+            "ptdf", path=str(DATA / "case9.m"), skip_zero_impedance=True
+        )
+    # The flag still reaches the calculations that accept it.
+    incidence = server.calc_matrix(
+        "incidence", path=str(DATA / "case9.m"), skip_zero_impedance=True
+    )
+    assert incidence["skip_zero_impedance"] is True
+
+
 def test_matrix_tool_computes_over_an_operating_point_entry(time_series_powerio_ir):
     matrix = server.calc_matrix(
         "bprime", powerio_ir=time_series_powerio_ir, time_index=1

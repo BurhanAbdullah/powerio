@@ -109,10 +109,15 @@ You address a collection entry with a plain zero based `time_index` or a
 `scenario_id`; no tool exports or expands an entry into a static network.
 `calc_matrix` names both axes of every result: `row_ids` and `col_ids` carry
 bus ids or branch identities, `skipped_branch_rows` lists the zero impedance
-branches dropped under `skip_zero_impedance`, and the eight DC calculations
-(`incidence`, `branch_susceptances`, `bus_susceptance`, `branch_flow`,
-`branch_phase_shift_injection`, `bus_phase_shift_injection`) join the matrix
-names, a vector coming back as `{"format": "vector", "data": [...]}`.
+branches dropped under `skip_zero_impedance`, and six of the eight DC
+calculations (`incidence`, `branch_susceptances`, `bus_susceptance`,
+`branch_flow`, `branch_phase_shift_injection`, `bus_phase_shift_injection`)
+join the matrix names, a vector coming back as
+`{"format": "vector", "data": [...]}`. The other two, `branch_flow_dc` and
+`bus_injection_dc`, need voltage angles and are not matrix names. Those six
+take `skip_zero_impedance`, as do `bprime`, `bdoubleprime`, `admittance_real`,
+`admittance_imag`, and `lacpf`; `ptdf` and `lodf` reject it rather than
+ignoring it.
 `emit(format, destination)` writes a file or directory, and if you omit
 `destination` it returns the artifacts in memory. Diagnostics stay structured
 records with code, severity, message, target, and source spans.

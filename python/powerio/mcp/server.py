@@ -63,8 +63,29 @@ _MATRIX_AXES = {
     "bus_phase_shift_injection": ("bus", None),
 }
 _MATRIX_HELP = ", ".join(sorted(_MATRIX_NAMES))
+# The DC calculations `calc_matrix` reaches that take `skip_zero_impedance`.
+# `calc_branch_flow_dc` and `calc_bus_injection_dc` also take it but need
+# voltage angles, so they are not matrix names. `ptdf` and `lodf` factor the
+# reference grounded DC matrix and have no such option.
+_SKIP_ZERO_IMPEDANCE_DC_NAMES = (
+    "incidence",
+    "branch_susceptances",
+    "bus_susceptance",
+    "branch_flow",
+    "branch_phase_shift_injection",
+    "bus_phase_shift_injection",
+)
+_SKIP_ZERO_IMPEDANCE_DC_HELP = ", ".join(_SKIP_ZERO_IMPEDANCE_DC_NAMES)
 _MATRIX_KIND_FIELD = Field(
     json_schema_extra=cast(Any, {"enum": sorted(_MATRIX_NAMES)})
+)
+_SKIP_ZERO_IMPEDANCE_FIELD = Field(
+    description=(
+        "Drop zero impedance branches instead of failing the build. Six DC "
+        f"calculations take it ({_SKIP_ZERO_IMPEDANCE_DC_HELP}), as do "
+        "bprime, bdoubleprime, admittance_real, admittance_imag and lacpf. "
+        "ptdf and lodf reject it."
+    )
 )
 _Scheme = Literal["bx", "xb"]
 _BranchSusceptanceFormula = Literal[
@@ -496,6 +517,13 @@ def _matrix_impl(
     canonical = matrix.lower()
     if canonical not in _MATRIX_NAMES:
         raise ValueError(f"unknown matrix {matrix!r}; expected one of: {_MATRIX_HELP}")
+    # The sensitivity solves have no such option, so the flag would be echoed
+    # back in the payload while the result ignored it.
+    if skip_zero_impedance and canonical in ("ptdf", "lodf"):
+        raise ValueError(
+            f"{canonical} does not take skip_zero_impedance; the DC "
+            f"calculations that do are: {_SKIP_ZERO_IMPEDANCE_DC_HELP}"
+        )
     module = _load_module(
         path=path, content=content, powerio_ir=powerio_ir, format=format
     )
@@ -715,7 +743,7 @@ def _calc_matrix_tool(
     scenario_id: Optional[str] = None,
     scheme: _Scheme = "bx",
     formula: _BranchSusceptanceFormula = "series_susceptance",
-    skip_zero_impedance: bool = False,
+    skip_zero_impedance: Annotated[bool, _SKIP_ZERO_IMPEDANCE_FIELD] = False,
 ) -> dict:
     return _matrix_impl(
         matrix,
