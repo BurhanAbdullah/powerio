@@ -274,7 +274,7 @@ fn operating_point_data_omitted(format: &str) -> Diagnostic {
     )
 }
 
-fn network_with_balanced_operating_point(
+pub(crate) fn network_with_balanced_operating_point(
     point: &OperatingPoint<BalancedNetwork>,
     format: &str,
 ) -> (BalancedNetwork, Vec<Diagnostic>) {

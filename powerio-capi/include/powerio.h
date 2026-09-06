@@ -38,6 +38,7 @@ typedef struct PioArtifact PioArtifact;
 typedef struct PioActivePower PioActivePower;
 typedef struct PioAcOpfPreparation PioAcOpfPreparation;
 typedef struct PioDcOpfPreparation PioDcOpfPreparation;
+typedef struct PioDcOperators PioDcOperators;
 typedef struct PioApparentPower PioApparentPower;
 typedef struct PioBalancedNetwork PioBalancedNetwork;
 typedef struct PioCalculationUpdate PioCalculationUpdate;
@@ -4221,6 +4222,113 @@ PioVector *pio_ac_scuc_solution_get_values_at(const PioCalculationSolution *solu
                                               size_t quantity_len,
                                               size_t time_index,
                                               PioError **error);
+
+/**
+ * Build the DC operators of a balanced network once. `formula` selects the
+ * branch susceptance as in `pio_calc_incidence_matrix`; NULL means
+ * `series_susceptance`. With `skip_zero_impedance` false a zero impedance
+ * branch fails the build with `BUILD.OPERATOR.ZERO_IMPEDANCE`; with it true
+ * the branch is dropped from the branch axis and reported by
+ * `pio_dc_operators_skipped_branch_rows`. The bus axis is every bus in table
+ * order; the branch axis is every in service, non self loop branch in table
+ * order, followed by three winding transformer windings, less any skipped
+ * branch. Release with `pio_dc_operators_release`.
+ */
+PioDcOperators *pio_calc_dc_operators(const PioBalancedNetwork *network,
+                                      const char *formula,
+                                      size_t formula_len,
+                                      bool skip_zero_impedance,
+                                      PioError **error);
+
+/**
+ * The length of the bus axis.
+ */
+size_t pio_dc_operators_n_buses(const PioDcOperators *operators);
+
+/**
+ * The length of the branch axis.
+ */
+size_t pio_dc_operators_n_branches(const PioDcOperators *operators);
+
+/**
+ * Bus axis row to source bus id. Borrowed from the handle.
+ */
+PioSizeView pio_dc_operators_bus_ids(const PioDcOperators *operators);
+
+/**
+ * Branch axis row to the analysis branch row it represents: the position in
+ * the network's branch table, with three winding transformer windings after
+ * the branches. Borrowed from the handle.
+ */
+PioSizeView pio_dc_operators_branch_rows(const PioDcOperators *operators);
+
+/**
+ * Analysis branch rows dropped under `skip_zero_impedance`, in table order.
+ * Borrowed from the handle.
+ */
+PioSizeView pio_dc_operators_skipped_branch_rows(const PioDcOperators *operators);
+
+/**
+ * The stable identity of branch axis row `index`: the source uid when one
+ * exists, else `branches:<row>`. An index past the branch axis returns an
+ * empty view. Borrowed from the handle.
+ */
+PioStringView pio_dc_operators_branch_identity(const PioDcOperators *operators, size_t index);
+
+/**
+ * The incidence matrix `A`, branches by buses, over the handle's axes.
+ */
+PioSparseMatrix *pio_dc_operators_incidence_matrix(const PioDcOperators *operators,
+                                                   PioError **error);
+
+/**
+ * The bus susceptance matrix `B = A' diag(b) A`, buses by buses.
+ */
+PioSparseMatrix *pio_dc_operators_bus_susceptance_matrix(const PioDcOperators *operators,
+                                                         PioError **error);
+
+/**
+ * The branch flow matrix `Bf = diag(b) A`, branches by buses.
+ */
+PioSparseMatrix *pio_dc_operators_branch_flow_matrix(const PioDcOperators *operators,
+                                                     PioError **error);
+
+/**
+ * The per branch susceptances `b` over the branch axis.
+ */
+PioVector *pio_dc_operators_branch_susceptances(const PioDcOperators *operators, PioError **error);
+
+/**
+ * The per branch phase shift injection `b .* shift`.
+ */
+PioVector *pio_dc_operators_branch_phase_shift_injection(const PioDcOperators *operators,
+                                                         PioError **error);
+
+/**
+ * The per bus phase shift injection `A' (b .* shift)`.
+ */
+PioVector *pio_dc_operators_bus_phase_shift_injection(const PioDcOperators *operators,
+                                                      PioError **error);
+
+/**
+ * DC branch flows for bus voltage angles in radians over the bus axis.
+ */
+PioVector *pio_dc_operators_branch_flow_dc(const PioDcOperators *operators,
+                                           const double *voltage_angles,
+                                           size_t voltage_angles_len,
+                                           PioError **error);
+
+/**
+ * DC bus injections for bus voltage angles in radians over the bus axis.
+ */
+PioVector *pio_dc_operators_bus_injection_dc(const PioDcOperators *operators,
+                                             const double *voltage_angles,
+                                             size_t voltage_angles_len,
+                                             PioError **error);
+
+PioDcOperators *pio_dc_operators_retain(const PioDcOperators *operators);
+
+void pio_dc_operators_release(PioDcOperators *operators);
 
 PioSparseMatrix *pio_calc_incidence_matrix(const PioBalancedNetwork *network,
                                            const char *formula,

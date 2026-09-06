@@ -129,10 +129,9 @@ def test_collection_summary_uses_normal_indexing_without_conversion(
     assert selected["selection"] == {"time_index": 1}
     assert selected["value_type"] == "OperatingPoint"
     assert "elements" not in selected
+    assert selected["network"]["elements"]["buses"] == 9
     with pytest.raises(ValueError, match="BalancedNetwork"):
-        server.calc_matrix(
-            "bprime", powerio_ir=time_series_powerio_ir, time_index=1
-        )
+        server.calc_matrix("bprime", powerio_ir=time_series_powerio_ir)
 
 
 def test_collection_selector_refuses_the_wrong_collection_operation(
@@ -284,3 +283,51 @@ def test_public_module_has_no_removed_mcp_callables():
         "save",
     ):
         assert not hasattr(server, name)
+
+
+def test_matrix_response_names_every_axis():
+    bprime = server.calc_matrix("bprime", path=str(DATA / "case9.m"))
+    assert bprime["row_ids"] == bprime["col_ids"]
+    assert len(bprime["row_ids"]) == 9
+    assert bprime["skipped_branch_rows"] == []
+    assert bprime["skip_zero_impedance"] is False
+
+    ptdf = server.calc_matrix("ptdf", path=str(DATA / "case9.m"))
+    assert ptdf["shape"] == [len(ptdf["row_ids"]), len(ptdf["col_ids"])]
+    assert all(isinstance(identity, str) for identity in ptdf["row_ids"])
+    assert ptdf["col_ids"] == bprime["col_ids"]
+
+    lacpf = server.calc_matrix("lacpf", path=str(DATA / "case9.m"))
+    assert len(lacpf["row_ids"]) == 18
+    assert lacpf["row_ids"][0].endswith(":va") and lacpf["row_ids"][9].endswith(":vm")
+
+
+def test_matrix_tool_serves_the_dc_calculations_by_name():
+    incidence = server.calc_matrix("incidence", path=str(DATA / "case9.m"))
+    assert incidence["format"] == "coo"
+    assert incidence["shape"] == [9, 9]
+    assert incidence["row_ids"] != incidence["col_ids"]
+
+    susceptances = server.calc_matrix("branch_susceptances", path=str(DATA / "case9.m"))
+    assert susceptances["format"] == "vector"
+    assert susceptances["shape"] == [9]
+    assert len(susceptances["data"]) == 9
+    assert susceptances["row_ids"] == incidence["row_ids"]
+    assert "col_ids" not in susceptances
+
+    injection = server.calc_matrix(
+        "bus_phase_shift_injection", path=str(DATA / "case9.m"), formula="reactance_only"
+    )
+    assert injection["formula"] == "reactance_only"
+    assert injection["row_ids"] == incidence["col_ids"]
+
+
+def test_matrix_tool_computes_over_an_operating_point_entry(time_series_powerio_ir):
+    matrix = server.calc_matrix(
+        "bprime", powerio_ir=time_series_powerio_ir, time_index=1
+    )
+    assert matrix["selection"] == {"time_index": 1}
+    assert matrix["shape"] == [9, 9]
+    summary = server.summarize(powerio_ir=time_series_powerio_ir, time_index=1)
+    assert summary["value_type"] == "OperatingPoint"
+    assert summary["network"]["elements"]["buses"] == 9

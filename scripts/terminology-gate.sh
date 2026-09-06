@@ -8,6 +8,7 @@ public_paths=(
   CONTRIBUTING.md
   AGENTS.md
   docs/release-notes/0.11.0-draft.md
+  docs/release-notes/0.11.1-draft.md
   docs/src
   python/powerio
   powerio/README.md

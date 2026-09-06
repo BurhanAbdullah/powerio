@@ -191,8 +191,8 @@ pub use ir::generate_ir_schema;
 pub use ir::{deserialize, serialize, serialize_diagnostics};
 pub mod transform;
 pub use transform::{
-    apply_geo_layer, to_ac_opf_instance, to_ac_pf_instance, to_dc_opf_instance, to_dc_pf_instance,
-    to_mc_ac_opf_instance, to_mc_ac_pf_instance,
+    apply_geo_layer, network_with_operating_point, to_ac_opf_instance, to_ac_pf_instance,
+    to_dc_opf_instance, to_dc_pf_instance, to_mc_ac_opf_instance, to_mc_ac_pf_instance,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
