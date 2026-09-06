@@ -20355,6 +20355,156 @@ mod tests {
         }
     }
 
+    /// Three buses and two branches; branch row 0 states r = x = 0.
+    const ZERO_IMPEDANCE_CASE: &str = "\
+function mpc = case3_zero_impedance
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+  1 3  0 0 0 0 1 1 0 230 1 1.1 0.9;
+  2 1 50 0 0 0 1 1 0 230 1 1.1 0.9;
+  3 1 50 0 0 0 1 1 0 230 1 1.1 0.9;
+];
+mpc.gen = [
+  1 100 0 100 -100 1 100 1 200 0;
+];
+mpc.branch = [
+  1 2 0 0    0.02 100 100 100 0 0 1 -60 60;
+  2 3 0 0.1  0    100 100 100 0 0 1 -60 60;
+];
+mpc.gencost = [
+  2 0 0 3 0.01 10 0;
+];
+";
+
+    #[test]
+    fn dc_operators_handle_names_its_axes_and_skips_a_zero_impedance_branch() {
+        unsafe {
+            let name = b"zero.m";
+            let format = b"matpower";
+            let mut error = std::ptr::null_mut();
+            let source = pio_source_from_memory(
+                name.as_ptr().cast(),
+                name.len(),
+                ZERO_IMPEDANCE_CASE.as_ptr(),
+                ZERO_IMPEDANCE_CASE.len(),
+                &mut error,
+            );
+            assert!(!source.is_null(), "{}", error_text(error));
+            let module = pio_parse(source, format.as_ptr().cast(), format.len(), &mut error);
+            pio_source_release(source);
+            assert!(!module.is_null(), "{}", error_text(error));
+            let value = pio_module_value(module);
+            let network = pio_value_balanced_network(value, &mut error);
+            assert!(!network.is_null(), "{}", error_text(error));
+
+            // The zero impedance branch fails the build unless it is skipped.
+            let refused = pio_calc_dc_operators(network, std::ptr::null(), 0, false, &mut error);
+            assert!(refused.is_null());
+            assert_eq!(
+                view_text(pio_error_code(error)),
+                "BUILD.OPERATOR.ZERO_IMPEDANCE"
+            );
+            pio_error_release(error);
+            error = std::ptr::null_mut();
+
+            let operators = pio_calc_dc_operators(network, std::ptr::null(), 0, true, &mut error);
+            assert!(!operators.is_null(), "{}", error_text(error));
+            assert_eq!(pio_dc_operators_n_buses(operators), 3);
+            assert_eq!(pio_dc_operators_n_branches(operators), 1);
+
+            let bus_ids = pio_dc_operators_bus_ids(operators);
+            assert_eq!(
+                std::slice::from_raw_parts(bus_ids.data, bus_ids.len),
+                &[1, 2, 3]
+            );
+            // Original table indices: branch row 0 left the axis.
+            let branch_rows = pio_dc_operators_branch_rows(operators);
+            assert_eq!(
+                std::slice::from_raw_parts(branch_rows.data, branch_rows.len),
+                &[1]
+            );
+            let skipped = pio_dc_operators_skipped_branch_rows(operators);
+            assert_eq!(std::slice::from_raw_parts(skipped.data, skipped.len), &[0]);
+            assert!(!view_text(pio_dc_operators_branch_identity(operators, 0)).is_empty());
+            let past_end = pio_dc_operators_branch_identity(operators, 1);
+            assert!(past_end.data.is_null());
+            assert_eq!(past_end.len, 0);
+
+            let incidence = pio_dc_operators_incidence_matrix(operators, &mut error);
+            assert!(!incidence.is_null(), "{}", error_text(error));
+            assert_eq!(pio_sparse_matrix_rows(incidence), 1);
+            assert_eq!(pio_sparse_matrix_columns(incidence), 3);
+
+            let bus_susceptance = pio_dc_operators_bus_susceptance_matrix(operators, &mut error);
+            assert!(!bus_susceptance.is_null(), "{}", error_text(error));
+            assert_eq!(pio_sparse_matrix_rows(bus_susceptance), 3);
+            assert_eq!(pio_sparse_matrix_columns(bus_susceptance), 3);
+
+            let branch_flow = pio_dc_operators_branch_flow_matrix(operators, &mut error);
+            assert!(!branch_flow.is_null(), "{}", error_text(error));
+            assert_eq!(pio_sparse_matrix_rows(branch_flow), 1);
+            assert_eq!(pio_sparse_matrix_columns(branch_flow), 3);
+
+            let susceptances = pio_dc_operators_branch_susceptances(operators, &mut error);
+            assert!(!susceptances.is_null(), "{}", error_text(error));
+            assert_eq!(pio_vector_values(susceptances).len, 1);
+
+            let branch_shift = pio_dc_operators_branch_phase_shift_injection(operators, &mut error);
+            assert!(!branch_shift.is_null(), "{}", error_text(error));
+            assert_eq!(pio_vector_values(branch_shift).len, 1);
+
+            let bus_shift = pio_dc_operators_bus_phase_shift_injection(operators, &mut error);
+            assert!(!bus_shift.is_null(), "{}", error_text(error));
+            assert_eq!(pio_vector_values(bus_shift).len, 3);
+
+            let angles = [0.0_f64, 0.0, 0.1];
+            let flows = pio_dc_operators_branch_flow_dc(
+                operators,
+                angles.as_ptr(),
+                angles.len(),
+                &mut error,
+            );
+            assert!(!flows.is_null(), "{}", error_text(error));
+            assert_eq!(pio_vector_values(flows).len, 1);
+
+            let injections = pio_dc_operators_bus_injection_dc(
+                operators,
+                angles.as_ptr(),
+                angles.len(),
+                &mut error,
+            );
+            assert!(!injections.is_null(), "{}", error_text(error));
+            assert_eq!(pio_vector_values(injections).len, 3);
+
+            // A retained handle names the same axes and outlives one release.
+            let retained = pio_dc_operators_retain(operators);
+            assert!(!retained.is_null());
+            pio_dc_operators_release(retained);
+            assert_eq!(pio_dc_operators_n_branches(operators), 1);
+
+            // A NULL handle reads as an empty axis rather than faulting.
+            assert_eq!(pio_dc_operators_n_buses(std::ptr::null()), 0);
+            assert_eq!(pio_dc_operators_n_branches(std::ptr::null()), 0);
+            let empty = pio_dc_operators_bus_ids(std::ptr::null());
+            assert!(empty.data.is_null());
+            assert_eq!(empty.len, 0);
+
+            pio_vector_release(injections);
+            pio_vector_release(flows);
+            pio_vector_release(bus_shift);
+            pio_vector_release(branch_shift);
+            pio_vector_release(susceptances);
+            pio_sparse_matrix_release(branch_flow);
+            pio_sparse_matrix_release(bus_susceptance);
+            pio_sparse_matrix_release(incidence);
+            pio_dc_operators_release(operators);
+            pio_balanced_network_release(network);
+            pio_value_release(value);
+            pio_module_release(module);
+        }
+    }
+
     #[test]
     fn powerio_ir_uses_serialize_and_deserialize() {
         unsafe {

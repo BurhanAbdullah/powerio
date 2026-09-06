@@ -145,6 +145,27 @@ int main(int argc, char **argv) {
         pio_sparse_matrix_release(incidence);
     }
 
+    PioDcOperators *operators = pio_calc_dc_operators(network, NULL, 0, false, &error);
+    if (operators == NULL) {
+        report_error("pio_calc_dc_operators", error);
+    } else {
+        CHECK(pio_dc_operators_n_buses(operators) == buses, "DC bus axis");
+        CHECK(pio_dc_operators_n_branches(operators) == branches, "DC branch axis");
+        CHECK(pio_dc_operators_skipped_branch_rows(operators).len == 0,
+              "no skipped branch rows");
+        CHECK(pio_dc_operators_branch_identity(operators, 0).len != 0,
+              "branch axis identity");
+        PioVector *susceptances = pio_dc_operators_branch_susceptances(operators, &error);
+        if (susceptances == NULL) {
+            report_error("pio_dc_operators_branch_susceptances", error);
+        } else {
+            CHECK(pio_vector_values(susceptances).len == branches,
+                  "branch susceptances over the DC branch axis");
+            pio_vector_release(susceptances);
+        }
+        pio_dc_operators_release(operators);
+    }
+
     PioDestination *memory = pio_destination_memory("case9.m", 7, &error);
     PioEmitResult *emitted = pio_emit(module, "matpower", 8, memory, &error);
     pio_destination_release(memory);
