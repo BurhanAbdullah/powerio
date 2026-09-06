@@ -303,20 +303,26 @@ def test_matrix_response_names_every_axis():
 
 
 def test_matrix_tool_serves_the_dc_calculations_by_name():
-    incidence = server.calc_matrix("incidence", path=str(DATA / "case9.m"))
-    assert incidence["format"] == "coo"
-    assert incidence["shape"] == [9, 9]
-    assert incidence["row_ids"] != incidence["col_ids"]
+    # case14 has 14 buses and 20 branches, so a transposed result changes the
+    # shape; case9's 9 by 9 incidence would hide the swap.
+    case14 = str(DATA / "case14.m")
+    index_map = powerio.parse(case14).value.calc_dc_index_map()
 
-    susceptances = server.calc_matrix("branch_susceptances", path=str(DATA / "case9.m"))
+    incidence = server.calc_matrix("incidence", path=case14)
+    assert incidence["format"] == "coo"
+    assert incidence["shape"] == [20, 14]
+    assert incidence["row_ids"] == list(index_map["branch_ids"])
+    assert incidence["col_ids"] == list(index_map["bus_ids"])
+
+    susceptances = server.calc_matrix("branch_susceptances", path=case14)
     assert susceptances["format"] == "vector"
-    assert susceptances["shape"] == [9]
-    assert len(susceptances["data"]) == 9
+    assert susceptances["shape"] == [20]
+    assert len(susceptances["data"]) == 20
     assert susceptances["row_ids"] == incidence["row_ids"]
     assert "col_ids" not in susceptances
 
     injection = server.calc_matrix(
-        "bus_phase_shift_injection", path=str(DATA / "case9.m"), formula="reactance_only"
+        "bus_phase_shift_injection", path=case14, formula="reactance_only"
     )
     assert injection["formula"] == "reactance_only"
     assert injection["row_ids"] == incidence["col_ids"]
