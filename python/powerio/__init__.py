@@ -1095,6 +1095,11 @@ class OperatingPoint(_TypedValue):
         network a solver receives for this entry; the collection's shared
         base network is not changed. A multiconductor operating point raises
         :class:`PowerIOError`.
+
+        Net bus injection quantities have no balanced network field, so they
+        are dropped here and the property reports nothing. Emit the
+        collection when you need that omission reported: `emit` warns
+        `EMIT.OPERATING_POINT.DATA_OMITTED` for the same point.
         """
         return BalancedNetwork(self.module._inner._operating_point_network())
 

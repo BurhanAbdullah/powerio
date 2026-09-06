@@ -201,7 +201,11 @@ helpers, and NetworkX only inside `to_networkx`.
 
 An `OperatingPoint` entry of a `TimeSeries` or `ScenarioSet` exposes
 `.network`, the balanced network with that point's values applied, so a solver
-receives the entry without emitting and reparsing it.
+receives the entry without emitting and reparsing it. The property returns the
+network alone: net bus injection quantities have no balanced network field, so
+they are dropped and the property reports nothing. `emit` states that same
+omission as `EMIT.OPERATING_POINT.DATA_OMITTED`, so emit the collection when
+you need the diagnostic.
 
 ## Other functions
 
