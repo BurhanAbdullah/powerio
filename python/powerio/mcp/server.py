@@ -66,7 +66,8 @@ _MATRIX_HELP = ", ".join(sorted(_MATRIX_NAMES))
 # The DC calculations `calc_matrix` reaches that take `skip_zero_impedance`.
 # `calc_branch_flow_dc` and `calc_bus_injection_dc` also take it but need
 # voltage angles, so they are not matrix names. `ptdf` and `lodf` factor the
-# reference grounded DC matrix and have no such option.
+# reference grounded DC matrix, `adjacency` and `weighted_laplacian` build on
+# the graph, and none of the four has such an option.
 _SKIP_ZERO_IMPEDANCE_DC_NAMES = (
     "incidence",
     "branch_susceptances",
@@ -76,6 +77,9 @@ _SKIP_ZERO_IMPEDANCE_DC_NAMES = (
     "bus_phase_shift_injection",
 )
 _SKIP_ZERO_IMPEDANCE_DC_HELP = ", ".join(_SKIP_ZERO_IMPEDANCE_DC_NAMES)
+# Matrix names whose calculation has no such option; the flag is refused so the
+# payload never echoes a choice the result ignored.
+_SKIP_ZERO_IMPEDANCE_REFUSED = ("ptdf", "lodf", "adjacency", "weighted_laplacian")
 _MATRIX_KIND_FIELD = Field(
     json_schema_extra=cast(Any, {"enum": sorted(_MATRIX_NAMES)})
 )
@@ -84,7 +88,7 @@ _SKIP_ZERO_IMPEDANCE_FIELD = Field(
         "Drop zero impedance branches instead of failing the build. Six DC "
         f"calculations take it ({_SKIP_ZERO_IMPEDANCE_DC_HELP}), as do "
         "bprime, bdoubleprime, admittance_real, admittance_imag and lacpf. "
-        "ptdf and lodf reject it."
+        "ptdf, lodf, adjacency and weighted_laplacian reject it."
     )
 )
 _Scheme = Literal["bx", "xb"]
@@ -517,9 +521,9 @@ def _matrix_impl(
     canonical = matrix.lower()
     if canonical not in _MATRIX_NAMES:
         raise ValueError(f"unknown matrix {matrix!r}; expected one of: {_MATRIX_HELP}")
-    # The sensitivity solves have no such option, so the flag would be echoed
+    # These calculations have no such option, so the flag would be echoed
     # back in the payload while the result ignored it.
-    if skip_zero_impedance and canonical in ("ptdf", "lodf"):
+    if skip_zero_impedance and canonical in _SKIP_ZERO_IMPEDANCE_REFUSED:
         raise ValueError(
             f"{canonical} does not take skip_zero_impedance; the DC "
             f"calculations that do are: {_SKIP_ZERO_IMPEDANCE_DC_HELP}"

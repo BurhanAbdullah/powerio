@@ -329,7 +329,7 @@ def test_matrix_tool_serves_the_dc_calculations_by_name():
 
 
 def test_matrix_tool_rejects_skip_zero_impedance_where_it_would_be_ignored():
-    for name in ("ptdf", "lodf"):
+    for name in ("ptdf", "lodf", "adjacency", "weighted_laplacian"):
         with pytest.raises(ValueError, match="does not take skip_zero_impedance"):
             server.calc_matrix(
                 name, path=str(DATA / "case9.m"), skip_zero_impedance=True
