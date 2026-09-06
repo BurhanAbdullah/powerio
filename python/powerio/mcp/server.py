@@ -12,7 +12,7 @@ import base64
 import io
 import json
 from pathlib import Path
-from typing import Annotated, Any, Dict, Literal, Optional, cast
+from typing import Annotated, Any, Dict, Literal, Mapping, Optional, cast
 
 from mcp.server.mcpserver import MCPServer
 from pydantic import Field
@@ -469,7 +469,7 @@ def _normalize_impl(
     }
 
 
-def _axis_ids(axis: Optional[str], index_map: Dict[str, Any]) -> Optional[list]:
+def _axis_ids(axis: Optional[str], index_map: Mapping[str, Any]) -> Optional[list]:
     if axis == "bus":
         return list(index_map["bus_ids"])
     if axis == "branch":
