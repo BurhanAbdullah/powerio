@@ -23,6 +23,7 @@ powerio.ConnectivityNode
 powerio.DcBusbar
 powerio.DcConverterUnit
 powerio.DcGround
+powerio.DcIndexMap
 powerio.DcLine
 powerio.DcNode
 powerio.DcSeriesDevice

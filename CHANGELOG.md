@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.11.1
+
+- Name the axes of every DC calculation. `DcOperators::build_with` takes
+  `DcOperatorOptions`, and `branch_rows`, `branch_identities`, and
+  `skipped_branch_rows` state the branch axis beside `bus_ids`: every in
+  service, non self loop branch in table order, three winding transformer
+  windings after the branches. With `skip_zero_impedance` a zero impedance
+  branch leaves the axis and is listed instead of failing the build with
+  `BUILD.OPERATOR.ZERO_IMPEDANCE`, the same choice the admittance builders
+  offer. C ABI 7 gains the `PioDcOperators` handle
+  (`pio_calc_dc_operators`, the axis accessors, and the eight calculations
+  over one build); the existing `pio_calc_*` entry points are unchanged.
+  Python `calc_dc_index_map` returns `bus_ids`, `branch_rows`, `branch_ids`,
+  and `skipped_branch_rows`, and every DC `calc_*` method accepts
+  `skip_zero_impedance`. The MCP `calc_matrix` tool reports `row_ids` and
+  `col_ids` for every result, serves the eight DC calculations by name, and
+  takes `skip_zero_impedance`. Reported from the PowerIO.jl port of
+  PowerDiff.jl (eigenergy/PowerIO.jl#139, #140).
+- `powerio::network_with_operating_point` and Python `OperatingPoint.network`
+  return the balanced network an operating point states with the point's
+  values applied, so a consumer selects a collection entry without emitting
+  and reparsing it. The MCP `summarize` and `calc_matrix` tools accept an
+  operating point entry through that network.
+- MCP diagnostic records carry `suggested_action`, `related`, and `details`
+  beside the code, severity, message, target, id, and spans.
+- The OpenDSS geometry regression cases from Burhan Abdullah's draft (#480)
+  run as ordinary tests: a geometry defined line is reported by
+  `READ.DSS.GEOMETRY_UNRESOLVED` when it is read and never receives the
+  OpenDSS factory impedance or a fabricated conductor count (#479).
+
 ## 0.11.0
 
 - Integrate Burhan Abdullah's electrical-readiness checks (#494). Retain

@@ -401,53 +401,129 @@ class BalancedNetwork:
             self._inner.bprime(scheme, skip_zero_impedance=skip_zero_impedance)
         )
 
-    def calc_incidence_matrix(self, formula: str = "series_susceptance"):
-        """Return PowerModels incidence ``A`` (branches by buses)."""
-        return _to_csr(self._inner.calc_incidence_matrix(formula))
+    def calc_incidence_matrix(
+        self, formula: str = "series_susceptance", *, skip_zero_impedance: bool = False
+    ):
+        """Return PowerModels incidence ``A`` (branches by buses).
 
-    def calc_branch_susceptances(self, formula: str = "series_susceptance"):
-        """Return per branch susceptances in active branch order."""
+        Rows are the in service, non self loop branches in table order
+        (three winding transformer windings follow the branches); columns
+        are every bus in table order. :meth:`calc_dc_index_map` names both
+        axes. ``skip_zero_impedance=False`` refuses a zero impedance branch;
+        ``True`` drops it from the branch axis.
+        """
+        return _to_csr(
+            self._inner.calc_incidence_matrix(
+                formula, skip_zero_impedance=skip_zero_impedance
+            )
+        )
+
+    def calc_branch_susceptances(
+        self, formula: str = "series_susceptance", *, skip_zero_impedance: bool = False
+    ):
+        """Return per branch susceptances over the branch axis of
+        :meth:`calc_dc_index_map`."""
         np = _require("numpy", "matrix")
-        return np.asarray(self._inner.calc_branch_susceptances(formula), dtype=float)
+        return np.asarray(
+            self._inner.calc_branch_susceptances(
+                formula, skip_zero_impedance=skip_zero_impedance
+            ),
+            dtype=float,
+        )
 
-    def calc_branch_flow_matrix(self, formula: str = "series_susceptance"):
-        """Return ``Bf = diag(b) A`` as a CSR matrix."""
-        return _to_csr(self._inner.calc_branch_flow_matrix(formula))
+    def calc_branch_flow_matrix(
+        self, formula: str = "series_susceptance", *, skip_zero_impedance: bool = False
+    ):
+        """Return ``Bf = diag(b) A`` as a CSR matrix (branches by buses)."""
+        return _to_csr(
+            self._inner.calc_branch_flow_matrix(
+                formula, skip_zero_impedance=skip_zero_impedance
+            )
+        )
 
-    def calc_bus_susceptance_matrix(self, formula: str = "series_susceptance"):
-        """Return ``B = A.T diag(b) A`` as a CSR matrix."""
-        return _to_csr(self._inner.calc_bus_susceptance_matrix(formula))
+    def calc_bus_susceptance_matrix(
+        self, formula: str = "series_susceptance", *, skip_zero_impedance: bool = False
+    ):
+        """Return ``B = A.T diag(b) A`` as a CSR matrix (buses by buses)."""
+        return _to_csr(
+            self._inner.calc_bus_susceptance_matrix(
+                formula, skip_zero_impedance=skip_zero_impedance
+            )
+        )
 
     def calc_branch_phase_shift_injection(
-        self, formula: str = "series_susceptance"
+        self, formula: str = "series_susceptance", *, skip_zero_impedance: bool = False
     ):
-        """Return ``b * shift`` in active branch order."""
+        """Return ``b * shift`` over the branch axis."""
         np = _require("numpy", "matrix")
         return np.asarray(
-            self._inner.calc_branch_phase_shift_injection(formula), dtype=float
+            self._inner.calc_branch_phase_shift_injection(
+                formula, skip_zero_impedance=skip_zero_impedance
+            ),
+            dtype=float,
         )
 
-    def calc_bus_phase_shift_injection(self, formula: str = "series_susceptance"):
-        """Return ``A.T @ (b * shift)`` in bus order."""
+    def calc_bus_phase_shift_injection(
+        self, formula: str = "series_susceptance", *, skip_zero_impedance: bool = False
+    ):
+        """Return ``A.T @ (b * shift)`` over the bus axis."""
         np = _require("numpy", "matrix")
         return np.asarray(
-            self._inner.calc_bus_phase_shift_injection(formula), dtype=float
+            self._inner.calc_bus_phase_shift_injection(
+                formula, skip_zero_impedance=skip_zero_impedance
+            ),
+            dtype=float,
         )
 
-    def calc_branch_flow_dc(self, voltage_angles, formula: str = "series_susceptance"):
-        """Compute ``-Bf @ va + b * shift`` in active branch order."""
+    def calc_branch_flow_dc(
+        self,
+        voltage_angles,
+        formula: str = "series_susceptance",
+        *,
+        skip_zero_impedance: bool = False,
+    ):
+        """Compute ``-Bf @ va + b * shift`` over the branch axis."""
         np, angles = _dc_angles(self.n_buses, voltage_angles)
         return np.asarray(
-            self._inner.calc_branch_flow_dc(angles.tolist(), formula), dtype=float
+            self._inner.calc_branch_flow_dc(
+                angles.tolist(), formula, skip_zero_impedance=skip_zero_impedance
+            ),
+            dtype=float,
         )
 
     def calc_bus_injection_dc(
-        self, voltage_angles, formula: str = "series_susceptance"
+        self,
+        voltage_angles,
+        formula: str = "series_susceptance",
+        *,
+        skip_zero_impedance: bool = False,
     ):
-        """Compute ``-B @ va + p_shift`` in bus order."""
+        """Compute ``-B @ va + p_shift`` over the bus axis."""
         np, angles = _dc_angles(self.n_buses, voltage_angles)
         return np.asarray(
-            self._inner.calc_bus_injection_dc(angles.tolist(), formula), dtype=float
+            self._inner.calc_bus_injection_dc(
+                angles.tolist(), formula, skip_zero_impedance=skip_zero_impedance
+            ),
+            dtype=float,
+        )
+
+    def calc_dc_index_map(
+        self, formula: str = "series_susceptance", *, skip_zero_impedance: bool = False
+    ) -> dict[str, Any]:
+        """Return the axes every DC calculation shares.
+
+        ``bus_ids`` maps a bus axis row to the source bus id (every bus, in
+        table order). ``branch_rows`` maps a branch axis row to the position
+        in the branch table (three winding transformer windings follow the
+        branches) and ``branch_ids`` to the stable identity, the branch uid
+        when the source states one and ``branches:<row>`` otherwise; out of
+        service branches and self loops have no row. ``skipped_branch_rows``
+        lists the zero impedance branches dropped under
+        ``skip_zero_impedance=True`` and is empty otherwise. The same
+        selection applies to :meth:`calc_ptdf` rows and :meth:`calc_lodf`.
+        """
+        return self._inner.calc_dc_index_map(
+            formula, skip_zero_impedance=skip_zero_impedance
         )
 
     def calc_bdoubleprime_matrix(
@@ -1010,6 +1086,22 @@ class ScenarioSet(_TypedValue, Mapping):
 @_guard_class
 class OperatingPoint(_TypedValue):
     """A possibly partial assignment over fixed equipment identities."""
+
+    @property
+    def network(self) -> "BalancedNetwork":
+        """The balanced network this operating point is stated over.
+
+        The point's own values are applied to the returned copy, so it is the
+        network a solver receives for this entry; the collection's shared
+        base network is not changed. A multiconductor operating point raises
+        :class:`PowerIOError`.
+
+        Net bus injection quantities have no balanced network field, so they
+        are dropped here and the property reports nothing. Emit the
+        collection when you need that omission reported: `emit` warns
+        `EMIT.OPERATING_POINT.DATA_OMITTED` for the same point.
+        """
+        return BalancedNetwork(self.module._inner._operating_point_network())
 
 
 @_guard_class
