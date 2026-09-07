@@ -1,8 +1,8 @@
-use powerio_synth::{generate, SynthSpec, Topology};
+use powerio_synth::{SynthSpec, Topology, generate};
 
-fn assert_basic(spec: SynthSpec, expected_buses: usize, expected_min_branches: usize) {
-    let a = generate(&spec);
-    let b = generate(&spec);
+fn assert_basic(spec: &SynthSpec, expected_buses: usize, expected_min_branches: usize) {
+    let a = generate(spec);
+    let b = generate(spec);
     assert_eq!(a.buses(), b.buses());
     assert_eq!(a.branches(), b.branches());
     assert_eq!(a.buses().len(), expected_buses);
@@ -13,7 +13,11 @@ fn assert_basic(spec: SynthSpec, expected_buses: usize, expected_min_branches: u
 #[test]
 fn tree_generation_is_deterministic() {
     assert_basic(
-        SynthSpec { topology: Topology::Tree, n: 16, ..SynthSpec::default() },
+        &SynthSpec {
+            topology: Topology::Tree,
+            n: 16,
+            ..SynthSpec::default()
+        },
         16,
         15,
     );
@@ -22,7 +26,11 @@ fn tree_generation_is_deterministic() {
 #[test]
 fn lattice_rounds_to_a_square() {
     assert_basic(
-        SynthSpec { topology: Topology::Lattice2D, n: 10, ..SynthSpec::default() },
+        &SynthSpec {
+            topology: Topology::Lattice2D,
+            n: 10,
+            ..SynthSpec::default()
+        },
         16,
         24,
     );
@@ -31,7 +39,11 @@ fn lattice_rounds_to_a_square() {
 #[test]
 fn meshed_generation_adds_cross_edges() {
     assert_basic(
-        SynthSpec { topology: Topology::PegaseLike, n: 30, ..SynthSpec::default() },
+        &SynthSpec {
+            topology: Topology::PegaseLike,
+            n: 30,
+            ..SynthSpec::default()
+        },
         30,
         39,
     );
@@ -39,7 +51,13 @@ fn meshed_generation_adds_cross_edges() {
 
 #[test]
 fn different_seeds_change_the_case() {
-    let a = generate(&SynthSpec { seed: 1, ..SynthSpec::default() });
-    let b = generate(&SynthSpec { seed: 2, ..SynthSpec::default() });
+    let a = generate(&SynthSpec {
+        seed: 1,
+        ..SynthSpec::default()
+    });
+    let b = generate(&SynthSpec {
+        seed: 2,
+        ..SynthSpec::default()
+    });
     assert_ne!(a.branches(), b.branches());
 }
