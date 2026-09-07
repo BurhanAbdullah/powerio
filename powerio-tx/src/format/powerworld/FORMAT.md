@@ -487,7 +487,7 @@ case stores zero shunt MW and the reader sets G = 0.
 - Substation, area/zone names, contingency tables: present after the
   branches, undecoded in this pass.
 
-## The .pwd display format: substation coordinates
+## The .pwd display records
 
 `.pwd` files are display artifacts rather than network cases. The top-level
 facade's `parse` operation reads one into `PioValue::GeoLayer`; the layer can
@@ -495,11 +495,11 @@ then travel through PowerIO IR and the ordinary module emission path. Python's
 raw-display compatibility helper `parse_display` returns
 `DisplayData("powerworld", PwdDisplay(...))`.
 
-The `.pwd` decoder reads one subset of the display file, the substation
-symbols, established by differential analysis of seven files spanning the
-June 2016 through 2022 writer eras. Every other drawing object type (buses,
-branch pies, transmission lines, field labels), the palettes, fonts,
-layers, and the substation record style tails stay undecoded.
+The `.pwd` decoder reads substation symbols, supported bus symbols, and
+supported branch paths. Palettes, fonts, field labels, branch pies, and other
+decorative objects remain outside the equipment layer. Substation checks use
+seven files spanning June 2016 through 2022; bus and path checks use the New
+England drawing and small generated records in unit tests.
 
 Header: u32 = 50, two u16 canvas dimensions, a u16 = 10070, then an optional
 canvas title (a u16 length at offset 10, a zero u16, the text) and eight zero
@@ -524,7 +524,7 @@ Two structures carry substations when the display includes substation symbols:
   (sentinel plus table tag 0x0f3d): records of u32 number, the same u32
   again, u32 length, name, 0x02, terminated exactly by the next
   `ff ff ff ff`. Display order, not case order. A bus identity table (tag
-  0x0f3c, no coordinates) directly precedes it, undecoded.
+  0x0f3c, no coordinates) directly precedes it and identifies bus symbols.
 - The DisplaySubstation drawing records: u16 type tag, f32 x, f32 y at
   +2/+6 (echoes), u32 flag, zeros, u16 0x000a, the header stamp at +18,
   f64 x at +22, f64 y at +30, f64 0.0, then a style tail holding a digit
@@ -543,7 +543,8 @@ Two structures carry substations when the display includes substation symbols:
 
 Some display files have a valid PowerWorld display header but no substation
 identity table. Those decode as `PwdDisplay` with an empty `substations` list;
-bus symbols and other drawing objects remain undecoded.
+The layer decoder checks supported bus and branch records independently.
+If no supported equipment positions can be decoded, it returns an error.
 
 The coordinates are diagram positions, not geography (no probed file
 stores latitude or longitude; needle scans came back empty). The auto
@@ -638,3 +639,36 @@ rejected, out of scope.
 | GICXFormer | 66 | 15 | ground ohms |
 | Contingency | 245 | 32 | 490 SUBDATA (CTGElement, LimitViol) |
 | ContingencyElement | 245 | 11 | |
+
+## Bus geographic records in PWB
+
+Supported header constants 425 and 537 carry a geographic tail after the bus
+head. The decoder checks the bus flags, optional shunt section, style tags,
+and available byte count before reading latitude and longitude. Latitude must
+be finite and within -90 to 90 degrees; longitude must be finite and within
+-180 to 180 degrees. Zero is a valid coordinate. An unrecognized layout leaves
+the location unavailable instead of interpreting arbitrary doubles as a point.
+
+The supplied New England collection contains 20 PWB cases. Each decodes 250
+bus locations, including the common first point (-75.91, 43.98). Unit tests
+cover both header constants, optional shunts, invalid coordinates, and truncated
+tails. Coordinates travel through the existing typed location and IR records;
+no C structure layout changes are required.
+
+## Bus symbols and branch paths in PWD
+
+The bus identity table begins at tag `0x0f3c` and ends at the substation table
+sentinel. Each row includes a bus number, a length-prefixed name, a repeated
+number, a label, and nominal voltage. Duplicate or ambiguous identities fail.
+
+Supported drawing positions repeat the header stamp at +18, store x/y doubles
+at +22/+30, and repeat the values as floats at +2/+6. Bus tag `0x277e` uses a
+length-prefixed style label at +67 and a bus reference after the style tail.
+Line tag `0x27b3` and transformer tag `0x27b7` carry endpoint identities and a
+child `0x3131` polyline. The child supplies a checked vertex count followed by
+finite x/y double pairs. Unmatched endpoints or incomplete paths produce
+reported omissions; an incomplete path is never shortened into a different line.
+
+The supplied New England drawing decodes 250 bus positions and 339 branch
+paths. These are raw drawing coordinates. The layer stores them independently
+of geographic coordinates in the paired PWB case.

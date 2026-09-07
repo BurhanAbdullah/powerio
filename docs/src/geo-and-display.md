@@ -7,8 +7,8 @@ format that has no place for coordinates, the writer reports the loss.
 A standalone geographic document parses to `powerio.GeoLayer`, a value like any
 other case. The canonical `.geo.json`, plain GeoJSON, CSV or JSON records with
 aliased field names, headerless buscoords CSV, and a PowerWorld `.pwd` display
-all parse to it; a `.pwd` becomes a diagram space layer whose features target
-substations.
+all parse to it; a `.pwd` becomes a drawing layer with supported bus, branch,
+and substation objects. A drawing with no decoded equipment returns an error.
 
 ```rust,ignore
 use powerio::{PioValue, emit, parse, serialize};
@@ -86,12 +86,13 @@ removes the raw keys from `extras`. Writers read `location`.
 
 | Format | Fields | Space |
 | --- | --- | --- |
+| PowerWorld PWB | Validated bus latitude/longitude fields in supported 425/537 record layouts | geographic |
 | PowerWorld aux | `Latitude:1`/`Longitude:1` bus columns, else the bare `Latitude`/`Longitude` pair (`SubNum` stays in extras: it is identity rather than geometry) | geographic |
 | pandapower | bus `geo` GeoJSON Point strings | geographic |
 | PyPSA | `buses.csv` `x`/`y` | geographic |
 | DOE GO Challenge 3 | bus `longitude`/`latitude` | geographic |
 | OpenDSS | `Buscoords` | unknown; a diagnostic identifies values within longitude and latitude bounds |
-| BMOPF JSON | `longitude`/`latitude` (the BMOPFTools sideload convention; emission is opt in via `BmopfEmitOptions::sideload_coordinates`) | geographic |
+| BMOPF JSON | BMOPFTools `bus[id].geo` Point and `line[id].geo` LineString; legacy `longitude`/`latitude`; canonical `extras.geojson` | declared CRS, geographic when omitted |
 
 MATPOWER, PSS/E, PowerModels, egret, PSLF, and Surge have no place for
 geometry. Emitting a located case to one of them reports the dropped locations,
@@ -107,7 +108,7 @@ can hand back the layout it computed the same way. The container for such a
 file is `GeoLayer`, which the Rust facade's `parse` returns as
 `PioValue::GeoLayer`.
 
-The canonical form is a GeoJSON FeatureCollection with one foreign member,
+The canonical document is a GeoJSON FeatureCollection with one foreign member,
 `powerio_geo`, and the suggested extension is `.geo.json`:
 
 ```json
@@ -138,8 +139,10 @@ case insensitive `name`. A branch route can also fall back to the unordered
 `(from, to)` bus pair. A bare integer branch id (`branch`, `branchid`,
 `branchnumber`, `catsid`) is accepted on the way in as a one based positional
 row alias and is not written back; the `uid` in the payload is the durable key.
-A branch key ignores a bare `id` property, because GIS exports and RFC 7946
-tooling put a feature row counter there.
+A branch key accepts `id` when `kind` explicitly identifies a line or branch.
+An untyped feature counter does not identify equipment. BMOPFTools
+`bus_from`/`bus_to` endpoint names are accepted. A CRS string or a named CRS
+object retains its identifier; PowerIO does not reproject the coordinates.
 
 `BalancedNetwork::to_geo_layer()` turns a network's coordinates into a layer,
 and `BalancedNetwork::apply_geo_layer(&layer)` applies one and returns a
@@ -159,8 +162,9 @@ $ powerio geo convert buscoords.csv -o case.geo.json
 
 ## PowerWorld display files
 
-The `.pwd` reader returns a diagram space `GeoLayer` whose features place the
-decoded substations. Python also keeps the raw display compatibility helper
+The `.pwd` reader returns a drawing `GeoLayer` with decoded bus positions,
+branch paths, and substation positions. Coordinates remain in drawing units.
+Unsupported or unmatched bus and branch records produce diagnostics. Python also keeps the raw display compatibility helper
 `parse_display`, which returns
 `DisplayData(kind="powerworld", data=PwdDisplay(...))` with the canvas
 dimensions, a timestamp, and the substation symbols.
@@ -198,3 +202,31 @@ survives.
 
 Python has `parse_geo`, and both network types have `to_geo_layer()` and
 `apply_geo_layer()`.
+
+## BMOPF geometry and schema validity
+
+PowerIO reads the geometry proposed in
+[BMOPFTools #258](https://github.com/frederikgeth/BMOPFTools.jl/pull/258):
+`bus[id].geo` contains a Point, `line[id].geo` contains a LineString, and
+`meta.crs` names the coordinate reference system. An absent CRS means WGS84.
+Coordinates appear in longitude/latitude order for WGS84. A malformed vertex
+invalidates its entire path; PowerIO does not connect the remaining vertices.
+
+The schema currently identified as draft BMOPF 0.2 does not declare these
+per-equipment `geo` fields. Explicit BMOPF output therefore stores a
+FeatureCollection in the permitted `extras.geojson` location. Its features use
+`kind`, `id`, `bus_from`, and `bus_to`. The `powerio_geo` member preserves
+coordinate-space metadata for drawings and coordinates with no declared CRS.
+This keeps output valid against its stated schema while retaining geometry.
+Task Force review determines the eventual standard location.
+
+Same-type source emission preserves the input bytes. Editing or explicitly
+selecting a schema version writes the typed coordinates, so a retained source
+cannot override updated positions. Both values of the compatibility setting
+`BmopfEmitOptions::sideload_coordinates` preserve geometry in `extras.geojson`.
+PowerIO IR also retains typed bus locations, line paths, and coordinate metadata.
+
+A RAW revision 33 file does not contain the New England PWB bus-location
+records. Attach its matching GeoJSON, CSV, AUX, or PWD companion explicitly.
+PWD positions describe a drawing and must not be interpreted as latitude and
+longitude.

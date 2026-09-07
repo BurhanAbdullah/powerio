@@ -546,8 +546,8 @@ fn parse_geo_layer(
         Err(error) => return Err(error.with_source(source)),
     };
     let (layer, diagnostics) = if is_display {
-        match powerio_tx::format::powerworld::__parse_pwd_display(buffer.content_bytes()) {
-            Ok(display) => (powerio_tx::geo::to_geo_layer_from_pwd(&display), Vec::new()),
+        match powerio_tx::format::powerworld::__parse_pwd_layer(buffer.content_bytes()) {
+            Ok(parsed) => (parsed.layer, parsed.diagnostics),
             Err(error) => {
                 return Err(Error::new(error.code(), error.to_string())
                     .with_cause(error)
