@@ -5,6 +5,36 @@
 //! dense [`IndexedNetwork`] view of a [`BalancedNetwork`]. Parsing and emitting
 //! belong to the top level `powerio` facade; this crate owns derived matrix and
 //! graph calculations.
+//!
+//! ```
+//! use powerio_core::Source;
+//! use powerio_matrix::{BuildOptions, IndexedNetwork, calc_bprime_matrix};
+//! use powerio_tx::parse;
+//!
+//! # let case = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/data/case14.m");
+//! let net = parse(Source::open(case)?)?.into_value();
+//! let g = IndexedNetwork::new(&net);           // dense [0, n) analysis view
+//! let bprime = calc_bprime_matrix(&g, &BuildOptions::default())?;
+//! assert_eq!(bprime.rows(), g.n());            // Bp is n×n
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! # Conventions
+//!
+//! Public DC operators follow PowerModels: an inductive branch has negative
+//! `b`. Their branch by bus incidence matrix `A_pm` gives
+//! `B = A_pmᵀ diag(b) A_pm`, with nonpositive diagonals and nonnegative
+//! off-diagonals. Solver preparation retains its bus by branch factor
+//! `A_s = A_pmᵀ` and uses `w = -b`, so the sparse factor is the positive
+//! M-matrix `L = A_s diag(w) A_sᵀ = -B`. Source bus IDs remain on the model;
+//! [`IndexedNetwork`] maps them to dense indices in `[0, n)`.
+//! `tap == 0` means `tap = 1`. `calc_bprime_matrix` and
+//! `calc_bdoubleprime_matrix` follow MATPOWER `makeB`; Y_bus keeps tap
+//! magnitudes and phase shifts. Branch
+//! terminal admittance is stored per unit. The default public DC formula is
+//! `b = -x/(r² + x²)`. [`BranchSusceptanceFormula::TapAdjustedReactance`] uses
+//! `b = -1/(x·τ)`; both carry phase shift injection. The full reference is in
+//! [the matrix guide](https://eigenergy.github.io/powerio/guide/matrices.html).
 
 // Re-export the balanced model types used by matrix signatures. Parsing,
 // emitting, conversion, and display operations stay on their owning crate and
