@@ -100,7 +100,7 @@ jobs:
         # skip-existing), so a re-run after a partial publish only publishes
         # what's missing.
         run: |
-          for crate in powerio-core powerio-tx powerio-dist powerio-prob powerio-matrix powerio-synth powerio powerio-cli; do
+          for crate in powerio-core powerio-tx powerio-dist powerio-prob powerio-matrix powerio powerio-synth powerio-cli; do
             resp="$RUNNER_TEMP/$crate.json"
             code="$(curl -sS -A "$UA" --max-time 30 -o "$resp" -w '%{http_code}' \
               "https://crates.io/api/v1/crates/$crate/$VERSION")" || code=unreachable
