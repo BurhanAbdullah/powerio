@@ -12,13 +12,10 @@ documentation = "https://docs.rs/powerio-matrix"
 keywords = ["matpower", "sparse", "ptdf", "dc-opf"]
 categories = ["science", "mathematics"]
 
-# Render the feature-gated gridfm Parquet export on docs.rs.
 [package.metadata.docs.rs]
 all-features = true
 
 [features]
-# GridFM output: write the gridfm-datakit Parquet schema (and the shared
-# Arrow record batches behind it). Pulls in arrow + parquet, off by default.
 gridfm = ["dep:arrow", "dep:parquet"]
 
 [lib]
@@ -36,14 +33,8 @@ faer.workspace = true
 num-complex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-# Deterministic seeded generation only: default features off keeps the OS
-# randomness backend out, so the crate builds on wasm32 targets.
-rand = { version = "0.9", default-features = false, features = ["std"] }
-rand_chacha = { version = "0.9", default-features = false, features = ["std"] }
 sha2 = "0.10"
 rustc-hash = "2"
-# arrow and parquet release in lockstep and share `RecordBatch`; keep both on the
-# same major. `snap` matches the Snappy compression pandas/datakit write by default.
 arrow = { workspace = true, optional = true }
 parquet = { version = "59", default-features = false, features = ["arrow", "snap"], optional = true }
 
