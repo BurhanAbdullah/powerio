@@ -2,6 +2,14 @@
 
 ## 0.11.1
 
+- Read bus latitude and longitude from validated PowerWorld PWB records, and
+  retain bus positions and branch paths from supported PWD drawings. Empty
+  drawings report an error; drawing coordinates remain distinct from geography.
+- Read BMOPF bus Points and line LineStrings proposed by BMOPFTools, including
+  `bus_from` and `bus_to` identities. Keep coordinates, routes, and coordinate
+  systems through PowerIO IR and edits. Explicit BMOPF output stores geometry
+  under `extras.geojson`, which validates against the declared schema while
+  embedded geometry remains under Task Force review.
 - Name the axes of every DC calculation. `DcOperators::build_with` takes
   `DcOperatorOptions`, and `branch_rows`, `branch_identities`, and
   `skipped_branch_rows` state the branch axis beside `bus_ids`: every in
