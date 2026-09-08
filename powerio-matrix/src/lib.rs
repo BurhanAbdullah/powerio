@@ -64,7 +64,6 @@ pub mod io;
 pub mod matrix;
 mod opf;
 pub mod pipeline;
-pub mod synth;
 
 pub use ac_jacobian::{PowerFlowJacobian, VoltageCoordinates, calc_power_flow_jacobian};
 pub use acopf::{

@@ -1,19 +1,16 @@
-//! Square 2-D lattice / grid topology. `n` is rounded up to the nearest
-//! perfect square.
+//! Square 2-D lattice / grid topology.
 
+use powerio::BalancedNetwork;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
-use crate::network::BalancedNetwork;
-
-use super::SynthSpec;
-use super::tree::{make_branch, make_buses, net};
+use crate::SynthSpec;
+use crate::tree::{make_branch, make_buses, net};
 
 pub fn generate_lattice(spec: &SynthSpec) -> BalancedNetwork {
     let side = ((spec.n as f64).sqrt().ceil() as usize).max(2);
     let n = side * side;
     let mut rng = ChaCha8Rng::seed_from_u64(spec.seed);
-
     let buses = make_buses(n);
     let mut branches = Vec::with_capacity(2 * side * (side - 1));
     for r in 0..side {
@@ -27,6 +24,5 @@ pub fn generate_lattice(spec: &SynthSpec) -> BalancedNetwork {
             }
         }
     }
-
     net(format!("synth_lattice_{side}x{side}"), buses, branches)
 }

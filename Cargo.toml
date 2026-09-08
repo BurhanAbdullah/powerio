@@ -9,6 +9,7 @@ members = [
     "powerio-py",
     "powerio-capi",
     "powerio-dist",
+    "powerio-synth",
     "tests/facade-only",
 ]
 # Bare `cargo build`/`test`/`clippy` touch only the library + CLI crates, so the
@@ -25,6 +26,7 @@ default-members = [
     "powerio-prob",
     "powerio-cli",
     "powerio-dist",
+    "powerio-synth",
     "tests/facade-only",
 ]
 # The fuzz harnesses need nightly + cargo-fuzz; they build on their own (see
@@ -52,6 +54,7 @@ powerio-core = { path = "powerio-core", version = "0.11.0" }
 powerio-matrix = { path = "powerio-matrix", version = "0.11.0" }
 powerio-prob = { path = "powerio-prob", version = "0.11.0" }
 powerio-dist = { path = "powerio-dist", version = "0.11.0" }
+powerio-synth = { path = "powerio-synth", version = "0.11.0" }
 # Cross-crate type identity: `CsMat<f64>` (sprs) and the Arrow types cross crate
 # boundaries, so every crate must build against the same major.
 sprs = { version = "0.11", default-features = false }
