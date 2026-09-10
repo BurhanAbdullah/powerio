@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use powerio_core::{Diagnostic, DiagnosticInfo, DiagnosticSeverity, Error};
-use powerio_dist::{DistLoadVoltageModel, MulticonductorNetwork};
+use powerio_dist::{Configuration, DistLoadVoltageModel, MulticonductorNetwork};
 use serde::{Deserialize, Serialize};
 
 use super::McAcOpfInstance;
@@ -342,6 +342,195 @@ fn check_objective(instance: &McAcOpfInstance, diagnostics: &mut Vec<Diagnostic>
     }
 }
 
+fn supported_connection(configuration: Configuration, terminals: usize, channels: usize) -> bool {
+    match configuration {
+        Configuration::Wye => terminals == channels,
+        Configuration::SinglePhase => terminals == channels || (terminals == 2 && channels == 1),
+        Configuration::Delta => {
+            (terminals == 2 && channels == 1) || (terminals == 3 && channels == 3)
+        }
+        _ => false,
+    }
+}
+
+fn scalar_or_channels(values: &[f64], channels: usize) -> bool {
+    matches!(values.len(), 1) || values.len() == channels
+}
+
+fn finite_scalar_or_channels(values: &[f64], channels: usize) -> bool {
+    scalar_or_channels(values, channels) && values.iter().all(|value| value.is_finite())
+}
+
+fn positive_scalar_or_channels(values: &[f64], channels: usize) -> bool {
+    scalar_or_channels(values, channels)
+        && values.iter().all(|value| value.is_finite() && *value > 0.0)
+}
+
+fn valid_bounds(lower: Option<&[f64]>, upper: Option<&[f64]>, channels: usize) -> bool {
+    match (lower, upper) {
+        (None, None) => true,
+        (Some(lower), Some(upper)) => {
+            lower.len() == channels
+                && upper.len() == channels
+                && lower
+                    .iter()
+                    .zip(upper)
+                    .all(|(lower, upper)| lower.is_finite() && upper.is_finite() && lower <= upper)
+        }
+        _ => false,
+    }
+}
+
+fn square_finite(matrix: &[Vec<f64>], dimension: usize) -> bool {
+    matrix.len() == dimension
+        && matrix
+            .iter()
+            .all(|row| row.len() == dimension && row.iter().all(|value| value.is_finite()))
+}
+
+fn device_invalid(diagnostics: &mut Vec<Diagnostic>, message: impl Into<String>, target: String) {
+    diagnostics.push(finding(
+        &codes::BUILD_LINDIST3FLOW_DEVICE_INVALID,
+        message,
+        Some(target),
+    ));
+}
+
+#[allow(clippy::too_many_lines)]
+fn check_device_shapes(instance: &McAcOpfInstance, diagnostics: &mut Vec<Diagnostic>) {
+    let network = instance.network();
+    for (row, load) in network.loads().iter().enumerate() {
+        let channels = load.p_nom.len();
+        let mut valid = channels != 0
+            && load.q_nom.len() == channels
+            && load.p_nom.iter().all(|value| value.is_finite())
+            && load.q_nom.iter().all(|value| value.is_finite())
+            && supported_connection(load.configuration, load.terminal_map.len(), channels);
+        valid &= match &load.voltage_model {
+            DistLoadVoltageModel::ConstantPower { .. }
+            | DistLoadVoltageModel::ConstantCurrent { .. }
+            | DistLoadVoltageModel::Exponential { .. } => true,
+            DistLoadVoltageModel::ConstantImpedance { v_nom } => {
+                positive_scalar_or_channels(v_nom, channels)
+            }
+            DistLoadVoltageModel::Zip {
+                v_nom,
+                alpha_z,
+                alpha_i,
+                alpha_p,
+                beta_z,
+                beta_i,
+                beta_p,
+            } => {
+                positive_scalar_or_channels(v_nom, channels)
+                    && [alpha_z, alpha_i, alpha_p, beta_z, beta_i, beta_p]
+                        .into_iter()
+                        .all(|values| finite_scalar_or_channels(values, channels))
+            }
+            _ => false,
+        };
+        if !valid {
+            device_invalid(
+                diagnostics,
+                format!(
+                    "load `{}` has invalid channel, connection, nominal-power, or voltage-model dimensions",
+                    load.name
+                ),
+                format!("/loads/{row}"),
+            );
+        }
+    }
+
+    for (row, generator) in network.generators().iter().enumerate() {
+        let channels = generator.p_nom.len();
+        let limits_valid = [generator.s_max.as_deref(), generator.i_max.as_deref()]
+            .into_iter()
+            .flatten()
+            .all(|values| {
+                values.len() == channels
+                    && values.iter().all(|value| value.is_finite() && *value > 0.0)
+            });
+        let cost_valid = generator
+            .cost
+            .as_deref()
+            .is_none_or(|values| finite_scalar_or_channels(values, channels));
+        let valid = channels != 0
+            && generator.q_nom.len() == channels
+            && generator.p_nom.iter().all(|value| value.is_finite())
+            && generator.q_nom.iter().all(|value| value.is_finite())
+            && supported_connection(
+                generator.configuration,
+                generator.terminal_map.len(),
+                channels,
+            )
+            && valid_bounds(
+                generator.p_min.as_deref(),
+                generator.p_max.as_deref(),
+                channels,
+            )
+            && valid_bounds(
+                generator.q_min.as_deref(),
+                generator.q_max.as_deref(),
+                channels,
+            )
+            && limits_valid
+            && cost_valid;
+        if !valid {
+            device_invalid(
+                diagnostics,
+                format!(
+                    "generator `{}` has invalid channel, connection, paired-bound, rating, or cost dimensions",
+                    generator.name
+                ),
+                format!("/generators/{row}"),
+            );
+        }
+    }
+
+    for (row, shunt) in network.shunts().iter().enumerate() {
+        let terminals = shunt.terminal_map.len();
+        if terminals == 0
+            || !square_finite(&shunt.g, terminals)
+            || !square_finite(&shunt.b, terminals)
+        {
+            device_invalid(
+                diagnostics,
+                format!(
+                    "shunt `{}` admittance matrices are not finite {terminals}x{terminals} arrays",
+                    shunt.name
+                ),
+                format!("/shunts/{row}"),
+            );
+        }
+    }
+
+    for (row, source) in network.sources().iter().enumerate() {
+        let channels = source.terminal_map.len();
+        let valid = channels != 0
+            && source.v_magnitude.len() == channels
+            && source.v_angle.len() == channels
+            && source
+                .v_magnitude
+                .iter()
+                .all(|value| value.is_finite() && *value > 0.0)
+            && source.v_angle.iter().all(|value| value.is_finite())
+            && source
+                .energy_cost_rate
+                .as_deref()
+                .is_none_or(|values| finite_scalar_or_channels(values, channels));
+        if !valid {
+            device_invalid(
+                diagnostics,
+                format!(
+                    "voltage source `{}` has invalid terminal, phasor, or cost dimensions",
+                    source.name
+                ),
+                format!("/sources/{row}"),
+            );
+        }
+    }
+}
+
 fn check_supported_slice(
     instance: &McAcOpfInstance,
     options: LinDist3FlowBuildOptions,
@@ -349,6 +538,7 @@ fn check_supported_slice(
 ) {
     let network = instance.network();
     check_objective(instance, diagnostics);
+    check_device_shapes(instance, diagnostics);
     if options.unsupported != LinDist3FlowUnsupported::Reject {
         diagnostics.push(finding(
             &codes::BUILD_LINDIST3FLOW_POLICY_UNAVAILABLE,

@@ -394,3 +394,30 @@ fn absent_dispatch_costs_are_visible_nonblocking_findings() {
             .all(|diagnostic| diagnostic.severity() == powerio_core::DiagnosticSeverity::Warning)
     );
 }
+
+#[test]
+fn incomplete_generator_bounds_fail_before_numerical_preparation() {
+    let mut network = three_phase_network(false);
+    let mut generator = DistGenerator::new(
+        "pv",
+        "load",
+        terminals(&["1", "2", "3"]),
+        Configuration::Wye,
+        vec![100.0; 3],
+        vec![0.0; 3],
+    );
+    generator.p_min = Some(vec![0.0; 3]);
+    generator.p_max = Some(vec![200.0; 3]);
+    generator.q_min = Some(vec![-50.0; 3]);
+    network.generators_mut().push(generator);
+    let base = McAcOpfInstance::from_network(network).unwrap();
+    let report = check_lindist3flow_applicability(&base, LinDist3FlowBuildOptions::default());
+
+    assert!(!report.is_applicable());
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code() == "BUILD.LINDIST3FLOW.DEVICE_INVALID")
+    );
+}

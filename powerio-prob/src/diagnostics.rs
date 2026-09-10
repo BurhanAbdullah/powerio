@@ -62,6 +62,9 @@ pub mod codes {
             category = Data;
         BUILD_LINDIST3FLOW_COST_MISSING = "BUILD.LINDIST3FLOW.COST_MISSING", Warning,
             "a dispatched resource has no active-power cost and contributes zero to the objective";
+        BUILD_LINDIST3FLOW_DEVICE_INVALID = "BUILD.LINDIST3FLOW.DEVICE_INVALID", Error,
+            "a LinDist3Flow device has inconsistent connection, channel, bound, or rating data",
+            category = Data;
         BUILD_OPERATOR_ZERO_IMPEDANCE = "BUILD.OPERATOR.ZERO_IMPEDANCE", Error,
             "a zero impedance branch has no finite DC operator row", category = Data;
         BUILD_OPERATOR_NOT_A_NUMBER = "BUILD.OPERATOR.NOT_A_NUMBER", Error,
