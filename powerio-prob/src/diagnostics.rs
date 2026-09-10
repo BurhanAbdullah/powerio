@@ -56,6 +56,12 @@ pub mod codes {
             "the LinDist3Flow coefficient reference is missing or invalid", category = Data;
         BUILD_LINDIST3FLOW_POLICY_UNAVAILABLE = "BUILD.LINDIST3FLOW.POLICY_UNAVAILABLE", Error,
             "the requested LinDist3Flow projection policy is not implemented", category = Data;
+        BUILD_LINDIST3FLOW_OBJECTIVE_UNSUPPORTED =
+            "BUILD.LINDIST3FLOW.OBJECTIVE_UNSUPPORTED", Error,
+            "the LinDist3Flow objective is outside the implemented formulation",
+            category = Data;
+        BUILD_LINDIST3FLOW_COST_MISSING = "BUILD.LINDIST3FLOW.COST_MISSING", Warning,
+            "a dispatched resource has no active-power cost and contributes zero to the objective";
         BUILD_OPERATOR_ZERO_IMPEDANCE = "BUILD.OPERATOR.ZERO_IMPEDANCE", Error,
             "a zero impedance branch has no finite DC operator row", category = Data;
         BUILD_OPERATOR_NOT_A_NUMBER = "BUILD.OPERATOR.NOT_A_NUMBER", Error,

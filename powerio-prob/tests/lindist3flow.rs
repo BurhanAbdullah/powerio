@@ -1,11 +1,11 @@
 use powerio_dist::{
-    Configuration, DistBus, DistLine, DistLineCode, DistLoadVoltageModel, DistSwitch,
-    MulticonductorNetwork, NeutralKronOptions, VoltageSource, neutral_kron_reduce,
+    Configuration, DistBus, DistGenerator, DistLine, DistLineCode, DistLoadVoltageModel,
+    DistSwitch, MulticonductorNetwork, NeutralKronOptions, VoltageSource, neutral_kron_reduce,
 };
 use powerio_prob::{
     LinDist3FlowBuildOptions, LinDist3FlowOpfInstance, LinDist3FlowReferencePolicy,
     LinDist3FlowReferenceProvenance, McAcOpfInstance, MulticonductorOperatingPointBuilder,
-    check_lindist3flow_applicability,
+    Objective, check_lindist3flow_applicability,
 };
 
 fn terminals(names: &[&str]) -> Vec<String> {
@@ -340,5 +340,57 @@ fn provenance_gate_rejects_an_unprojected_three_wire_network() {
     assert_eq!(
         error.info().map(|info| info.code),
         Some("BUILD.LINDIST3FLOW.EXPLICIT_NEUTRAL")
+    );
+}
+
+#[test]
+fn unsupported_objectives_are_rejected_during_applicability() {
+    let base = McAcOpfInstance::from_network(three_phase_network(false))
+        .unwrap()
+        .with_objective(Objective::network_generator_cost());
+    let report = check_lindist3flow_applicability(&base, LinDist3FlowBuildOptions::default());
+
+    assert!(!report.is_applicable());
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.code() == "BUILD.LINDIST3FLOW.OBJECTIVE_UNSUPPORTED" })
+    );
+    let error =
+        LinDist3FlowOpfInstance::from_mc_ac(base, LinDist3FlowBuildOptions::default()).unwrap_err();
+    assert_eq!(
+        error.info().map(|info| info.code),
+        Some("BUILD.LINDIST3FLOW.OBJECTIVE_UNSUPPORTED")
+    );
+}
+
+#[test]
+fn absent_dispatch_costs_are_visible_nonblocking_findings() {
+    let mut network = three_phase_network(false);
+    network.generators_mut().push(DistGenerator::new(
+        "pv",
+        "load",
+        terminals(&["1", "2", "3"]),
+        Configuration::Wye,
+        vec![100.0; 3],
+        vec![0.0; 3],
+    ));
+    let instance =
+        LinDist3FlowOpfInstance::from_network(network, LinDist3FlowBuildOptions::default())
+            .unwrap();
+    let missing = instance
+        .applicability()
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == "BUILD.LINDIST3FLOW.COST_MISSING")
+        .collect::<Vec<_>>();
+
+    assert_eq!(missing.len(), 2);
+    assert!(instance.applicability().is_applicable());
+    assert!(
+        missing
+            .iter()
+            .all(|diagnostic| diagnostic.severity() == powerio_core::DiagnosticSeverity::Warning)
     );
 }

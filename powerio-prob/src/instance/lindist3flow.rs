@@ -12,8 +12,8 @@ use powerio_dist::{DistLoadVoltageModel, MulticonductorNetwork};
 use serde::{Deserialize, Serialize};
 
 use super::McAcOpfInstance;
-use crate::MulticonductorOperatingPointQuantity;
 use crate::diagnostics::codes;
+use crate::{MulticonductorOperatingPointQuantity, ObjectiveTerm};
 
 /// Selection of the fixed phasors used to form LinDist3Flow coefficients.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -296,12 +296,59 @@ fn matrix_has_nonzero(matrix: &[Vec<f64>]) -> bool {
     matrix.iter().flatten().any(|value| *value != 0.0)
 }
 
+fn check_objective(instance: &McAcOpfInstance, diagnostics: &mut Vec<Diagnostic>) {
+    let network = instance.network();
+    let dispatch_cost = match instance.objective().terms() {
+        [] => false,
+        [ObjectiveTerm::ActivePowerDispatchCost] => true,
+        terms => {
+            diagnostics.push(finding(
+                &codes::BUILD_LINDIST3FLOW_OBJECTIVE_UNSUPPORTED,
+                format!(
+                    "the strict LinDist3Flow slice accepts feasibility or exactly one active-power dispatch-cost term, but received {} term(s)",
+                    terms.len()
+                ),
+                None,
+            ));
+            false
+        }
+    };
+    if !dispatch_cost {
+        return;
+    }
+    for (row, generator) in network.generators().iter().enumerate() {
+        if generator.cost.is_none() {
+            diagnostics.push(finding(
+                &codes::BUILD_LINDIST3FLOW_COST_MISSING,
+                format!(
+                    "generator `{}` has no active-power dispatch cost; its coefficient is zero",
+                    generator.name
+                ),
+                Some(format!("/generators/{row}/cost")),
+            ));
+        }
+    }
+    for (row, source) in network.sources().iter().enumerate() {
+        if source.energy_cost_rate.is_none() {
+            diagnostics.push(finding(
+                &codes::BUILD_LINDIST3FLOW_COST_MISSING,
+                format!(
+                    "voltage source `{}` has no energy cost rate; its coefficient is zero",
+                    source.name
+                ),
+                Some(format!("/sources/{row}/energy_cost_rate")),
+            ));
+        }
+    }
+}
+
 fn check_supported_slice(
     instance: &McAcOpfInstance,
     options: LinDist3FlowBuildOptions,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let network = instance.network();
+    check_objective(instance, diagnostics);
     if options.unsupported != LinDist3FlowUnsupported::Reject {
         diagnostics.push(finding(
             &codes::BUILD_LINDIST3FLOW_POLICY_UNAVAILABLE,
