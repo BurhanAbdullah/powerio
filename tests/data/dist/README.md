@@ -65,11 +65,20 @@ with double digit matrix indices (`linecode_10x10`), plus a four wire feeder
 whose neutral is grounded through an explicit reactor
 (`neutral_grounding_reactor`) and two single phase load model cases
 (`onephase_cvr_load`, `onephase_zip_load`), plus one inverter based resource
-case with `PVSystem` and `InvControl` (`ibr_pv_control`). All fourteen solve in
-OpenDSS (opendssdirect 0.9.4). `evals/validation/validate_opendss.py` compares the
-thirteen solve fidelity fixtures against their canonical regenerated decks; it
-excludes `defaults_degenerate` because that fixture intentionally relies on
-constructor defaults, including omitted load voltage bounds.
+case with `PVSystem` and `InvControl` (`ibr_pv_control`), plus the one-phase
+LinDist3Flow oracle described below. All fifteen solve in OpenDSS
+(opendssdirect 0.9.4). `evals/validation/validate_opendss.py` compares the
+thirteen general solve fidelity fixtures against their canonical regenerated
+decks; it excludes `defaults_degenerate` because that fixture intentionally
+relies on constructor defaults, including omitted load voltage bounds, and the
+LinDist3Flow case is checked by its dedicated validator.
+
+`lindist3flow_oracle.dss` is an original one-phase radial constant-power case
+for comparing the lossless LinDist3Flow voltage equation with an independent
+nonlinear OpenDSS solve. `lindist3flow_oracle.json` records the OpenDSSDirect.py
+0.9.4 result. `evals/validation/validate_lindist3flow_opendss.py` regenerates
+that result, while `powerio-matrix/tests/lindist3flow.rs` checks the compiled
+linear model and its declared approximation error against it.
 
 ## pmd/
 

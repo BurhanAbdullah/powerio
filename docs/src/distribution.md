@@ -73,6 +73,9 @@ needs the independently owned network projection without module records.
 `powerio-matrix` compiles that instance to sparse affine rows, bounds, and
 second-order cones. It does not select or invoke a solver, so the same bundle
 can be handed to a native or WebAssembly-compatible conic backend.
+The supported physical slice, rejected equipment and validation evidence are
+recorded in the
+[multiconductor LinDist3Flow design review](https://github.com/eigenergy/powerio/blob/main/docs/design/lindist3flow-multiconductor.md).
 
 ## BMOPF schema versions
 
