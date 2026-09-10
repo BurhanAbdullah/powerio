@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use powerio_prob::LinDist3FlowOpfInstance;
+use powerio_prob::{LinDist3FlowOpfInstance, LinDist3FlowOpfValues};
 
 use crate::{
     Error, LinDist3FlowAffineExpression, LinDist3FlowBalanceEquation, LinDist3FlowPreparation,
@@ -499,6 +499,169 @@ pub fn build_lindist3flow_conic_problem(
     })
 }
 
+/// Translate a canonical primal vector back to formulation-ordered physical
+/// values suitable for [`powerio_prob::LinDist3FlowOpfSolution`].
+///
+/// # Errors
+/// The primal length differs from the canonical variable count, or the
+/// problem contains an inconsistent semantic index.
+#[allow(clippy::too_many_lines)]
+pub fn lindist3flow_values_from_primal(
+    problem: &LinDist3FlowConicProblem,
+    primal: &[f64],
+) -> Result<LinDist3FlowOpfValues> {
+    if primal.len() != problem.variables.len() {
+        return Err(invalid(format!(
+            "LinDist3Flow primal has length {}, expected {}",
+            primal.len(),
+            problem.variables.len()
+        )));
+    }
+    let line_offsets = problem
+        .preparation
+        .network
+        .lines
+        .iter()
+        .scan(0, |offset, line| {
+            let current = *offset;
+            *offset += line.parent_nodes.len();
+            Some(current)
+        })
+        .collect::<Vec<_>>();
+    let generator_offsets = problem
+        .preparation
+        .devices
+        .generators
+        .iter()
+        .scan(0, |offset, generator| {
+            let current = *offset;
+            *offset += generator.channels.len();
+            Some(current)
+        })
+        .collect::<Vec<_>>();
+    let source_offsets = problem
+        .preparation
+        .devices
+        .sources
+        .iter()
+        .scan(0, |offset, source| {
+            let current = *offset;
+            *offset += source.terminal_nodes.len();
+            Some(current)
+        })
+        .collect::<Vec<_>>();
+    let line_count = problem
+        .preparation
+        .network
+        .lines
+        .iter()
+        .map(|line| line.parent_nodes.len())
+        .sum();
+    let generator_count = problem
+        .preparation
+        .devices
+        .generators
+        .iter()
+        .map(|generator| generator.channels.len())
+        .sum();
+    let source_count = problem
+        .preparation
+        .devices
+        .sources
+        .iter()
+        .map(|source| source.terminal_nodes.len())
+        .sum();
+    let mut values = LinDist3FlowOpfValues::default();
+    values.terminal_voltage_magnitude_squared = vec![0.0; problem.preparation.network.nodes.len()];
+    values.line_active_power = vec![0.0; line_count];
+    values.line_reactive_power = vec![0.0; line_count];
+    values.generator_active_power = vec![0.0; generator_count];
+    values.generator_reactive_power = vec![0.0; generator_count];
+    values.source_active_power = vec![0.0; source_count];
+    values.source_reactive_power = vec![0.0; source_count];
+    for (column, variable) in problem.variables.iter().enumerate() {
+        let value = primal[column];
+        match &variable.variable {
+            LinDist3FlowDecisionVariable::SquaredVoltage { node } => {
+                *values
+                    .terminal_voltage_magnitude_squared
+                    .get_mut(*node)
+                    .ok_or_else(|| invalid(format!("unknown voltage node {node}")))? = value;
+            }
+            LinDist3FlowDecisionVariable::Power(power) => match power {
+                LinDist3FlowVariable::LineActive { line, conductor } => {
+                    let position = line_offsets
+                        .get(*line)
+                        .copied()
+                        .and_then(|offset| offset.checked_add(*conductor))
+                        .ok_or_else(|| invalid("unknown line active-power index"))?;
+                    *values
+                        .line_active_power
+                        .get_mut(position)
+                        .ok_or_else(|| invalid("unknown line active-power conductor"))? = value;
+                }
+                LinDist3FlowVariable::LineReactive { line, conductor } => {
+                    let position = line_offsets
+                        .get(*line)
+                        .copied()
+                        .and_then(|offset| offset.checked_add(*conductor))
+                        .ok_or_else(|| invalid("unknown line reactive-power index"))?;
+                    *values
+                        .line_reactive_power
+                        .get_mut(position)
+                        .ok_or_else(|| invalid("unknown line reactive-power conductor"))? = value;
+                }
+                LinDist3FlowVariable::GeneratorActive { generator, channel } => {
+                    let position = generator_offsets
+                        .get(*generator)
+                        .copied()
+                        .and_then(|offset| offset.checked_add(*channel))
+                        .ok_or_else(|| invalid("unknown generator active-power index"))?;
+                    *values
+                        .generator_active_power
+                        .get_mut(position)
+                        .ok_or_else(|| invalid("unknown generator active-power channel"))? = value;
+                }
+                LinDist3FlowVariable::GeneratorReactive { generator, channel } => {
+                    let position = generator_offsets
+                        .get(*generator)
+                        .copied()
+                        .and_then(|offset| offset.checked_add(*channel))
+                        .ok_or_else(|| invalid("unknown generator reactive-power index"))?;
+                    *values
+                        .generator_reactive_power
+                        .get_mut(position)
+                        .ok_or_else(|| invalid("unknown generator reactive-power channel"))? =
+                        value;
+                }
+                LinDist3FlowVariable::SourceActive { source, channel } => {
+                    let position = source_offsets
+                        .get(*source)
+                        .copied()
+                        .and_then(|offset| offset.checked_add(*channel))
+                        .ok_or_else(|| invalid("unknown source active-power index"))?;
+                    *values
+                        .source_active_power
+                        .get_mut(position)
+                        .ok_or_else(|| invalid("unknown source active-power channel"))? = value;
+                }
+                LinDist3FlowVariable::SourceReactive { source, channel } => {
+                    let position = source_offsets
+                        .get(*source)
+                        .copied()
+                        .and_then(|offset| offset.checked_add(*channel))
+                        .ok_or_else(|| invalid("unknown source reactive-power index"))?;
+                    *values
+                        .source_reactive_power
+                        .get_mut(position)
+                        .ok_or_else(|| invalid("unknown source reactive-power channel"))? = value;
+                }
+            },
+        }
+    }
+    Ok(values)
+}
+
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
@@ -641,5 +804,22 @@ mod tests {
             }
         );
         assert_relative_eq!(arguments[1].constant, 12.5);
+    }
+
+    #[test]
+    fn canonical_primal_translates_to_physical_table_order() {
+        let problem = build_lindist3flow_conic_problem(&instance()).unwrap();
+        let primal = (0..problem.variables.len())
+            .map(|column| column as f64 + 10.0)
+            .collect::<Vec<_>>();
+        let values = lindist3flow_values_from_primal(&problem, &primal).unwrap();
+        assert_eq!(values.terminal_voltage_magnitude_squared, vec![10.0, 11.0]);
+        assert_eq!(values.line_active_power, vec![12.0]);
+        assert_eq!(values.line_reactive_power, vec![13.0]);
+        assert_eq!(values.generator_active_power, vec![14.0]);
+        assert_eq!(values.generator_reactive_power, vec![15.0]);
+        assert_eq!(values.source_active_power, vec![16.0]);
+        assert_eq!(values.source_reactive_power, vec![17.0]);
+        assert!(lindist3flow_values_from_primal(&problem, &primal[..7]).is_err());
     }
 }

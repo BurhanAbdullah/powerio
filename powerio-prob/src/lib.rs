@@ -58,9 +58,10 @@ pub use operating::{
 pub use reference::ReferenceBuses;
 pub use solution::{
     AcOpfSolution, AcPfSolution, AcScucSolution, DcOpfSolution, DcPfSolution, GeneratorDispatch,
-    McAcOpfSolution, McAcPfSolution, Producer, Residuals, SCUC_DEVICE_OUTPUT_SERIES,
-    SCUC_NETWORK_OUTPUT_SERIES, ScucDeviceOutputs, ScucNetworkOutputs, Termination,
-    ThreeWindingTransformerTerminalActivePower, ThreeWindingTransformerTerminalPower,
+    LinDist3FlowOpfSolution, LinDist3FlowOpfValues, McAcOpfSolution, McAcPfSolution, Producer,
+    Residuals, SCUC_DEVICE_OUTPUT_SERIES, SCUC_NETWORK_OUTPUT_SERIES, ScucDeviceOutputs,
+    ScucNetworkOutputs, Termination, ThreeWindingTransformerTerminalActivePower,
+    ThreeWindingTransformerTerminalPower,
 };
 pub use update::{
     ActivePower, ActivePowerUnit, ApparentPower, ApparentPowerUnit, BalancedCalculationInstance,

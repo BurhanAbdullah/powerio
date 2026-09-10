@@ -92,7 +92,7 @@ pub use lindist3flow_conic::{
     LinDist3FlowCone, LinDist3FlowConeOrigin, LinDist3FlowConicProblem,
     LinDist3FlowDecisionVariable, LinDist3FlowEquality, LinDist3FlowEqualityOrigin,
     LinDist3FlowLinearExpression, LinDist3FlowLinearTerm, LinDist3FlowVariableData,
-    build_lindist3flow_conic_problem,
+    build_lindist3flow_conic_problem, lindist3flow_values_from_primal,
 };
 pub use lindist3flow_devices::{
     LinDist3FlowAffineExpression, LinDist3FlowBalanceEquation, LinDist3FlowBalanceRow,

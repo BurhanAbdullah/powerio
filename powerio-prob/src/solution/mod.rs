@@ -11,9 +11,11 @@
 //!
 //! The registered solutions include [`DcPfSolution`], [`AcPfSolution`],
 //! [`DcOpfSolution`], [`AcOpfSolution`], [`SocwrOpfSolution`],
-//! [`McAcPfSolution`], [`McAcOpfSolution`], and [`AcScucSolution`].
+//! [`McAcPfSolution`], [`McAcOpfSolution`], [`LinDist3FlowOpfSolution`], and
+//! [`AcScucSolution`].
 
 mod balanced;
+mod lindist3flow;
 mod multiconductor;
 mod scuc;
 mod socwr;
@@ -22,6 +24,7 @@ pub use balanced::{
     AcOpfSolution, AcPfSolution, DcOpfSolution, DcPfSolution, GeneratorDispatch,
     ThreeWindingTransformerTerminalActivePower, ThreeWindingTransformerTerminalPower,
 };
+pub use lindist3flow::{LinDist3FlowOpfSolution, LinDist3FlowOpfValues};
 pub use multiconductor::{McAcOpfSolution, McAcPfSolution};
 pub use scuc::{
     AcScucSolution, SCUC_DEVICE_OUTPUT_SERIES, SCUC_NETWORK_OUTPUT_SERIES, ScucDeviceOutputs,
