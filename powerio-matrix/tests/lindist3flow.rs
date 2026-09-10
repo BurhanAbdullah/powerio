@@ -145,7 +145,9 @@ fn bmopf_kron_standard_form_and_si_decode_match_reference_feeder() {
     )
     .unwrap();
     let module = powerio_dist::parse(source).unwrap();
-    let reduction = neutral_kron_reduce(module.value(), &NeutralKronOptions::default()).unwrap();
+    let mut network = module.value().clone();
+    network.line_codes_mut()[0].i_max.as_mut().unwrap()[1] = f64::INFINITY;
+    let reduction = neutral_kron_reduce(&network, &NeutralKronOptions::default()).unwrap();
     assert_eq!(reduction.report().buses.len(), 2);
     assert_eq!(reduction.report().recoveries.len(), 1);
 

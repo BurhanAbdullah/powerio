@@ -69,6 +69,9 @@ let instance = to_lindist3flow_opf_instance(&reduced)?;
 
 `powerio_dist::neutral_kron_reduce` remains available when an application
 needs the independently owned network projection without module records.
+The projection rejects finite current limits on eliminated neutrals. Such limits
+need a constraint on the recovered neutral current, which this reduced network
+type cannot represent.
 
 `powerio-matrix` compiles that instance to sparse affine rows, bounds, and
 second-order cones. It does not select or invoke a solver, so the same bundle
@@ -81,7 +84,7 @@ recorded in the
 
 PowerIO v0.11.0 supports **draft BMOPF 0.2**, subject to Task Force
 review. The schema version is separate from the PowerIO release and from
-PowerIO IR generation 2. Producer provenance records the proposal revision and
+PowerIO IR generations 2 and 3. Producer provenance records the proposal revision and
 schema digest. Previously emitted schema identifiers remain readable aliases.
 
 An unqualified `bmopf-json` emission preserves an unchanged source byte for
@@ -101,7 +104,7 @@ Legacy output relocates proposed-only equipment and transformer fields into
 assumed to calculate the same network. Proposal output uses the declared tables
 and preserves winding ratings, taps, neutral impedances and current-limit data.
 
-Unequal bus phase bounds remain individual values through parsing, generation-2
+Unequal bus phase bounds remain individual values through parsing, generation-2 and generation-3
 IR and explicit BMOPF output. Uniform values use `v_min`/`v_max`; unequal values
 use `v_min_phase`/`v_max_phase` in the typed Rust model. A present scalar takes
 precedence over the corresponding vector. PMD voltage arrays instead follow
@@ -133,7 +136,7 @@ version-directory identifiers remains supported without fetching remote data.
 
 Draft BMOPF 0.2 uses `energy_cost_rate` in $/kWh. Generator entries follow phase
 order, as do voltage-source entries. Neutral terminals have no price entry. PowerIO retains source prices in `VoltageSource.energy_cost_rate` and
-in generation-2 IR. C and Julia expose `energy_cost_rate_per_kwh`; Python's
+in generation-2 and generation-3 IR. C and Julia expose `energy_cost_rate_per_kwh`; Python's
 voltage-source records expose `energy_cost_rate`.
 
 The reader also accepts the deprecated per-phase `cost` spelling. Explicit
@@ -141,3 +144,32 @@ The reader also accepts the deprecated per-phase `cost` spelling. Explicit
 `extras.voltage_source`, with a diagnostic. Only a consumer that reads that
 overlay can use the retained source prices. PowerIO stores the coefficients;
 the selected solver determines whether and how they enter its objective.
+
+## LinDist3Flow bindings
+
+Python and Julia expose `LinDist3FlowOpfInstance` and `LinDist3FlowOpfSolution`
+as typed module values. `to_lindist3flow_opf_instance` constructs an instance
+from a supported phase-only network or multiconductor AC OPF instance.
+`instance.metadata` supplies the node and conductor axes, roots, and fixed
+reference voltages. Line powers follow the reported parent-to-child direction.
+Python positions are zero based; Julia positions are one based.
+
+Solutions expose their instance, termination, objective, and named primal
+columns: `terminal_voltage_magnitude_squared`, `line_active_power`,
+`line_reactive_power`, `generator_active_power`, `generator_reactive_power`,
+`source_active_power`, and `source_reactive_power`. Voltage values use squared
+volts and power values use watts or vars. Node and line columns follow the
+metadata axes; generator and source columns follow network table order, then
+channel order. Each returned column is an independent copy.
+
+C ABI 7 adds `pio_value_lindist3flow_opf_instance`,
+`pio_value_lindist3flow_opf_solution`, and
+`pio_module_to_lindist3flow_opf_instance`. The generic calculation accessors
+read the instance, network, objective, constraints, termination, and solution
+columns. `pio_lindist3flow_opf_instance_node_at` and
+`pio_lindist3flow_opf_instance_conductor_at` return borrowed typed axis views.
+Their strings stay valid while the instance handle remains alive.
+Sparse conic preparation and solver adapters remain Rust APIs.
+
+PowerIO 0.11.1 writes these values in IR generation 3 and continues to read
+generation 2. Generation-2 documents cannot contain LinDist3Flow values.

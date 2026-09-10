@@ -86,22 +86,22 @@ pub const IR_SCHEMA_NAME: &str = "pio-ir";
 /// |---|---|---|
 /// | 1 | v0.10.0 | the `PioModule` serialization, under the identity `powerio.module` |
 /// | 2 | v0.11.0 | the identity `pio-ir`; the producer release recorded apart from the generation; retained source bytes left out |
+/// | 3 | v0.11.1 | LinDist3Flow OPF instance and solution types |
 ///
-/// A bump within one minor release line ships with a reader for the
-/// generation it replaces, so every release of the line reads every
-/// generation the line wrote. [`IR_MIN_VERSION`] is the oldest generation
-/// this build reads.
-pub const IR_VERSION: u64 = 2;
+/// A bump within one minor release line retains readers for earlier
+/// generations in that line. Older builds cannot read newer generations.
+/// [`IR_MIN_VERSION`] is the oldest generation this build reads.
+pub const IR_VERSION: u64 = 3;
 
 /// The oldest PowerIO IR generation this build reads.
 ///
-/// The floor rises only at a minor release boundary. In 0.11 it equals
-/// [`IR_VERSION`].
+/// The floor rises only at a minor release boundary. The 0.11 line reads
+/// generation 2 onward, up to the generation that each build writes.
 pub const IR_MIN_VERSION: u64 = 2;
 
 /// The `$id` of the JSON Schema for the documents this build writes, which is
 /// also the address the schema is served from.
-pub const IR_SCHEMA_ID: &str = "https://powerio.dev/schema/pio-ir/2/schema.json";
+pub const IR_SCHEMA_ID: &str = "https://powerio.dev/schema/pio-ir/3/schema.json";
 
 use powerio_tx::format;
 pub use powerio_tx::{

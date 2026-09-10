@@ -941,3 +941,35 @@ fn every_multiconductor_quantity_round_trips() {
     assert_eq!(point.generator_active_power("pv", "2"), Some(3_500.0));
     assert_eq!(point.generator_reactive_power("pv", "1"), Some(100.0));
 }
+
+#[test]
+fn generation_two_values_remain_readable_and_lindist3flow_requires_three() {
+    for value in [
+        PioValue::BalancedNetwork(network()),
+        PioValue::McAcOpfInstance(McAcOpfInstance::from_network(mc_network()).unwrap()),
+        PioValue::LinDist3FlowOpfInstance(
+            LinDist3FlowOpfInstance::from_network(
+                mc_network(),
+                LinDist3FlowBuildOptions::default(),
+            )
+            .unwrap(),
+        ),
+    ] {
+        let requires_three = matches!(&value, PioValue::LinDist3FlowOpfInstance(_));
+        let text = serialize(&PioModule::new(value)).unwrap();
+        let mut document: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(document["version"], 3);
+        document["version"] = 2.into();
+        let result = deserialize(&document.to_string());
+        if requires_three {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("require PowerIO IR generation 3")
+            );
+        } else {
+            assert!(result.is_ok());
+        }
+    }
+}

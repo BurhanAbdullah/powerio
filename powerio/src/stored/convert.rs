@@ -71,6 +71,17 @@ pub fn read_module(text: &str) -> Result<PioModule<PioValue>> {
     // or not PowerIO IR at all.
     let decode_error = match serde_json::from_str::<StoredModule>(text) {
         Ok(stored) if is_readable(&stored.schema, stored.version) => {
+            if stored.version == 2
+                && matches!(
+                    &stored.value,
+                    dto::StoredValue::LinDist3FlowOpfInstance(_)
+                        | dto::StoredValue::LinDist3FlowOpfSolution(_)
+                )
+            {
+                return Err(invalid(
+                    "LinDist3Flow values require PowerIO IR generation 3",
+                ));
+            }
             dto::validate(&stored).map_err(invalid)?;
             return decode_stored(stored);
         }
@@ -1096,7 +1107,34 @@ fn encode_lindist3flow_opf_instance(
 ) -> Result<dto::LinDist3FlowOpfInstance> {
     Ok(dto::LinDist3FlowOpfInstance {
         base: encode_mc_ac_opf_instance(instance.base_instance())?,
-        options: instance.options(),
+        options: dto::LinDist3FlowBuildOptions {
+            reference_policy: match instance.options().reference_policy {
+                powerio_prob::LinDist3FlowReferencePolicy::Auto => {
+                    dto::LinDist3FlowReferencePolicy::Auto
+                }
+                powerio_prob::LinDist3FlowReferencePolicy::Explicit => {
+                    dto::LinDist3FlowReferencePolicy::Explicit
+                }
+                powerio_prob::LinDist3FlowReferencePolicy::SourcePropagated => {
+                    dto::LinDist3FlowReferencePolicy::SourcePropagated
+                }
+                _ => return Err(invalid("unsupported LinDist3Flow reference_policy")),
+            },
+            unsupported: match instance.options().unsupported {
+                powerio_prob::LinDist3FlowUnsupported::Reject => {
+                    dto::LinDist3FlowUnsupported::Reject
+                }
+                powerio_prob::LinDist3FlowUnsupported::Lower => dto::LinDist3FlowUnsupported::Lower,
+                powerio_prob::LinDist3FlowUnsupported::Approximate => {
+                    dto::LinDist3FlowUnsupported::Approximate
+                }
+                powerio_prob::LinDist3FlowUnsupported::Permissive => {
+                    dto::LinDist3FlowUnsupported::Permissive
+                }
+                _ => return Err(invalid("unsupported LinDist3Flow unsupported")),
+            },
+            require_neutral_provenance: instance.options().require_neutral_provenance,
+        },
     })
 }
 
@@ -2392,7 +2430,30 @@ fn decode_lindist3flow_opf_instance(
     instance: dto::LinDist3FlowOpfInstance,
 ) -> Result<powerio_prob::LinDist3FlowOpfInstance> {
     let base = decode_mc_ac_opf_instance(instance.base)?;
-    powerio_prob::LinDist3FlowOpfInstance::from_mc_ac(base, instance.options)
+    let options = powerio_prob::LinDist3FlowBuildOptions::default()
+        .with_reference_policy(match instance.options.reference_policy {
+            dto::LinDist3FlowReferencePolicy::Auto => {
+                powerio_prob::LinDist3FlowReferencePolicy::Auto
+            }
+            dto::LinDist3FlowReferencePolicy::Explicit => {
+                powerio_prob::LinDist3FlowReferencePolicy::Explicit
+            }
+            dto::LinDist3FlowReferencePolicy::SourcePropagated => {
+                powerio_prob::LinDist3FlowReferencePolicy::SourcePropagated
+            }
+        })
+        .with_unsupported(match instance.options.unsupported {
+            dto::LinDist3FlowUnsupported::Reject => powerio_prob::LinDist3FlowUnsupported::Reject,
+            dto::LinDist3FlowUnsupported::Lower => powerio_prob::LinDist3FlowUnsupported::Lower,
+            dto::LinDist3FlowUnsupported::Approximate => {
+                powerio_prob::LinDist3FlowUnsupported::Approximate
+            }
+            dto::LinDist3FlowUnsupported::Permissive => {
+                powerio_prob::LinDist3FlowUnsupported::Permissive
+            }
+        })
+        .with_required_neutral_provenance(instance.options.require_neutral_provenance);
+    powerio_prob::LinDist3FlowOpfInstance::from_mc_ac(base, options)
         .map_err(|error| invalid(error.to_string()))
 }
 

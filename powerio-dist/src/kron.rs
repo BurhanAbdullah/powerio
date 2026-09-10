@@ -70,10 +70,11 @@ pub struct NeutralKronBus {
     pub grounding: NeutralKronGrounding,
 }
 
-/// Neutral-voltage recovery for one reduced linecode.
+/// Neutral-current recovery for one reduced linecode.
 ///
-/// With retained conductor voltages `v_p`, the eliminated neutral voltage is
-/// `v_n = K v_p`, where `K = -Z_nn^-1 Z_np`.
+/// Zero neutral voltage drop gives `i_n = K i_p` for retained conductor
+/// currents `i_p`, where `K = -Z_nn^-1 Z_np`. Both neutral endpoints remain
+/// at ideal ground; this matrix does not recover a neutral voltage.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct NeutralKronRecovery {
@@ -329,6 +330,24 @@ fn slice_if_conductor_aligned(values: &mut Option<Vec<f64>>, old_n: usize, neutr
     }
 }
 
+fn reduce_current_limit(
+    values: &mut Option<Vec<f64>>,
+    old_n: usize,
+    neutral: usize,
+    label: &str,
+) -> Result<()> {
+    if values
+        .as_ref()
+        .is_some_and(|values| values.len() == old_n && values[neutral] != f64::INFINITY)
+    {
+        return Err(fail(format!(
+            "{label} has a neutral current limit that the reduced network cannot represent"
+        )));
+    }
+    slice_if_conductor_aligned(values, old_n, neutral);
+    Ok(())
+}
+
 fn reduce_phase_bound(
     values: &mut Option<Vec<f64>>,
     terminal_count: usize,
@@ -582,7 +601,12 @@ fn reduce_linecodes(
             reduced.b_from = submatrix(&source.b_from, &keep);
             reduced.g_to = submatrix(&source.g_to, &keep);
             reduced.b_to = submatrix(&source.b_to, &keep);
-            slice_if_conductor_aligned(&mut reduced.i_max, source.n_conductors, position);
+            reduce_current_limit(
+                &mut reduced.i_max,
+                source.n_conductors,
+                position,
+                &format!("linecode `{}`", source.name),
+            )?;
             slice_if_conductor_aligned(&mut reduced.s_max, source.n_conductors, position);
             reduced.source = Some("kron_reduction".to_owned());
 
@@ -655,7 +679,12 @@ fn reduce_terminal_maps(
                 &format!("line `{}` from map", line.name),
             )? {
                 line.terminal_map_from.remove(position);
-                slice_if_conductor_aligned(&mut line.i_max, old_n, position);
+                reduce_current_limit(
+                    &mut line.i_max,
+                    old_n,
+                    position,
+                    &format!("line `{}`", line.name),
+                )?;
                 slice_if_conductor_aligned(&mut line.s_max, old_n, position);
             }
         }
@@ -695,7 +724,12 @@ fn reduce_terminal_maps(
                 &format!("generator `{}` terminal map", generator.name),
             )? {
                 generator.terminal_map.remove(position);
-                slice_if_conductor_aligned(&mut generator.i_max, old_n, position);
+                reduce_current_limit(
+                    &mut generator.i_max,
+                    old_n,
+                    position,
+                    &format!("generator `{}`", generator.name),
+                )?;
                 slice_if_conductor_aligned(&mut generator.s_max, old_n, position);
             }
             if generator.terminal_map.is_empty() {
@@ -838,7 +872,12 @@ fn reduce_terminal_maps(
                 let old_n = switch.terminal_map_from.len();
                 switch.terminal_map_from.remove(from);
                 switch.terminal_map_to.remove(to);
-                slice_if_conductor_aligned(&mut switch.i_max, old_n, from);
+                reduce_current_limit(
+                    &mut switch.i_max,
+                    old_n,
+                    from,
+                    &format!("switch `{}`", switch.name),
+                )?;
             }
             (None, None) => {}
             _ => {

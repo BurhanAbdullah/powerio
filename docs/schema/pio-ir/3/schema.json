@@ -7192,6 +7192,151 @@
       ],
       "type": "object"
     },
+    "LinDist3FlowBuildOptions": {
+      "additionalProperties": false,
+      "properties": {
+        "reference_policy": {
+          "$ref": "#/$defs/LinDist3FlowReferencePolicy"
+        },
+        "require_neutral_provenance": {
+          "type": "boolean"
+        },
+        "unsupported": {
+          "$ref": "#/$defs/LinDist3FlowUnsupported"
+        }
+      },
+      "required": [
+        "reference_policy",
+        "unsupported",
+        "require_neutral_provenance"
+      ],
+      "type": "object"
+    },
+    "LinDist3FlowOpfInstance": {
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "$ref": "#/$defs/McAcOpfInstance"
+        },
+        "options": {
+          "$ref": "#/$defs/LinDist3FlowBuildOptions"
+        }
+      },
+      "required": [
+        "base",
+        "options"
+      ],
+      "type": "object"
+    },
+    "LinDist3FlowOpfSolution": {
+      "additionalProperties": false,
+      "properties": {
+        "instance": {
+          "$ref": "#/$defs/LinDist3FlowOpfInstance"
+        },
+        "objective": {
+          "$ref": "#/$defs/StoredF64"
+        },
+        "producer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "residuals": {
+          "$ref": "#/$defs/Residuals"
+        },
+        "termination": {
+          "$ref": "#/$defs/Termination"
+        },
+        "values": {
+          "$ref": "#/$defs/LinDist3FlowOpfValues"
+        }
+      },
+      "required": [
+        "instance",
+        "termination",
+        "residuals",
+        "values",
+        "objective"
+      ],
+      "type": "object"
+    },
+    "LinDist3FlowOpfValues": {
+      "additionalProperties": false,
+      "description": "Physical primal values of a serialized LinDist3Flow result. Arrays follow\nthe instance's documented topology and device channel orders.",
+      "properties": {
+        "generator_active_power": {
+          "items": {
+            "$ref": "#/$defs/StoredF64"
+          },
+          "type": "array"
+        },
+        "generator_reactive_power": {
+          "items": {
+            "$ref": "#/$defs/StoredF64"
+          },
+          "type": "array"
+        },
+        "line_active_power": {
+          "items": {
+            "$ref": "#/$defs/StoredF64"
+          },
+          "type": "array"
+        },
+        "line_reactive_power": {
+          "items": {
+            "$ref": "#/$defs/StoredF64"
+          },
+          "type": "array"
+        },
+        "source_active_power": {
+          "items": {
+            "$ref": "#/$defs/StoredF64"
+          },
+          "type": "array"
+        },
+        "source_reactive_power": {
+          "items": {
+            "$ref": "#/$defs/StoredF64"
+          },
+          "type": "array"
+        },
+        "terminal_voltage_magnitude_squared": {
+          "items": {
+            "$ref": "#/$defs/StoredF64"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "terminal_voltage_magnitude_squared",
+        "line_active_power",
+        "line_reactive_power",
+        "generator_active_power",
+        "generator_reactive_power",
+        "source_active_power",
+        "source_reactive_power"
+      ],
+      "type": "object"
+    },
+    "LinDist3FlowReferencePolicy": {
+      "enum": [
+        "auto",
+        "explicit",
+        "source_propagated"
+      ],
+      "type": "string"
+    },
+    "LinDist3FlowUnsupported": {
+      "enum": [
+        "reject",
+        "lower",
+        "approximate",
+        "permissive"
+      ],
+      "type": "string"
+    },
     "LineCommutatedConverter": {
       "description": "A line commutated converter connected to an AC voltage level and two DC nodes.",
       "properties": {
@@ -13137,6 +13282,23 @@
           "additionalProperties": false,
           "properties": {
             "data": {
+              "$ref": "#/$defs/LinDist3FlowOpfInstance"
+            },
+            "type": {
+              "const": "powerio.LinDist3FlowOpfInstance",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "data": {
               "$ref": "#/$defs/AcScucInstance"
             },
             "type": {
@@ -13260,6 +13422,23 @@
             },
             "type": {
               "const": "powerio.McAcOpfSolution",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/LinDist3FlowOpfSolution"
+            },
+            "type": {
+              "const": "powerio.LinDist3FlowOpfSolution",
               "type": "string"
             }
           },
@@ -15821,7 +16000,7 @@
       "type": "object"
     }
   },
-  "$id": "https://powerio.dev/schema/pio-ir/2/schema.json",
+  "$id": "https://powerio.dev/schema/pio-ir/3/schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -15864,7 +16043,7 @@
       "$ref": "#/$defs/StoredValue"
     },
     "version": {
-      "const": 2,
+      "const": 3,
       "format": "uint64",
       "minimum": 0,
       "type": "integer"

@@ -26,7 +26,7 @@ fn four_wire_code() -> DistLineCode {
         vec![0.2, 0.2, 0.2, 2.0],
     ];
     let mut code = DistLineCode::new("four-wire", r, vec![vec![0.0; 4]; 4]);
-    code.i_max = Some(vec![100.0, 100.0, 100.0, 20.0]);
+    code.i_max = Some(vec![100.0, 100.0, 100.0, f64::INFINITY]);
     code
 }
 
@@ -48,7 +48,7 @@ fn basic_network(grounded: bool) -> MulticonductorNetwork {
         "four-wire",
         1.0,
     );
-    line.i_max = Some(vec![90.0, 91.0, 92.0, 10.0]);
+    line.i_max = Some(vec![90.0, 91.0, 92.0, f64::INFINITY]);
     network.lines_mut().push(line);
     network.sources_mut().push(VoltageSource::new(
         "grid",
@@ -151,7 +151,9 @@ fn one_shared_linecode_is_cloned_for_different_neutral_positions() {
     ] {
         network.buses_mut().push(bus(id, &terminals, neutral, true));
     }
-    network.line_codes_mut().push(four_wire_code());
+    let mut code = four_wire_code();
+    code.i_max = None;
+    network.line_codes_mut().push(code);
     network.lines_mut().push(DistLine::new(
         "ab",
         "a",
@@ -201,4 +203,66 @@ fn singular_neutral_self_impedance_is_rejected() {
     network.line_codes_mut()[0].r_series[3][3] = 0.0;
     let error = neutral_kron_reduce(&network, &NeutralKronOptions::default()).unwrap_err();
     assert!(error.to_string().contains("singular or near-singular"));
+}
+
+#[test]
+fn neutral_current_limits_cannot_disappear_during_projection() {
+    for on_line in [false, true] {
+        let mut network = basic_network(true);
+        if on_line {
+            network.lines_mut()[0].i_max.as_mut().unwrap()[3] = 10.0;
+        } else {
+            network.line_codes_mut()[0].i_max.as_mut().unwrap()[3] = 20.0;
+        }
+        let error = neutral_kron_reduce(&network, &NeutralKronOptions::default()).unwrap_err();
+        assert!(error.to_string().contains("neutral current limit"));
+    }
+}
+
+#[test]
+fn recovered_current_has_zero_neutral_voltage_drop_and_preserves_phase_drop() {
+    use num_complex::Complex64;
+    let mut network = basic_network(true);
+    let source = &mut network.line_codes_mut()[0];
+    source.x_series = source
+        .r_series
+        .iter()
+        .map(|row| row.iter().map(|r| r * 0.4).collect())
+        .collect();
+    let reduction = neutral_kron_reduce(&network, &NeutralKronOptions::default()).unwrap();
+    let recovery = &reduction.report().recoveries[0];
+    let phases = [
+        Complex64::new(8.0, -2.0),
+        Complex64::new(-3.0, 4.0),
+        Complex64::new(1.0, 7.0),
+    ];
+    let neutral: Complex64 = phases
+        .iter()
+        .enumerate()
+        .map(|(i, current)| Complex64::new(recovery.k_re[i], recovery.k_im[i]) * current)
+        .sum();
+    let currents = [phases[0], phases[1], phases[2], neutral];
+    let source = &network.line_codes()[0];
+    let reduced = &reduction.network().line_codes()[0];
+    for row in 0..4 {
+        let drop: Complex64 = currents
+            .iter()
+            .enumerate()
+            .map(|(col, current)| {
+                Complex64::new(source.r_series[row][col], source.x_series[row][col]) * current
+            })
+            .sum();
+        let expected = if row == 3 {
+            Complex64::new(0.0, 0.0)
+        } else {
+            phases
+                .iter()
+                .enumerate()
+                .map(|(col, current)| {
+                    Complex64::new(reduced.r_series[row][col], reduced.x_series[row][col]) * current
+                })
+                .sum()
+        };
+        assert!((drop - expected).norm() < 1e-12);
+    }
 }

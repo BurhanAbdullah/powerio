@@ -56,10 +56,12 @@ Z_reduced = Z_pp - Z_pn Z_nn^-1 Z_np.
 
 It rewrites conductor-indexed terminal maps, ratings and bounds, and records
 each bus decision and component rewrite in `NeutralKronReport`. It also records
-the recovery map `v_n = -Z_nn^-1 Z_np v_p`. A neutral must be explicitly
+the current recovery map `i_n = -Z_nn^-1 Z_np i_p`. A neutral must be explicitly
 grounded unless the caller opts into the physical ideal-ground approximation.
 Ambiguous neutrals, inconsistent conductor positions, singular `Z_nn`, and
-unsupported conductor-indexed data are errors.
+unsupported conductor-indexed data, including finite current limits on the
+eliminated neutral, are errors. The recovery map produces neutral current
+under zero neutral voltage drop; it does not recover a neutral voltage.
 
 The reduced network carries machine-readable provenance under
 `powerio_neutral_kron`, in addition to the typed `NeutralKronReport`.

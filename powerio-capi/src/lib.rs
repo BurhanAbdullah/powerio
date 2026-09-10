@@ -3094,8 +3094,10 @@ enum MulticonductorNetworkProjection {
     OperatingPoint,
     McAcPfInstance,
     McAcOpfInstance,
+    LinDist3FlowOpfInstance,
     McAcPfSolution,
     McAcOpfSolution,
+    LinDist3FlowOpfSolution,
 }
 
 struct MulticonductorNetworkInner {
@@ -3122,12 +3124,20 @@ impl MulticonductorNetworkInner {
                 PioValue::McAcOpfInstance(instance),
             ) => Some(instance.network()),
             (
+                MulticonductorNetworkProjection::LinDist3FlowOpfInstance,
+                PioValue::LinDist3FlowOpfInstance(instance),
+            ) => Some(instance.network()),
+            (
                 MulticonductorNetworkProjection::McAcPfSolution,
                 PioValue::McAcPfSolution(solution),
             ) => Some(solution.network()),
             (
                 MulticonductorNetworkProjection::McAcOpfSolution,
                 PioValue::McAcOpfSolution(solution),
+            ) => Some(solution.network()),
+            (
+                MulticonductorNetworkProjection::LinDist3FlowOpfSolution,
+                PioValue::LinDist3FlowOpfSolution(solution),
             ) => Some(solution.network()),
             _ => None,
         }
@@ -3144,6 +3154,7 @@ enum OperatingPointProjection {
     AcOpfInitial,
     McAcPfInitial,
     McAcOpfInitial,
+    LinDist3FlowOpfInitial,
     DcPfSolutionInitial,
     AcPfSolutionInitial,
     DcOpfSolutionInitial,
@@ -3151,6 +3162,7 @@ enum OperatingPointProjection {
     SocwrOpfSolutionInitial,
     McAcPfSolutionInitial,
     McAcOpfSolutionInitial,
+    LinDist3FlowOpfSolutionInitial,
 }
 
 struct OperatingPointInner {
@@ -3211,6 +3223,10 @@ impl OperatingPointInner {
                 instance.initial_point()
             }
             (
+                OperatingPointProjection::LinDist3FlowOpfInitial,
+                PioValue::LinDist3FlowOpfInstance(instance),
+            ) => instance.base_instance().initial_point(),
+            (
                 OperatingPointProjection::McAcPfSolutionInitial,
                 PioValue::McAcPfSolution(solution),
             ) => solution.instance().initial_point(),
@@ -3218,6 +3234,10 @@ impl OperatingPointInner {
                 OperatingPointProjection::McAcOpfSolutionInitial,
                 PioValue::McAcOpfSolution(solution),
             ) => solution.instance().initial_point(),
+            (
+                OperatingPointProjection::LinDist3FlowOpfSolutionInitial,
+                PioValue::LinDist3FlowOpfSolution(solution),
+            ) => solution.instance().base_instance().initial_point(),
             _ => None,
         }
     }
@@ -3271,11 +3291,17 @@ impl OperatingPointInner {
             OperatingPointProjection::McAcOpfInitial => {
                 MulticonductorNetworkProjection::McAcOpfInstance
             }
+            OperatingPointProjection::LinDist3FlowOpfInitial => {
+                MulticonductorNetworkProjection::LinDist3FlowOpfInstance
+            }
             OperatingPointProjection::McAcPfSolutionInitial => {
                 MulticonductorNetworkProjection::McAcPfSolution
             }
             OperatingPointProjection::McAcOpfSolutionInitial => {
                 MulticonductorNetworkProjection::McAcOpfSolution
+            }
+            OperatingPointProjection::LinDist3FlowOpfSolutionInitial => {
+                MulticonductorNetworkProjection::LinDist3FlowOpfSolution
             }
             _ => return None,
         })
@@ -3292,6 +3318,7 @@ enum CalculationInstanceProjection {
     SocwrOpfSolution,
     McAcPfSolution,
     McAcOpfSolution,
+    LinDist3FlowOpfSolution,
     AcScucSolution,
 }
 
@@ -3303,6 +3330,7 @@ enum CalculationInstanceRef<'a> {
     AcOpf(&'a powerio_prob::AcOpfInstance),
     McAcPf(&'a powerio_prob::McAcPfInstance),
     McAcOpf(&'a powerio_prob::McAcOpfInstance),
+    LinDist3FlowOpf(&'a powerio_prob::LinDist3FlowOpfInstance),
     AcScuc(&'a powerio_prob::AcScucInstance),
 }
 
@@ -3315,6 +3343,7 @@ impl CalculationInstanceRef<'_> {
             Self::AcOpf(_) => "powerio.AcOpfInstance",
             Self::McAcPf(_) => "powerio.McAcPfInstance",
             Self::McAcOpf(_) => "powerio.McAcOpfInstance",
+            Self::LinDist3FlowOpf(_) => "powerio.LinDist3FlowOpfInstance",
             Self::AcScuc(_) => "powerio.AcScucInstance",
         }
     }
@@ -3346,6 +3375,10 @@ impl CalculationInstanceInner {
             (CalculationInstanceProjection::Direct, PioValue::McAcOpfInstance(instance)) => {
                 Some(CalculationInstanceRef::McAcOpf(instance))
             }
+            (
+                CalculationInstanceProjection::Direct,
+                PioValue::LinDist3FlowOpfInstance(instance),
+            ) => Some(CalculationInstanceRef::LinDist3FlowOpf(instance)),
             (CalculationInstanceProjection::Direct, PioValue::AcScucInstance(instance)) => {
                 Some(CalculationInstanceRef::AcScuc(instance))
             }
@@ -3372,6 +3405,10 @@ impl CalculationInstanceInner {
                 CalculationInstanceProjection::McAcOpfSolution,
                 PioValue::McAcOpfSolution(solution),
             ) => Some(CalculationInstanceRef::McAcOpf(solution.instance())),
+            (
+                CalculationInstanceProjection::LinDist3FlowOpfSolution,
+                PioValue::LinDist3FlowOpfSolution(solution),
+            ) => Some(CalculationInstanceRef::LinDist3FlowOpf(solution.instance())),
             (CalculationInstanceProjection::AcScucSolution, PioValue::AcScucSolution(solution)) => {
                 Some(CalculationInstanceRef::AcScuc(solution.instance()))
             }
@@ -3433,6 +3470,9 @@ impl CalculationInstanceInner {
             Some(CalculationInstanceRef::AcOpf(instance)) => instance.initial_point().is_some(),
             Some(CalculationInstanceRef::McAcPf(instance)) => instance.initial_point().is_some(),
             Some(CalculationInstanceRef::McAcOpf(instance)) => instance.initial_point().is_some(),
+            Some(CalculationInstanceRef::LinDist3FlowOpf(instance)) => {
+                instance.base_instance().initial_point().is_some()
+            }
             _ => false,
         }
     }
@@ -3680,6 +3720,21 @@ pub unsafe extern "C" fn pio_module_to_mc_ac_opf_instance(
             error,
             powerio::transform::to_mc_ac_opf_instance,
             PioValue::McAcOpfInstance,
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_module_to_lindist3flow_opf_instance(
+    module: *const PioModule,
+    error: *mut *mut PioError,
+) -> *mut PioModule {
+    unsafe {
+        transform_module(
+            module,
+            error,
+            powerio::transform::to_lindist3flow_opf_instance,
+            PioValue::LinDist3FlowOpfInstance,
         )
     }
 }
@@ -4614,6 +4669,7 @@ enum ExpectedValue {
     AcOpfInstance,
     McAcPfInstance,
     McAcOpfInstance,
+    LinDist3FlowOpfInstance,
     AcScucInstance,
     DcPfSolution,
     AcPfSolution,
@@ -4622,6 +4678,7 @@ enum ExpectedValue {
     SocwrOpfSolution,
     McAcPfSolution,
     McAcOpfSolution,
+    LinDist3FlowOpfSolution,
     AcScucSolution,
 }
 
@@ -4641,6 +4698,10 @@ impl ExpectedValue {
                 | (Self::AcOpfInstance, PioValue::AcOpfInstance(_))
                 | (Self::McAcPfInstance, PioValue::McAcPfInstance(_))
                 | (Self::McAcOpfInstance, PioValue::McAcOpfInstance(_))
+                | (
+                    Self::LinDist3FlowOpfInstance,
+                    PioValue::LinDist3FlowOpfInstance(_)
+                )
                 | (Self::AcScucInstance, PioValue::AcScucInstance(_))
                 | (Self::DcPfSolution, PioValue::DcPfSolution(_))
                 | (Self::AcPfSolution, PioValue::AcPfSolution(_))
@@ -4649,6 +4710,10 @@ impl ExpectedValue {
                 | (Self::SocwrOpfSolution, PioValue::SocwrOpfSolution(_))
                 | (Self::McAcPfSolution, PioValue::McAcPfSolution(_))
                 | (Self::McAcOpfSolution, PioValue::McAcOpfSolution(_))
+                | (
+                    Self::LinDist3FlowOpfSolution,
+                    PioValue::LinDist3FlowOpfSolution(_)
+                )
                 | (Self::AcScucSolution, PioValue::AcScucSolution(_))
         )
     }
@@ -4665,6 +4730,7 @@ impl ExpectedValue {
             Self::AcOpfInstance => "powerio.AcOpfInstance",
             Self::McAcPfInstance => "powerio.McAcPfInstance",
             Self::McAcOpfInstance => "powerio.McAcOpfInstance",
+            Self::LinDist3FlowOpfInstance => "powerio.LinDist3FlowOpfInstance",
             Self::AcScucInstance => "powerio.AcScucInstance",
             Self::DcPfSolution => "powerio.DcPfSolution",
             Self::AcPfSolution => "powerio.AcPfSolution",
@@ -4673,6 +4739,7 @@ impl ExpectedValue {
             Self::SocwrOpfSolution => "powerio.SocwrOpfSolution",
             Self::McAcPfSolution => "powerio.McAcPfSolution",
             Self::McAcOpfSolution => "powerio.McAcOpfSolution",
+            Self::LinDist3FlowOpfSolution => "powerio.LinDist3FlowOpfSolution",
             Self::AcScucSolution => "powerio.AcScucSolution",
         }
     }
@@ -4817,6 +4884,14 @@ pub unsafe extern "C" fn pio_value_mc_ac_opf_instance(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_value_lindist3flow_opf_instance(
+    value: *const PioValueHandle,
+    error: *mut *mut PioError,
+) -> *mut PioCalculationInstance {
+    unsafe { instance_accessor(value, ExpectedValue::LinDist3FlowOpfInstance, error) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn pio_value_ac_scuc_instance(
     value: *const PioValueHandle,
     error: *mut *mut PioError,
@@ -4878,6 +4953,14 @@ pub unsafe extern "C" fn pio_value_mc_ac_opf_solution(
     error: *mut *mut PioError,
 ) -> *mut PioCalculationSolution {
     unsafe { solution_accessor(value, ExpectedValue::McAcOpfSolution, error) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_value_lindist3flow_opf_solution(
+    value: *const PioValueHandle,
+    error: *mut *mut PioError,
+) -> *mut PioCalculationSolution {
+    unsafe { solution_accessor(value, ExpectedValue::LinDist3FlowOpfSolution, error) }
 }
 
 #[unsafe(no_mangle)]
@@ -4943,6 +5026,9 @@ pub unsafe extern "C" fn pio_calculation_solution_instance(
                 Some(PioValue::McAcPfSolution(_)) => CalculationInstanceProjection::McAcPfSolution,
                 Some(PioValue::McAcOpfSolution(_)) => {
                     CalculationInstanceProjection::McAcOpfSolution
+                }
+                Some(PioValue::LinDist3FlowOpfSolution(_)) => {
+                    CalculationInstanceProjection::LinDist3FlowOpfSolution
                 }
                 Some(PioValue::AcScucSolution(_)) => CalculationInstanceProjection::AcScucSolution,
                 _ => {
@@ -5125,6 +5211,9 @@ pub unsafe extern "C" fn pio_calculation_instance_multiconductor_network(
                     Some(CalculationInstanceRef::McAcOpf(_)) => {
                         MulticonductorNetworkProjection::McAcOpfInstance
                     }
+                    Some(CalculationInstanceRef::LinDist3FlowOpf(_)) => {
+                        MulticonductorNetworkProjection::LinDist3FlowOpfInstance
+                    }
                     _ => {
                         return Err(boundary_error(
                             &codes::REQUEST_CAPI_TYPE_MISMATCH,
@@ -5137,6 +5226,9 @@ pub unsafe extern "C" fn pio_calculation_instance_multiconductor_network(
                 }
                 CalculationInstanceProjection::McAcOpfSolution => {
                     MulticonductorNetworkProjection::McAcOpfSolution
+                }
+                CalculationInstanceProjection::LinDist3FlowOpfSolution => {
+                    MulticonductorNetworkProjection::LinDist3FlowOpfSolution
                 }
                 _ => {
                     return Err(boundary_error(
@@ -5916,11 +6008,142 @@ pub unsafe extern "C" fn pio_dc_opf_instance_branch_susceptance_formula(
         })
 }
 
+/// One voltage node and its fixed phasor, in volts and radians.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PioLinDist3FlowNodeView {
+    pub bus: PioStringView,
+    pub terminal: PioStringView,
+    pub reference_magnitude: f64,
+    pub reference_angle: f64,
+    pub is_root: bool,
+}
+
+/// One line conductor in the solution's physical row order.
+/// Positions are zero based. Positive power flows from parent to child.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PioLinDist3FlowConductorView {
+    pub line: PioStringView,
+    pub source_line_row: usize,
+    pub conductor_position: usize,
+    pub parent_bus: PioStringView,
+    pub parent_terminal: PioStringView,
+    pub child_bus: PioStringView,
+    pub child_terminal: PioStringView,
+    pub reversed: bool,
+}
+
+impl CalculationInstanceInner {
+    fn lindist3flow(&self) -> Option<&powerio_prob::LinDist3FlowOpfInstance> {
+        match self.instance()? {
+            CalculationInstanceRef::LinDist3FlowOpf(instance) => Some(instance),
+            _ => None,
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_lindist3flow_opf_instance_node_count(
+    instance: *const PioCalculationInstance,
+) -> usize {
+    unsafe { PioCalculationInstance::get(instance) }
+        .and_then(CalculationInstanceInner::lindist3flow)
+        .map_or(0, |instance| instance.topology().nodes.len())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_lindist3flow_opf_instance_conductor_count(
+    instance: *const PioCalculationInstance,
+) -> usize {
+    unsafe { PioCalculationInstance::get(instance) }
+        .and_then(CalculationInstanceInner::lindist3flow)
+        .map_or(0, |instance| instance.topology().conductors.len())
+}
+
+/// Read a node by zero based position. Strings borrow the instance handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_lindist3flow_opf_instance_node_at(
+    instance: *const PioCalculationInstance,
+    index: usize,
+    output: *mut PioLinDist3FlowNodeView,
+    error: *mut *mut PioError,
+) -> bool {
+    unsafe {
+        entry(error, false, || {
+            let instance = require_calculation_instance(instance)?
+                .lindist3flow()
+                .ok_or_else(|| {
+                    boundary_error(
+                        &codes::REQUEST_CAPI_TYPE_MISMATCH,
+                        "expected a LinDist3Flow OPF instance",
+                    )
+                })?;
+            let voltage = instance.reference().voltages.get(index).ok_or_else(|| {
+                boundary_error(
+                    &codes::BIND_CAPI_INDEX_OUT_OF_RANGE,
+                    format!("node index {index} is out of range"),
+                )
+            })?;
+            *require_output(output, "output")? = PioLinDist3FlowNodeView {
+                bus: PioStringView::new(&voltage.node.bus),
+                terminal: PioStringView::new(&voltage.node.terminal),
+                reference_magnitude: voltage.magnitude,
+                reference_angle: voltage.angle,
+                is_root: instance.topology().roots.contains(&voltage.node),
+            };
+            Ok(true)
+        })
+    }
+}
+
+/// Read a conductor by zero based position. Strings borrow the instance handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_lindist3flow_opf_instance_conductor_at(
+    instance: *const PioCalculationInstance,
+    index: usize,
+    output: *mut PioLinDist3FlowConductorView,
+    error: *mut *mut PioError,
+) -> bool {
+    unsafe {
+        entry(error, false, || {
+            let instance = require_calculation_instance(instance)?
+                .lindist3flow()
+                .ok_or_else(|| {
+                    boundary_error(
+                        &codes::REQUEST_CAPI_TYPE_MISMATCH,
+                        "expected a LinDist3Flow OPF instance",
+                    )
+                })?;
+            let conductor = instance.topology().conductors.get(index).ok_or_else(|| {
+                boundary_error(
+                    &codes::BIND_CAPI_INDEX_OUT_OF_RANGE,
+                    format!("conductor index {index} is out of range"),
+                )
+            })?;
+            *require_output(output, "output")? = PioLinDist3FlowConductorView {
+                line: PioStringView::new(&conductor.line),
+                source_line_row: conductor.source_line_row,
+                conductor_position: conductor.conductor_position,
+                parent_bus: PioStringView::new(&conductor.parent.bus),
+                parent_terminal: PioStringView::new(&conductor.parent.terminal),
+                child_bus: PioStringView::new(&conductor.child.bus),
+                child_terminal: PioStringView::new(&conductor.child.terminal),
+                reversed: conductor.reversed,
+            };
+            Ok(true)
+        })
+    }
+}
+
 fn objective(instance: &CalculationInstanceInner) -> Option<&powerio_prob::Objective> {
     match instance.instance()? {
         CalculationInstanceRef::DcOpf(instance) => Some(instance.objective()),
         CalculationInstanceRef::AcOpf(instance) => Some(instance.objective()),
         CalculationInstanceRef::McAcOpf(instance) => Some(instance.objective()),
+        CalculationInstanceRef::LinDist3FlowOpf(instance) => {
+            Some(instance.base_instance().objective())
+        }
         _ => None,
     }
 }
@@ -6010,6 +6233,24 @@ fn active_constraint(
             )),
             _ => None,
         },
+        CalculationInstanceRef::LinDist3FlowOpf(instance) => match index {
+            0 => Some((
+                "terminal_voltage_bounds",
+                &instance
+                    .base_instance()
+                    .constraints()
+                    .terminal_voltage_bounds,
+            )),
+            1 => Some((
+                "conductor_limits",
+                &instance.base_instance().constraints().conductor_limits,
+            )),
+            2 => Some((
+                "generator_capability",
+                &instance.base_instance().constraints().generator_capability,
+            )),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -6034,6 +6275,7 @@ pub unsafe extern "C" fn pio_calculation_instance_active_constraint_count(
     {
         Some(CalculationInstanceRef::DcOpf(_) | CalculationInstanceRef::AcOpf(_)) => 4,
         Some(CalculationInstanceRef::McAcOpf(_)) => 3,
+        Some(CalculationInstanceRef::LinDist3FlowOpf(_)) => 3,
         _ => 0,
     }
 }
@@ -6146,6 +6388,10 @@ pub unsafe extern "C" fn pio_calculation_instance_initial_point(
                         CalculationInstanceProjection::Direct,
                         Some(CalculationInstanceRef::McAcOpf(_)),
                     ) => OperatingPointProjection::McAcOpfInitial,
+                    (
+                        CalculationInstanceProjection::Direct,
+                        Some(CalculationInstanceRef::LinDist3FlowOpf(_)),
+                    ) => OperatingPointProjection::LinDist3FlowOpfInitial,
                     (CalculationInstanceProjection::DcPfSolution, _) => {
                         OperatingPointProjection::DcPfSolutionInitial
                     }
@@ -6166,6 +6412,9 @@ pub unsafe extern "C" fn pio_calculation_instance_initial_point(
                     }
                     (CalculationInstanceProjection::McAcOpfSolution, _) => {
                         OperatingPointProjection::McAcOpfSolutionInitial
+                    }
+                    (CalculationInstanceProjection::LinDist3FlowOpfSolution, _) => {
+                        OperatingPointProjection::LinDist3FlowOpfSolutionInitial
                     }
                     _ => {
                         return Err(boundary_error(
@@ -7722,6 +7971,9 @@ pub unsafe extern "C" fn pio_calculation_solution_multiconductor_network(
                 }
                 Some(PioValue::McAcOpfSolution(_)) => {
                     MulticonductorNetworkProjection::McAcOpfSolution
+                }
+                Some(PioValue::LinDist3FlowOpfSolution(_)) => {
+                    MulticonductorNetworkProjection::LinDist3FlowOpfSolution
                 }
                 _ => {
                     return Err(boundary_error(
@@ -15278,6 +15530,7 @@ pub unsafe extern "C" fn pio_calculation_solution_termination(
         PioValue::SocwrOpfSolution(solution) => solution.termination(),
         PioValue::McAcPfSolution(solution) => solution.termination(),
         PioValue::McAcOpfSolution(solution) => solution.termination(),
+        PioValue::LinDist3FlowOpfSolution(solution) => solution.termination(),
         PioValue::AcScucSolution(solution) => solution.termination(),
         _ => return PioStringView::EMPTY,
     };
@@ -15306,6 +15559,7 @@ pub unsafe extern "C" fn pio_calculation_solution_get_objective(
                 PioValue::DcOpfSolution(solution) => Some(solution.objective()),
                 PioValue::AcOpfSolution(solution) => Some(solution.objective()),
                 PioValue::McAcOpfSolution(solution) => Some(solution.objective()),
+                PioValue::LinDist3FlowOpfSolution(solution) => Some(solution.objective()),
                 PioValue::AcScucSolution(solution) => solution.objective(),
                 _ => None,
             };
@@ -15591,6 +15845,18 @@ fn collect_solution_values(solution: &PioValue, quantity: &str) -> Result<Vec<f6
                 })
                 .collect(),
             "source_active_injection" => solution.source_active_injections().to_vec(),
+            _ => return Err(unknown()),
+        },
+        PioValue::LinDist3FlowOpfSolution(solution) => match quantity {
+            "terminal_voltage_magnitude_squared" => {
+                solution.values().terminal_voltage_magnitude_squared.clone()
+            }
+            "line_active_power" => solution.values().line_active_power.clone(),
+            "line_reactive_power" => solution.values().line_reactive_power.clone(),
+            "generator_active_power" => solution.values().generator_active_power.clone(),
+            "generator_reactive_power" => solution.values().generator_reactive_power.clone(),
+            "source_active_power" => solution.values().source_active_power.clone(),
+            "source_reactive_power" => solution.values().source_reactive_power.clone(),
             _ => return Err(unknown()),
         },
         PioValue::McAcOpfSolution(solution) => match quantity {
@@ -17259,6 +17525,91 @@ mod tests {
             assert!(!error.is_null());
             pio_error_release(error);
             pio_balanced_network_release(retained);
+        }
+    }
+
+    #[test]
+    fn lindist3flow_views_and_quantities_keep_their_owner_alive() {
+        unsafe {
+            let text = include_bytes!("../../tests/data/dist/micro/lindist3flow-solution.pio.json");
+            let module = module_handle(
+                powerio::deserialize(
+                    powerio_core::Source::from_memory("solution.pio.json", text.to_vec()).unwrap(),
+                )
+                .unwrap(),
+            );
+            let value = pio_module_value(module);
+            let mut error = std::ptr::null_mut();
+            assert!(pio_value_mc_ac_opf_solution(value, &mut error).is_null());
+            assert!(!error.is_null());
+            pio_error_release(error);
+            error = std::ptr::null_mut();
+            let solution = pio_value_lindist3flow_opf_solution(value, &mut error);
+            assert!(!solution.is_null(), "{}", error_text(error));
+            let instance = pio_calculation_solution_instance(solution, &mut error);
+            assert!(!instance.is_null(), "{}", error_text(error));
+            assert_eq!(
+                view_text(pio_calculation_instance_type_name(instance)),
+                "powerio.LinDist3FlowOpfInstance"
+            );
+            let network = pio_calculation_instance_multiconductor_network(instance, &mut error);
+            assert!(!network.is_null(), "{}", error_text(error));
+            pio_module_release(module);
+            pio_value_release(value);
+            assert_eq!(
+                view_text(pio_calculation_solution_termination(solution)),
+                "converged"
+            );
+            let mut objective = 0.0;
+            assert!(pio_calculation_solution_get_objective(
+                solution,
+                &mut objective
+            ));
+            assert_eq!(objective, 1.0);
+            let quantity = "line_active_power";
+            let values = pio_calculation_solution_get_values(
+                solution,
+                quantity.as_ptr().cast(),
+                quantity.len(),
+                &mut error,
+            );
+            assert!(!values.is_null(), "{}", error_text(error));
+            pio_calculation_solution_release(solution);
+            assert_eq!(pio_vector_values(values).len, 1);
+            assert_eq!(*pio_vector_values(values).data, 1000.0);
+            assert_eq!(pio_lindist3flow_opf_instance_node_count(instance), 2);
+            assert_eq!(pio_lindist3flow_opf_instance_conductor_count(instance), 1);
+            let mut node = std::mem::MaybeUninit::<PioLinDist3FlowNodeView>::uninit();
+            assert!(pio_lindist3flow_opf_instance_node_at(
+                instance,
+                0,
+                node.as_mut_ptr(),
+                &mut error
+            ));
+            assert_eq!(node.assume_init().reference_magnitude, 230.0);
+            let mut conductor = std::mem::MaybeUninit::<PioLinDist3FlowConductorView>::uninit();
+            assert!(pio_lindist3flow_opf_instance_conductor_at(
+                instance,
+                0,
+                conductor.as_mut_ptr(),
+                &mut error
+            ));
+            let conductor = conductor.assume_init();
+            assert!(conductor.reversed);
+            assert_eq!(view_text(conductor.parent_bus), "source");
+            assert_eq!(view_text(conductor.child_bus), "load");
+            assert!(!pio_lindist3flow_opf_instance_node_at(
+                instance,
+                2,
+                node.as_mut_ptr(),
+                &mut error
+            ));
+            assert!(!error.is_null());
+            pio_error_release(error);
+            pio_vector_release(values);
+            pio_calculation_instance_release(instance);
+            assert_eq!(pio_multiconductor_network_bus_count(network), 2);
+            pio_multiconductor_network_release(network);
         }
     }
 

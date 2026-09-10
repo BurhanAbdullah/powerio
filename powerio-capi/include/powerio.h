@@ -415,6 +415,32 @@ typedef struct {
 } PioAcBusSpecificationView;
 
 /**
+ * One voltage node and its fixed phasor, in volts and radians.
+ */
+typedef struct {
+    PioStringView bus;
+    PioStringView terminal;
+    double reference_magnitude;
+    double reference_angle;
+    bool is_root;
+} PioLinDist3FlowNodeView;
+
+/**
+ * One line conductor in the solution's physical row order.
+ * Positions are zero based. Positive power flows from parent to child.
+ */
+typedef struct {
+    PioStringView line;
+    size_t source_line_row;
+    size_t conductor_position;
+    PioStringView parent_bus;
+    PioStringView parent_terminal;
+    PioStringView child_bus;
+    PioStringView child_terminal;
+    bool reversed;
+} PioLinDist3FlowConductorView;
+
+/**
  * One typed objective term.
  */
 typedef struct {
@@ -2346,6 +2372,8 @@ PioModule *pio_module_to_mc_ac_pf_instance(const PioModule *module, PioError **e
  */
 PioModule *pio_module_to_mc_ac_opf_instance(const PioModule *module, PioError **error);
 
+PioModule *pio_module_to_lindist3flow_opf_instance(const PioModule *module, PioError **error);
+
 /**
  * Apply one geographic layer to a balanced or multiconductor network module.
  * The input module is unchanged. When `out_report` is not NULL, it receives
@@ -2569,6 +2597,9 @@ PioCalculationInstance *pio_value_mc_ac_pf_instance(const PioValueHandle *value,
 
 PioCalculationInstance *pio_value_mc_ac_opf_instance(const PioValueHandle *value, PioError **error);
 
+PioCalculationInstance *pio_value_lindist3flow_opf_instance(const PioValueHandle *value,
+                                                            PioError **error);
+
 PioCalculationInstance *pio_value_ac_scuc_instance(const PioValueHandle *value, PioError **error);
 
 PioCalculationSolution *pio_value_dc_pf_solution(const PioValueHandle *value, PioError **error);
@@ -2584,6 +2615,9 @@ PioCalculationSolution *pio_value_socwr_opf_solution(const PioValueHandle *value
 PioCalculationSolution *pio_value_mc_ac_pf_solution(const PioValueHandle *value, PioError **error);
 
 PioCalculationSolution *pio_value_mc_ac_opf_solution(const PioValueHandle *value, PioError **error);
+
+PioCalculationSolution *pio_value_lindist3flow_opf_solution(const PioValueHandle *value,
+                                                            PioError **error);
 
 PioCalculationSolution *pio_value_ac_scuc_solution(const PioValueHandle *value, PioError **error);
 
@@ -2747,6 +2781,26 @@ bool pio_ac_pf_instance_bus_specification_at(const PioCalculationInstance *insta
                                              PioError **error);
 
 PioStringView pio_dc_opf_instance_branch_susceptance_formula(const PioCalculationInstance *instance);
+
+size_t pio_lindist3flow_opf_instance_node_count(const PioCalculationInstance *instance);
+
+size_t pio_lindist3flow_opf_instance_conductor_count(const PioCalculationInstance *instance);
+
+/**
+ * Read a node by zero based position. Strings borrow the instance handle.
+ */
+bool pio_lindist3flow_opf_instance_node_at(const PioCalculationInstance *instance,
+                                           size_t index,
+                                           PioLinDist3FlowNodeView *output,
+                                           PioError **error);
+
+/**
+ * Read a conductor by zero based position. Strings borrow the instance handle.
+ */
+bool pio_lindist3flow_opf_instance_conductor_at(const PioCalculationInstance *instance,
+                                                size_t index,
+                                                PioLinDist3FlowConductorView *output,
+                                                PioError **error);
 
 size_t pio_calculation_instance_objective_term_count(const PioCalculationInstance *instance);
 

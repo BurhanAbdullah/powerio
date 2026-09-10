@@ -6,21 +6,22 @@ the integer generations that replaced them. The current generation is the only
 document the generator writes. The others are frozen copies of what earlier
 releases published.
 
-| Generation | PowerIO release | Document identity | Archived schema | Read by 0.11 |
+| Generation | PowerIO release | Document identity | Archived schema | Read by 0.11.1 |
 |---|---|---|---|---|
 | none | v0.6.1 to v0.7.3 | `pio-package` lineage `0.1` | `pio-ir/0.1/schema.json` | no |
 | none | v0.8.0 to v0.8.3 | `pio-package` lineage `0.2` | `pio-ir/0.2/schema.json` | no |
 | none | v0.9.0 | `pio-package` lineage `0.9` | `pio-ir/0.9/schema.json` | no |
 | 1 | v0.10.0 | `powerio.module`, version `1` | `pio-ir/1/schema.json` | no |
 | 2 | v0.11.0 | `pio-ir`, version `2` | `pio-ir/2/schema.json` | yes |
+| 3 | v0.11.1 | `pio-ir`, version `3`, LinDist3Flow values | `pio-ir/3/schema.json` | yes |
 
 The current document begins:
 
 ```json
 {
   "schema": "pio-ir",
-  "version": 2,
-  "producer": { "name": "powerio", "version": "0.11.0" }
+  "version": 3,
+  "producer": { "name": "powerio", "version": "0.11.1" }
 }
 ```
 
@@ -28,8 +29,9 @@ The current document begins:
 
 `version` is the generation of the serialized representation. It advances only
 when that representation changes. A bump inside one minor release line ships
-with a reader for the generation it replaces, so every 0.11.x release reads
-every generation any 0.11.x release wrote. `powerio::IR_VERSION` is the
+with readers for earlier generations in that line. PowerIO 0.11.1 writes
+generation 3 and reads generations 2 and 3. PowerIO 0.11.0 reads generation 2
+only; forward compatibility with newer generations is not promised. `powerio::IR_VERSION` is the
 generation a build writes and `powerio::IR_MIN_VERSION` the oldest generation
 it reads; the floor rises only at a minor release boundary.
 
@@ -61,5 +63,5 @@ directory listing and the identifiers.
 cargo run -p powerio --example generate_schemas --features schema -- docs/schema
 ```
 
-CI regenerates `pio-ir/2/schema.json` on every pull request and fails on a
+CI regenerates `pio-ir/3/schema.json` on every pull request and fails on a
 difference.

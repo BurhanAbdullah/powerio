@@ -7,7 +7,7 @@ history, and extensions. A current document begins like this:
 ```json
 {
   "schema": "pio-ir",
-  "version": 2,
+  "version": 3,
   "producer": { "name": "powerio", "version": "0.11.0" },
   "value": {
     "type": "powerio.BalancedNetwork",
@@ -26,8 +26,8 @@ both sides consume PowerIO values, including calculation instances, solutions,
 time series, and scenario sets.
 
 The generated JSON Schema is checked in at
-`docs/schema/pio-ir/2/schema.json` and served from
-`https://powerio.dev/schema/pio-ir/2/schema.json`. That schema, the
+`docs/schema/pio-ir/3/schema.json` and served from
+`https://powerio.dev/schema/pio-ir/3/schema.json`. That schema, the
 serializer, and the deserializer are all tested from the same Rust types.
 `docs/schema/README.md` lists the earlier `pio-package` and
 `powerio.module` documents as one history under `pio-ir`.
@@ -127,10 +127,11 @@ that wrote the document; the reader reports it and ignores it when deciding
 compatibility.
 
 When a generation bumps inside one minor release line, the release ships with
-a reader for the generation it replaces, so every 0.11.x release reads every
-generation any 0.11.x release wrote. `powerio::IR_VERSION` is the generation
-a build writes and `powerio::IR_MIN_VERSION` the oldest it reads; in 0.11
-both are `2`. A refused document is reported with the schema name,
+readers for earlier generations in that line. Older releases do not read
+newer generations. `powerio::IR_VERSION` is the generation
+a build writes and `powerio::IR_MIN_VERSION` the oldest it reads; in 0.11.1
+they are `3` and `2`, respectively. LinDist3Flow instance and solution values
+require generation 3. A refused document is reported with the schema name,
 generation, and producer it claims and the remedy: a later generation needs a
 newer PowerIO, and an earlier schema name or generation has to be regenerated
 from its source data.

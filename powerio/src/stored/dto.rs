@@ -653,12 +653,40 @@ pub struct McAcOpfInstance {
     pub initial_point: Option<StoredOperatingPointAssignment>,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum LinDist3FlowReferencePolicy {
+    Auto,
+    Explicit,
+    SourcePropagated,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum LinDist3FlowUnsupported {
+    Reject,
+    Lower,
+    Approximate,
+    Permissive,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct LinDist3FlowBuildOptions {
+    pub reference_policy: LinDist3FlowReferencePolicy,
+    pub unsupported: LinDist3FlowUnsupported,
+    pub require_neutral_provenance: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct LinDist3FlowOpfInstance {
     pub base: McAcOpfInstance,
-    pub options: powerio_prob::LinDist3FlowBuildOptions,
+    pub options: LinDist3FlowBuildOptions,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

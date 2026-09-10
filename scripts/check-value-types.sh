@@ -45,7 +45,7 @@ print("\n".join(sorted(names)))
 PY
 )
 
-schema=$(python3 - "docs/schema/pio-ir/2/schema.json" <<'PY'
+schema=$(python3 - "docs/schema/pio-ir/3/schema.json" <<'PY'
 import json
 import sys
 with open(sys.argv[1], encoding='utf-8') as handle:
