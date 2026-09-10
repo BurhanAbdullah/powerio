@@ -7,15 +7,16 @@
 //! no network table — and exposes a borrowed `network()` accessor. Fields
 //! are private, so the sharing strategy can change without a public break.
 //!
-//! The seven instances are [`DcPfInstance`], [`AcPfInstance`],
+//! The eight instances are [`DcPfInstance`], [`AcPfInstance`],
 //! [`DcOpfInstance`], [`AcOpfInstance`], [`McAcPfInstance`],
-//! [`McAcOpfInstance`], and [`AcScucInstance`]. Power flow instances carry
+//! [`McAcOpfInstance`], [`LinDist3FlowOpfInstance`], and [`AcScucInstance`]. Power flow instances carry
 //! partial boundary specifications; OPF instances carry typed
 //! [`Objective`] terms and active constraint selections by stable element
 //! identity, with the numerical limits staying on the network.
 
 pub(crate) mod balanced;
 mod constraints;
+mod lindist3flow;
 mod merge;
 mod multiconductor;
 mod objective;
@@ -27,6 +28,13 @@ pub use balanced::{
     DcPfInstance,
 };
 pub use constraints::{ActiveConstraints, ConstraintSelection, MulticonductorActiveConstraints};
+pub use lindist3flow::{
+    LinDist3FlowApplicability, LinDist3FlowApplicabilityStatus, LinDist3FlowBuildOptions,
+    LinDist3FlowNode, LinDist3FlowOpfInstance, LinDist3FlowOrientedConductor,
+    LinDist3FlowReferencePolicy, LinDist3FlowReferenceProvenance, LinDist3FlowReferenceState,
+    LinDist3FlowReferenceVoltage, LinDist3FlowTopology, LinDist3FlowUnsupported,
+    check_lindist3flow_applicability,
+};
 pub use merge::{ZeroImpedanceMerge, merge_zero_impedance_buses};
 pub use multiconductor::{
     ActiveControlMode, McAcOpfInstance, McAcPfInstance, PrescribedSourceVoltage,

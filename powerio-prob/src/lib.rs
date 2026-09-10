@@ -36,13 +36,18 @@ pub mod __internal {
 pub use instance::{
     AcBusSpecification, AcOpfInstance, AcPfInstance, AcScucInstance, ActiveConstraints,
     ActiveControlMode, ConstraintSelection, DcBusSpecification, DcOpfInstance, DcPfInstance,
-    McAcOpfInstance, McAcPfInstance, MulticonductorActiveConstraints, Objective, ObjectiveTerm,
+    LinDist3FlowApplicability, LinDist3FlowApplicabilityStatus, LinDist3FlowBuildOptions,
+    LinDist3FlowNode, LinDist3FlowOpfInstance, LinDist3FlowOrientedConductor,
+    LinDist3FlowReferencePolicy, LinDist3FlowReferenceProvenance, LinDist3FlowReferenceState,
+    LinDist3FlowReferenceVoltage, LinDist3FlowTopology, LinDist3FlowUnsupported, McAcOpfInstance,
+    McAcPfInstance, MulticonductorActiveConstraints, Objective, ObjectiveTerm,
     PrescribedSourceVoltage, PrescribedTerminalPower, ScucActiveReserveZone,
     ScucBranchSwitchingCost, ScucContingency, ScucDevice, ScucDeviceKind, ScucDevicePeriod,
     ScucEnergyCostBlock, ScucEnergyRequirement, ScucInitialCommitment, ScucInputs, ScucRampLimits,
     ScucReactiveCapability, ScucReactiveReserveZone, ScucReserveCosts, ScucReserveLimits,
     ScucShunt, ScucStartupCostAdjustment, ScucStartupLimit, ScucTransformerControl,
-    ScucViolationCosts, ZeroImpedanceMerge, merge_zero_impedance_buses,
+    ScucViolationCosts, ZeroImpedanceMerge, check_lindist3flow_applicability,
+    merge_zero_impedance_buses,
 };
 pub use operating::{
     BalancedOperatingPointBuilder, BalancedOperatingPointFlag, BalancedOperatingPointQuantity,
