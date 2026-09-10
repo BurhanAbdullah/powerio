@@ -27,6 +27,7 @@ serde.workspace = true
 # parse(print(x)) == x exactly.
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 schemars = { workspace = true, optional = true }
+num-complex.workspace = true
 
 [dev-dependencies]
 # Draft 2020-12 validation against the vendored BMOPF schema in tests.

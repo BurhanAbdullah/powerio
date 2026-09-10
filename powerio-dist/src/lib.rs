@@ -55,6 +55,7 @@ pub mod dss;
 pub mod error;
 pub mod geo;
 pub mod graph;
+pub mod kron;
 pub mod model;
 pub mod pmd;
 pub mod readiness;
@@ -73,6 +74,10 @@ pub use geo::{CoordinateSpace, DistCanvas, DistCoordsKind, DistGeoMeta, DistLoca
 pub use graph::{
     DistGraph, DistGraphAttachment, DistGraphAttachmentKind, DistGraphBus, DistGraphEdge,
     DistGraphEdgeKind,
+};
+pub use kron::{
+    NeutralKronAction, NeutralKronBus, NeutralKronGrounding, NeutralKronOptions,
+    NeutralKronRecovery, NeutralKronReduction, NeutralKronReport, neutral_kron_reduce,
 };
 pub use model::{
     ActivePowerReference, ActivePowerUnit, ConductorMatrix, Configuration, ControlVoltageReference,

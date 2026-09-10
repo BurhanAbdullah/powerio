@@ -229,12 +229,24 @@ pub mod codes {
         EMIT_MULTICONDUCTOR_SIDECAR_DROPPED = "EMIT.MULTICONDUCTOR.SIDECAR_DROPPED", Warning,
             "a companion file the case text refers to was not written";
 
+        // Same-family distribution network projections.
+        TRANSFORM_DIST_NEUTRAL_KRON_REDUCED = "TRANSFORM.DIST.NEUTRAL_KRON_REDUCED", Remark,
+            "an explicit grounded neutral was eliminated by Kron reduction";
+        TRANSFORM_DIST_NEUTRAL_KRON_FORCED_GROUND =
+            "TRANSFORM.DIST.NEUTRAL_KRON_FORCED_GROUND", Warning,
+            "a neutral was treated as ideally grounded before Kron reduction";
+        TRANSFORM_DIST_KRON_UNTYPED_RETAINED = "TRANSFORM.DIST.KRON_UNTYPED_RETAINED", Warning,
+            "untyped source objects were retained unchanged through neutral reduction";
+
         // Failures.
         READ_DIST_IO_FAILED = "READ.DIST.IO_FAILED", Error,
             "a distribution case file could not be read", category = Io;
         REQUEST_DIST_FORMAT_UNKNOWN = "REQUEST.DIST_FORMAT.UNKNOWN", Error,
             "the named distribution format is not one powerio reads",
             category = Request;
+        TRANSFORM_DIST_KRON_REDUCTION_FAILED = "TRANSFORM.DIST.KRON_REDUCTION_FAILED", Error,
+            "a neutral Kron projection could not preserve the network semantics",
+            category = Data;
     }
 }
 

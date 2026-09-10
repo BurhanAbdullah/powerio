@@ -2425,6 +2425,7 @@ version = "0.11.0"
 dependencies = [
  "jsonschema",
  "libc",
+ "num-complex",
  "powerio-core",
  "schemars",
  "serde",
