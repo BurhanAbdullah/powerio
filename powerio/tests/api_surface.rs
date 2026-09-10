@@ -53,6 +53,8 @@ fn assert_settled_calculation_names_are_exported() {
     names::<powerio::AcOpfInstance>();
     names::<powerio::McAcPfInstance>();
     names::<powerio::McAcOpfInstance>();
+    names::<powerio::LinDist3FlowOpfInstance>();
+    names::<powerio::LinDist3FlowOpfSolution>();
     names::<powerio::AcScucInstance>();
     names::<powerio::DcPfSolution>();
     names::<powerio::AcPfSolution>();

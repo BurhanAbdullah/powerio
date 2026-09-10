@@ -1,4 +1,4 @@
-//! Stored round trips for the calculation kinds: the seven instances, the
+//! Stored round trips for the calculation kinds: the eight instances, the
 //! seven solutions, and the multiconductor operating point series. Every
 //! kind writes byte stably, reads back, and has a committed fixture.
 
@@ -9,9 +9,10 @@ use powerio::{BalancedNetwork, PioValue};
 use powerio_core::{PioModule, TimePoint};
 use powerio_prob::{
     AcOpfInstance, AcOpfSolution, AcPfInstance, AcPfSolution, AcScucSolution, DcOpfInstance,
-    DcOpfSolution, DcPfInstance, DcPfSolution, McAcOpfInstance, McAcOpfSolution, McAcPfInstance,
-    McAcPfSolution, Objective, ObjectiveTerm, Residuals, ScucDeviceOutputs, ScucNetworkOutputs,
-    Termination, ThreeWindingTransformerTerminalActivePower, ThreeWindingTransformerTerminalPower,
+    DcOpfSolution, DcPfInstance, DcPfSolution, LinDist3FlowBuildOptions, LinDist3FlowOpfInstance,
+    McAcOpfInstance, McAcOpfSolution, McAcPfInstance, McAcPfSolution, Objective, ObjectiveTerm,
+    Residuals, ScucDeviceOutputs, ScucNetworkOutputs, Termination,
+    ThreeWindingTransformerTerminalActivePower, ThreeWindingTransformerTerminalPower,
 };
 use powerio_tx::{
     Branch, Bus, BusId, BusType, GenCost, Generator, Impedance, Load, Transformer3W, Winding,
@@ -123,6 +124,16 @@ fn every_instance_kind_round_trips() {
                 .with_objective(objective),
         ),
         "mc_ac_opf_instance",
+    );
+    round_trip(
+        PioValue::LinDist3FlowOpfInstance(
+            LinDist3FlowOpfInstance::from_network(
+                mc_network(),
+                LinDist3FlowBuildOptions::default(),
+            )
+            .unwrap(),
+        ),
+        "lindist3flow_opf_instance",
     );
 }
 

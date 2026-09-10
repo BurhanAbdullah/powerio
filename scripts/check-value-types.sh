@@ -18,6 +18,7 @@ names = [
     "powerio.DcPfInstance",
     "powerio.DcPfSolution",
     "powerio.GeoLayer",
+    "powerio.LinDist3FlowOpfInstance",
     "powerio.McAcOpfInstance",
     "powerio.McAcOpfSolution",
     "powerio.McAcPfInstance",

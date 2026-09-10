@@ -7192,6 +7192,73 @@
       ],
       "type": "object"
     },
+    "LinDist3FlowBuildOptions": {
+      "description": "Semantic choices used while creating a LinDist3Flow instance.",
+      "properties": {
+        "reference_policy": {
+          "$ref": "#/$defs/LinDist3FlowReferencePolicy"
+        },
+        "require_neutral_provenance": {
+          "description": "Require typed neutral-Kron provenance even when no explicit neutral\nremains in the network.",
+          "type": "boolean"
+        },
+        "unsupported": {
+          "$ref": "#/$defs/LinDist3FlowUnsupported"
+        }
+      },
+      "required": [
+        "reference_policy",
+        "unsupported",
+        "require_neutral_provenance"
+      ],
+      "type": "object"
+    },
+    "LinDist3FlowOpfInstance": {
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "$ref": "#/$defs/McAcOpfInstance"
+        },
+        "options": {
+          "$ref": "#/$defs/LinDist3FlowBuildOptions"
+        }
+      },
+      "required": [
+        "base",
+        "options"
+      ],
+      "type": "object"
+    },
+    "LinDist3FlowReferencePolicy": {
+      "description": "Selection of the fixed phasors used to form LinDist3Flow coefficients.",
+      "oneOf": [
+        {
+          "const": "auto",
+          "description": "Use the instance initial point when present, otherwise propagate source\nphasors through the no-load line topology.",
+          "type": "string"
+        },
+        {
+          "const": "explicit",
+          "description": "Require the instance to carry a complete voltage initial point.",
+          "type": "string"
+        },
+        {
+          "const": "source_propagated",
+          "description": "Ignore any initial point and propagate source phasors without line drop.",
+          "type": "string"
+        }
+      ]
+    },
+    "LinDist3FlowUnsupported": {
+      "description": "Policy for network features outside the canonical affine model.",
+      "enum": [
+        "reject",
+        "lower",
+        "approximate",
+        "permissive"
+      ],
+      "type": "string"
+    },
     "LineCommutatedConverter": {
       "description": "A line commutated converter connected to an AC voltage level and two DC nodes.",
       "properties": {
@@ -13124,6 +13191,23 @@
             },
             "type": {
               "const": "powerio.McAcOpfInstance",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/LinDist3FlowOpfInstance"
+            },
+            "type": {
+              "const": "powerio.LinDist3FlowOpfInstance",
               "type": "string"
             }
           },

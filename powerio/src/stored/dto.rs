@@ -656,6 +656,14 @@ pub struct McAcOpfInstance {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
+pub struct LinDist3FlowOpfInstance {
+    pub base: McAcOpfInstance,
+    pub options: powerio_prob::LinDist3FlowBuildOptions,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(deny_unknown_fields)]
 pub struct AcScucInstance {
     pub network: Box<BalancedNetwork>,
     /// The complete SCUC inputs, in the calculation crate's own
@@ -1098,6 +1106,8 @@ pub enum StoredValue {
     McAcPfInstance(McAcPfInstance),
     #[serde(rename = "powerio.McAcOpfInstance")]
     McAcOpfInstance(McAcOpfInstance),
+    #[serde(rename = "powerio.LinDist3FlowOpfInstance")]
+    LinDist3FlowOpfInstance(LinDist3FlowOpfInstance),
     #[serde(rename = "powerio.AcScucInstance")]
     AcScucInstance(AcScucInstance),
     #[serde(rename = "powerio.DcPfSolution")]
@@ -1702,6 +1712,9 @@ fn validate_value(value: &StoredValue) -> Result<(), String> {
         }
         StoredValue::McAcOpfInstance(instance) => {
             validate_stored_assignment(instance.initial_point.as_ref())
+        }
+        StoredValue::LinDist3FlowOpfInstance(instance) => {
+            validate_stored_assignment(instance.base.initial_point.as_ref())
         }
         StoredValue::DcPfSolution(solution) => {
             validate_stored_assignment(solution.instance.initial_point.as_ref())

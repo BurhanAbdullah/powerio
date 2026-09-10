@@ -190,6 +190,12 @@ fn encode_value(value: &PioValue) -> Result<dto::StoredValue> {
         PioValue::McAcOpfInstance(instance) => {
             dto::StoredValue::McAcOpfInstance(encode_mc_ac_opf_instance(instance)?)
         }
+        PioValue::LinDist3FlowOpfInstance(instance) => {
+            dto::StoredValue::LinDist3FlowOpfInstance(dto::LinDist3FlowOpfInstance {
+                base: encode_mc_ac_opf_instance(instance.base_instance())?,
+                options: instance.options(),
+            })
+        }
         PioValue::AcScucInstance(instance) => {
             dto::StoredValue::AcScucInstance(dto::AcScucInstance {
                 network: Box::new(with_component_ids(instance.network().clone())),
@@ -1569,6 +1575,7 @@ fn validate_decoded_networks(value: &PioValue) -> Result<()> {
         PioValue::AcScucInstance(instance) => balanced(instance.network()),
         PioValue::McAcPfInstance(instance) => multiconductor(instance.network()),
         PioValue::McAcOpfInstance(instance) => multiconductor(instance.network()),
+        PioValue::LinDist3FlowOpfInstance(instance) => multiconductor(instance.network()),
         PioValue::DcPfSolution(solution) => balanced(solution.network()),
         PioValue::AcPfSolution(solution) => balanced(solution.network()),
         PioValue::DcOpfSolution(solution) => balanced(solution.network()),
@@ -1907,6 +1914,9 @@ fn decode_value(value: dto::StoredValue) -> Result<PioValue> {
         }
         dto::StoredValue::McAcOpfInstance(instance) => {
             PioValue::McAcOpfInstance(decode_mc_ac_opf_instance(instance)?)
+        }
+        dto::StoredValue::LinDist3FlowOpfInstance(instance) => {
+            PioValue::LinDist3FlowOpfInstance(decode_lindist3flow_opf_instance(instance)?)
         }
         dto::StoredValue::AcScucInstance(instance) => {
             PioValue::AcScucInstance(decode_ac_scuc_instance(instance)?)
@@ -2312,6 +2322,14 @@ fn decode_mc_ac_opf_instance(
         decoded = decoded.with_initial_point(point);
     }
     Ok(decoded)
+}
+
+fn decode_lindist3flow_opf_instance(
+    instance: dto::LinDist3FlowOpfInstance,
+) -> Result<powerio_prob::LinDist3FlowOpfInstance> {
+    let base = decode_mc_ac_opf_instance(instance.base)?;
+    powerio_prob::LinDist3FlowOpfInstance::from_mc_ac(base, instance.options)
+        .map_err(|error| invalid(error.to_string()))
 }
 
 // ---- record encoding / decoding --------------------------------------------

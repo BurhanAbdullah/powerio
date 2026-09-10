@@ -47,7 +47,7 @@ OperatingPoint<MulticonductorNetwork>
 TimeSeries<T>
 ScenarioSet<T>
 DcPfInstance, AcPfInstance, DcOpfInstance, AcOpfInstance,
-McAcPfInstance, McAcOpfInstance, AcScucInstance
+McAcPfInstance, McAcOpfInstance, LinDist3FlowOpfInstance, AcScucInstance
 DcPfSolution, AcPfSolution, DcOpfSolution, AcOpfSolution, SocwrOpfSolution,
 McAcPfSolution, McAcOpfSolution, AcScucSolution
 GeoLayer

@@ -156,9 +156,13 @@ pub use powerio_prob::{
     AcBusSpecification, AcOpfInstance, AcOpfSolution, AcPfInstance, AcPfSolution, AcScucInstance,
     AcScucSolution, ActivePower, ActivePowerUnit, ApparentPower, ApparentPowerUnit,
     BalancedCalculationInstance, CalculationUpdate, DcBusSpecification, DcOpfInstance,
-    DcOpfSolution, DcPfInstance, DcPfSolution, LoadAllocation, McAcOpfInstance, McAcOpfSolution,
-    McAcPfInstance, McAcPfSolution, NetworkUpdate, OperatingPointUpdate, ReactivePower,
-    ReactivePowerUnit, Termination, ThreeWindingTransformerTerminalActivePower,
+    DcOpfSolution, DcPfInstance, DcPfSolution, LinDist3FlowApplicability,
+    LinDist3FlowApplicabilityStatus, LinDist3FlowBuildOptions, LinDist3FlowNode,
+    LinDist3FlowOpfInstance, LinDist3FlowOpfSolution, LinDist3FlowOpfValues,
+    LinDist3FlowReferencePolicy, LinDist3FlowReferenceProvenance, LinDist3FlowReferenceState,
+    LinDist3FlowTopology, LinDist3FlowUnsupported, LoadAllocation, McAcOpfInstance,
+    McAcOpfSolution, McAcPfInstance, McAcPfSolution, NetworkUpdate, OperatingPointUpdate,
+    ReactivePower, ReactivePowerUnit, Termination, ThreeWindingTransformerTerminalActivePower,
     ThreeWindingTransformerTerminalPower, UpdateChange, UpdateReport, UpdatedField,
     apply_bus_load_active_power, apply_updates,
 };
@@ -192,7 +196,8 @@ pub use ir::{deserialize, serialize, serialize_diagnostics};
 pub mod transform;
 pub use transform::{
     apply_geo_layer, to_ac_opf_instance, to_ac_pf_instance, to_dc_opf_instance, to_dc_pf_instance,
-    to_mc_ac_opf_instance, to_mc_ac_pf_instance,
+    to_lindist3flow_opf_instance, to_lindist3flow_opf_instance_with_options, to_mc_ac_opf_instance,
+    to_mc_ac_pf_instance,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

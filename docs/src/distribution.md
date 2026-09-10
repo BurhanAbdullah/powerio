@@ -2,8 +2,8 @@
 
 A multiconductor network is the conductor level distribution model, and
 OpenDSS, PowerModelsDistribution engineering JSON, and BMOPF JSON all parse to
-it. When you need a calculation, construct an `McAcPfInstance` or
-`McAcOpfInstance` from it explicitly (see
+it. When you need a calculation, construct an `McAcPfInstance`,
+`McAcOpfInstance`, or `LinDist3FlowOpfInstance` from it explicitly (see
 [Calculation instances and solutions](instances.md)).
 
 ```julia
@@ -53,6 +53,27 @@ PowerIO.jl does not bind it.
 Multiconductor admittance matrices build directly from the multiconductor
 network through `powerio_matrix::calc_multiconductor_admittance_matrix`,
 which is Rust only in 0.11.
+
+LinDist3Flow construction is likewise explicit. A network with an explicit
+neutral first passes through `powerio_dist::neutral_kron_reduce`; the resulting
+network records the projection provenance. Instance construction then checks
+the supported radial model slice, fixes the voltage reference, and creates the
+portable input:
+
+```rust,ignore
+use powerio::{LinDist3FlowBuildOptions, LinDist3FlowOpfInstance};
+use powerio_dist::{NeutralKronOptions, neutral_kron_reduce};
+
+let reduced = neutral_kron_reduce(&network, &NeutralKronOptions::default())?;
+let instance = LinDist3FlowOpfInstance::from_network(
+    reduced.network().clone(),
+    LinDist3FlowBuildOptions::default(),
+)?;
+```
+
+`powerio-matrix` compiles that instance to sparse affine rows, bounds, and
+second-order cones. It does not select or invoke a solver, so the same bundle
+can be handed to a native or WebAssembly-compatible conic backend.
 
 ## BMOPF schema versions
 

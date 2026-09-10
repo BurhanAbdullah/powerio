@@ -96,6 +96,9 @@ powerio_core::diagnostic_codes! {
     // Failures.
     REQUEST_MODULE_WRONG_MODEL_KIND = "REQUEST.MODULE.WRONG_MODEL_KIND", Error,
         "the call asks for a model family the document does not carry", category = Request;
+    TRANSFORM_LINDIST3FLOW_OPTIONS_SERIALIZE_FAILED =
+        "TRANSFORM.LINDIST3FLOW.OPTIONS_SERIALIZE_FAILED", Error,
+        "serializing LinDist3Flow options for transform history failed", category = Output;
     EMIT_MODULE_SERIALIZE_FAILED = "EMIT.MODULE.SERIALIZE_FAILED", Error,
         "serializing the stored document to JSON failed", category = Output;
 }

@@ -9,6 +9,24 @@ fn network_module() -> powerio::PioModule<powerio::PioValue> {
     .unwrap()
 }
 
+fn lindist3flow_network_module() -> powerio::PioModule<powerio::PioValue> {
+    let terminals = vec!["a".to_owned()];
+    let mut network = powerio::MulticonductorNetwork::named("lindist3flow");
+    network
+        .buses_mut()
+        .push(powerio::dist::DistBus::new("source", terminals.clone()));
+    network
+        .sources_mut()
+        .push(powerio::dist::VoltageSource::new(
+            "grid",
+            "source",
+            terminals,
+            vec![230.0],
+            vec![0.0],
+        ));
+    powerio::PioModule::new(powerio::PioValue::MulticonductorNetwork(network))
+}
+
 fn check_records<T>(module: &powerio::PioModule<T>, output_type: &str) {
     assert_eq!(module.producer().name(), "powerio");
     assert_eq!(module.producer().version(), powerio::VERSION);
@@ -111,4 +129,39 @@ fn an_already_typed_multiconductor_instance_is_extracted_without_reconstruction(
     let dynamic = opf.map_value(powerio::PioValue::from);
     let extracted = powerio::transform::to_mc_ac_opf_instance(&dynamic).unwrap();
     assert_eq!(extracted.history().len(), history_len);
+}
+
+#[test]
+fn multiconductor_module_derives_and_reextracts_lindist3flow_instance() {
+    let source = lindist3flow_network_module();
+    let derived = powerio::to_lindist3flow_opf_instance_with_options(
+        &source,
+        powerio::LinDist3FlowBuildOptions::default()
+            .with_reference_policy(powerio::LinDist3FlowReferencePolicy::SourcePropagated),
+    )
+    .unwrap();
+    let history = derived.history().last().unwrap();
+    assert_eq!(history.kind(), HistoryKind::Transform);
+    assert_eq!(history.input_type(), Some("powerio.MulticonductorNetwork"));
+    assert_eq!(
+        history.output_type(),
+        Some("powerio.LinDist3FlowOpfInstance")
+    );
+    assert_eq!(
+        history.parameters()["reference_policy"],
+        serde_json::json!("source_propagated")
+    );
+
+    let history_len = derived.history().len();
+    let dynamic = derived.map_value(powerio::PioValue::from);
+    assert_eq!(
+        dynamic.value().type_name(),
+        "powerio.LinDist3FlowOpfInstance"
+    );
+    let extracted = powerio::to_lindist3flow_opf_instance(&dynamic).unwrap();
+    assert_eq!(extracted.history().len(), history_len);
+    assert_eq!(
+        extracted.value().reference().provenance,
+        powerio::LinDist3FlowReferenceProvenance::SourcePropagated
+    );
 }

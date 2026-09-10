@@ -70,6 +70,7 @@ schema definition beside it.
 | `powerio.AcOpfInstance` | `AcOpfInstance` |
 | `powerio.McAcPfInstance` | `McAcPfInstance` |
 | `powerio.McAcOpfInstance` | `McAcOpfInstance` |
+| `powerio.LinDist3FlowOpfInstance` | `LinDist3FlowOpfInstance` |
 | `powerio.AcScucInstance` | `AcScucInstance` |
 | `powerio.DcPfSolution` | `DcPfSolution` |
 | `powerio.AcPfSolution` | `AcPfSolution` |
@@ -1210,6 +1211,15 @@ Schema definition: `McAcOpfInstance`.
 | `objective` | `Objective` | | | | required |
 | `constraints` | `MulticonductorActiveConstraints` | | | | required |
 | `initial_point` | `StoredOperatingPointAssignment` or null | | | | null |
+
+### powerio.LinDist3FlowOpfInstance
+
+Schema definition: `LinDist3FlowOpfInstance`.
+
+| field | type | unit | sign | invariant | if absent |
+|---|---|---|---|---|---|
+| `base` | `McAcOpfInstance` | | | complete multiconductor AC OPF instance | required |
+| `options` | `LinDist3FlowBuildOptions` | | | fixed reference, unsupported-data, and neutral-provenance policies used to construct the formulation | required |
 
 Schema definition: `MulticonductorActiveConstraints`.
 
