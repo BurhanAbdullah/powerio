@@ -250,11 +250,12 @@ docs/                         the mdBook guide, the schema archive, release note
   stable names rather than integer positions.
 - **PowerIO IR.** `serialize` and `deserialize` move `PioModule<PioValue>`.
   Retained source bytes are not serialized. The document identity is
-  `pio-ir` with integer generation `2`; `IR_VERSION` and `IR_MIN_VERSION` in
-  `powerio/src/lib.rs` state the window, and every 0.11.x release reads
-  every generation the line wrote. The DTOs in `powerio/src/stored/dto.rs`
+  `pio-ir` with integer generation `3`; `IR_VERSION` and `IR_MIN_VERSION` in
+  `powerio/src/lib.rs` state the window. PowerIO 0.11.1 reads generations 2
+  and 3; older releases cannot read later generations. The DTOs in `powerio/src/stored/dto.rs`
   are the document layout; runtime types never derive it. Regenerate
-  `docs/schema/pio-ir/2/schema.json` when the DTOs change.
+  `docs/schema/pio-ir/3/schema.json` when the DTOs change. Published earlier
+  schemas remain byte-exact.
 - **Bindings stay typed and lazy.** C calls `pio_module_value`, checks the
   structural type, and requests an owner rooted typed handle. Python reads
   `module.value`; Julia dispatches on `PioModule{T}`. Typed access does not
