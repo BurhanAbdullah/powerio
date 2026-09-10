@@ -306,6 +306,7 @@ pub enum PioValue {
     SocwrOpfSolution(powerio_prob::solution::SocwrOpfSolution),
     McAcPfSolution(powerio_prob::McAcPfSolution),
     McAcOpfSolution(powerio_prob::McAcOpfSolution),
+    LinDist3FlowOpfSolution(powerio_prob::LinDist3FlowOpfSolution),
     AcScucSolution(powerio_prob::AcScucSolution),
 }
 
@@ -338,6 +339,7 @@ impl PioValue {
             Self::SocwrOpfSolution(_) => "powerio.SocwrOpfSolution",
             Self::McAcPfSolution(_) => "powerio.McAcPfSolution",
             Self::McAcOpfSolution(_) => "powerio.McAcOpfSolution",
+            Self::LinDist3FlowOpfSolution(_) => "powerio.LinDist3FlowOpfSolution",
             Self::AcScucSolution(_) => "powerio.AcScucSolution",
         }
     }
@@ -384,6 +386,10 @@ value_conversion!(powerio_prob::AcOpfSolution, AcOpfSolution);
 value_conversion!(powerio_prob::solution::SocwrOpfSolution, SocwrOpfSolution);
 value_conversion!(powerio_prob::McAcPfSolution, McAcPfSolution);
 value_conversion!(powerio_prob::McAcOpfSolution, McAcOpfSolution);
+value_conversion!(
+    powerio_prob::LinDist3FlowOpfSolution,
+    LinDist3FlowOpfSolution
+);
 value_conversion!(powerio_prob::AcScucSolution, AcScucSolution);
 
 macro_rules! time_series_conversion {

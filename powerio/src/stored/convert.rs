@@ -191,10 +191,7 @@ fn encode_value(value: &PioValue) -> Result<dto::StoredValue> {
             dto::StoredValue::McAcOpfInstance(encode_mc_ac_opf_instance(instance)?)
         }
         PioValue::LinDist3FlowOpfInstance(instance) => {
-            dto::StoredValue::LinDist3FlowOpfInstance(dto::LinDist3FlowOpfInstance {
-                base: encode_mc_ac_opf_instance(instance.base_instance())?,
-                options: instance.options(),
-            })
+            dto::StoredValue::LinDist3FlowOpfInstance(encode_lindist3flow_opf_instance(instance)?)
         }
         PioValue::AcScucInstance(instance) => {
             dto::StoredValue::AcScucInstance(dto::AcScucInstance {
@@ -223,6 +220,9 @@ fn encode_value(value: &PioValue) -> Result<dto::StoredValue> {
         PioValue::McAcOpfSolution(solution) => {
             dto::StoredValue::McAcOpfSolution(Box::new(encode_mc_ac_opf_solution(solution)?))
         }
+        PioValue::LinDist3FlowOpfSolution(solution) => dto::StoredValue::LinDist3FlowOpfSolution(
+            Box::new(encode_lindist3flow_opf_solution(solution)?),
+        ),
         PioValue::AcScucSolution(solution) => {
             dto::StoredValue::AcScucSolution(Box::new(encode_ac_scuc_solution(solution)))
         }
@@ -1091,6 +1091,15 @@ fn encode_mc_ac_opf_instance(
     })
 }
 
+fn encode_lindist3flow_opf_instance(
+    instance: &powerio_prob::LinDist3FlowOpfInstance,
+) -> Result<dto::LinDist3FlowOpfInstance> {
+    Ok(dto::LinDist3FlowOpfInstance {
+        base: encode_mc_ac_opf_instance(instance.base_instance())?,
+        options: instance.options(),
+    })
+}
+
 /// The typed objective, mirroring [`powerio_prob::Objective`] with each
 /// term's own weight wrapped for the nonfinite spelling (see
 /// [`dto::ObjectiveTerm`] for why this can't just be the runtime type).
@@ -1500,6 +1509,30 @@ fn encode_mc_ac_opf_solution(
     })
 }
 
+fn encode_lindist3flow_opf_solution(
+    solution: &powerio_prob::LinDist3FlowOpfSolution,
+) -> Result<dto::LinDist3FlowOpfSolution> {
+    let values = solution.values();
+    Ok(dto::LinDist3FlowOpfSolution {
+        instance: encode_lindist3flow_opf_instance(solution.instance())?,
+        termination: solution.termination().clone(),
+        residuals: *solution.residuals(),
+        producer: solution.producer().map(str::to_string),
+        values: dto::LinDist3FlowOpfValues {
+            terminal_voltage_magnitude_squared: stored_row(
+                &values.terminal_voltage_magnitude_squared,
+            ),
+            line_active_power: stored_row(&values.line_active_power),
+            line_reactive_power: stored_row(&values.line_reactive_power),
+            generator_active_power: stored_row(&values.generator_active_power),
+            generator_reactive_power: stored_row(&values.generator_reactive_power),
+            source_active_power: stored_row(&values.source_active_power),
+            source_reactive_power: stored_row(&values.source_reactive_power),
+        },
+        objective: StoredF64(solution.objective()),
+    })
+}
+
 fn encode_ac_scuc_solution(solution: &powerio_prob::AcScucSolution) -> dto::AcScucSolution {
     let network_outputs = solution.network_outputs();
     let device_outputs = solution.device_outputs();
@@ -1583,6 +1616,7 @@ fn validate_decoded_networks(value: &PioValue) -> Result<()> {
         PioValue::SocwrOpfSolution(solution) => balanced(solution.network()),
         PioValue::McAcPfSolution(solution) => multiconductor(solution.network()),
         PioValue::McAcOpfSolution(solution) => multiconductor(solution.network()),
+        PioValue::LinDist3FlowOpfSolution(solution) => multiconductor(solution.network()),
         PioValue::AcScucSolution(solution) => balanced(solution.instance().network()),
     }
 }
@@ -1942,6 +1976,9 @@ fn decode_value(value: dto::StoredValue) -> Result<PioValue> {
         dto::StoredValue::McAcOpfSolution(solution) => {
             PioValue::McAcOpfSolution(decode_mc_ac_opf_solution(*solution)?)
         }
+        dto::StoredValue::LinDist3FlowOpfSolution(solution) => {
+            PioValue::LinDist3FlowOpfSolution(decode_lindist3flow_opf_solution(*solution)?)
+        }
         dto::StoredValue::AcScucSolution(solution) => {
             PioValue::AcScucSolution(decode_ac_scuc_solution(*solution)?)
         }
@@ -2163,6 +2200,33 @@ fn decode_mc_ac_opf_solution(
             .map_err(|error| invalid(error.to_string()))?;
     }
     value = value.with_residuals(solution.residuals);
+    if let Some(producer) = solution.producer {
+        value = value.with_producer(producer);
+    }
+    Ok(value)
+}
+
+fn decode_lindist3flow_opf_solution(
+    solution: dto::LinDist3FlowOpfSolution,
+) -> Result<powerio_prob::LinDist3FlowOpfSolution> {
+    let instance = std::sync::Arc::new(decode_lindist3flow_opf_instance(solution.instance)?);
+    let mut values = powerio_prob::LinDist3FlowOpfValues::default();
+    values.terminal_voltage_magnitude_squared =
+        plain_row(&solution.values.terminal_voltage_magnitude_squared);
+    values.line_active_power = plain_row(&solution.values.line_active_power);
+    values.line_reactive_power = plain_row(&solution.values.line_reactive_power);
+    values.generator_active_power = plain_row(&solution.values.generator_active_power);
+    values.generator_reactive_power = plain_row(&solution.values.generator_reactive_power);
+    values.source_active_power = plain_row(&solution.values.source_active_power);
+    values.source_reactive_power = plain_row(&solution.values.source_reactive_power);
+    let mut value = powerio_prob::LinDist3FlowOpfSolution::new(
+        instance,
+        solution.termination,
+        values,
+        solution.objective.0,
+    )
+    .map_err(|error| invalid(error.to_string()))?
+    .with_residuals(solution.residuals);
     if let Some(producer) = solution.producer {
         value = value.with_producer(producer);
     }

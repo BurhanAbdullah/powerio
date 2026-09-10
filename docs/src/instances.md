@@ -3,8 +3,8 @@
 An instance is the complete input for one named calculation, and a solution
 is the result of one; the solution shares the instance it solves. PowerIO has
 eight instance types, from DC power flow through LinDist3Flow and
-multiconductor AC OPF to AC security constrained unit commitment, and eight
-dynamic solution types, because
+multiconductor AC OPF to AC security constrained unit commitment, and nine
+solution types, because
 `SocwrOpfSolution` is an SOCWR relaxation of an `AcOpfInstance` and is not
 labeled an AC OPF solution.
 
@@ -15,12 +15,9 @@ DcOpfInstance      DcOpfSolution
 AcOpfInstance      AcOpfSolution
 McAcPfInstance     McAcPfSolution
 McAcOpfInstance    McAcOpfSolution
-LinDist3FlowOpfInstance
+LinDist3FlowOpfInstance  LinDist3FlowOpfSolution
 AcScucInstance     AcScucSolution
 ```
-
-Rust also exposes `LinDist3FlowOpfSolution` as the solver-independent return
-boundary. It is not yet a `PioValue` or PowerIO IR solution type.
 
 A source parses to an instance or a solution only when it declares that
 calculation:

@@ -79,6 +79,7 @@ schema definition beside it.
 | `powerio.SocwrOpfSolution` | `SocwrOpfSolution` |
 | `powerio.McAcPfSolution` | `McAcPfSolution` |
 | `powerio.McAcOpfSolution` | `McAcOpfSolution` |
+| `powerio.LinDist3FlowOpfSolution` | `LinDist3FlowOpfSolution` |
 | `powerio.AcScucSolution` | `AcScucSolution` |
 
 ## powerio.BalancedNetwork
@@ -1656,6 +1657,34 @@ Schema definition: `McAcOpfSolution`.
 | `source_active_injection` | array of float | watts | positive into the network | one per source terminal | required |
 | `generator_active_power` | array of float | watts | positive is generation | generator table order, each generator's `terminal_map` order | required |
 | `objective` | float | objective units | | | required |
+
+### powerio.LinDist3FlowOpfSolution
+
+The value arrays follow the topology and device channel orders fixed by the
+embedded instance, independently of a solver's column ordering.
+
+Schema definition: `LinDist3FlowOpfSolution`.
+
+| field | type | unit | sign | invariant | if absent |
+|---|---|---|---|---|---|
+| `instance` | `LinDist3FlowOpfInstance` | | | | required |
+| `termination` | `Termination` | | | | required |
+| `residuals` | `Residuals` | | | | required |
+| `producer` | string or null | | | | null |
+| `values` | `LinDist3FlowOpfValues` | | | physical primal values | required |
+| `objective` | float | objective units | | | required |
+
+Schema definition: `LinDist3FlowOpfValues`.
+
+| field | type | unit | sign | invariant | if absent |
+|---|---|---|---|---|---|
+| `terminal_voltage_magnitude_squared` | array of float | volts squared | nonnegative | topology node order | required |
+| `line_active_power` | array of float | watts | positive from parent to child | topology conductor order | required |
+| `line_reactive_power` | array of float | vars | positive from parent to child | topology conductor order | required |
+| `generator_active_power` | array of float | watts | positive is generation | generator table and channel order | required |
+| `generator_reactive_power` | array of float | vars | positive is generation | generator table and channel order | required |
+| `source_active_power` | array of float | watts | positive into the network | source table and terminal-map order | required |
+| `source_reactive_power` | array of float | vars | positive into the network | source table and terminal-map order | required |
 
 ### powerio.AcScucSolution
 

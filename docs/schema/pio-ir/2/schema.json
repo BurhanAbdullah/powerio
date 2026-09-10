@@ -7229,6 +7229,98 @@
       ],
       "type": "object"
     },
+    "LinDist3FlowOpfSolution": {
+      "additionalProperties": false,
+      "properties": {
+        "instance": {
+          "$ref": "#/$defs/LinDist3FlowOpfInstance"
+        },
+        "objective": {
+          "$ref": "#/$defs/StoredF64"
+        },
+        "producer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "residuals": {
+          "$ref": "#/$defs/Residuals"
+        },
+        "termination": {
+          "$ref": "#/$defs/Termination"
+        },
+        "values": {
+          "$ref": "#/$defs/LinDist3FlowOpfValues"
+        }
+      },
+      "required": [
+        "instance",
+        "termination",
+        "residuals",
+        "values",
+        "objective"
+      ],
+      "type": "object"
+    },
+    "LinDist3FlowOpfValues": {
+      "additionalProperties": false,
+      "description": "Physical primal values of a serialized LinDist3Flow result. Arrays follow\nthe instance's documented topology and device channel orders.",
+      "properties": {
+        "generator_active_power": {
+          "items": {
+            "$ref": "#/$defs/StoredF64"
+          },
+          "type": "array"
+        },
+        "generator_reactive_power": {
+          "items": {
+            "$ref": "#/$defs/StoredF64"
+          },
+          "type": "array"
+        },
+        "line_active_power": {
+          "items": {
+            "$ref": "#/$defs/StoredF64"
+          },
+          "type": "array"
+        },
+        "line_reactive_power": {
+          "items": {
+            "$ref": "#/$defs/StoredF64"
+          },
+          "type": "array"
+        },
+        "source_active_power": {
+          "items": {
+            "$ref": "#/$defs/StoredF64"
+          },
+          "type": "array"
+        },
+        "source_reactive_power": {
+          "items": {
+            "$ref": "#/$defs/StoredF64"
+          },
+          "type": "array"
+        },
+        "terminal_voltage_magnitude_squared": {
+          "items": {
+            "$ref": "#/$defs/StoredF64"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "terminal_voltage_magnitude_squared",
+        "line_active_power",
+        "line_reactive_power",
+        "generator_active_power",
+        "generator_reactive_power",
+        "source_active_power",
+        "source_reactive_power"
+      ],
+      "type": "object"
+    },
     "LinDist3FlowReferencePolicy": {
       "description": "Selection of the fixed phasors used to form LinDist3Flow coefficients.",
       "oneOf": [
@@ -13344,6 +13436,23 @@
             },
             "type": {
               "const": "powerio.McAcOpfSolution",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/LinDist3FlowOpfSolution"
+            },
+            "type": {
+              "const": "powerio.LinDist3FlowOpfSolution",
               "type": "string"
             }
           },

@@ -149,7 +149,7 @@ pub use powerio_dist::{
 };
 
 pub use powerio_prob::solution::{SocwrOpfDuals, SocwrOpfSolution, SocwrOpfValues};
-/// The balanced calculation types used by solver consumers. The full problem
+/// The calculation types used by solver consumers. The full problem
 /// vocabulary lives in [`powerio_prob`]; these types sit at the facade root so
 /// a consumer does not need a second PowerIO dependency to name its boundary.
 pub use powerio_prob::{

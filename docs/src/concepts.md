@@ -49,7 +49,7 @@ ScenarioSet<T>
 DcPfInstance, AcPfInstance, DcOpfInstance, AcOpfInstance,
 McAcPfInstance, McAcOpfInstance, LinDist3FlowOpfInstance, AcScucInstance
 DcPfSolution, AcPfSolution, DcOpfSolution, AcOpfSolution, SocwrOpfSolution,
-McAcPfSolution, McAcOpfSolution, AcScucSolution
+McAcPfSolution, McAcOpfSolution, LinDist3FlowOpfSolution, AcScucSolution
 GeoLayer
 ```
 
