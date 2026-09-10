@@ -19,6 +19,7 @@ use crate::{
 use powerio_core::{Diagnostic, DiagnosticSeverity, HistoryEntry, HistoryId, HistoryKind};
 use powerio_dist::{
     ConductorMatrix, DistBus, DistLine, DistLineCode, DistLoadVoltageModel, MulticonductorNetwork,
+    NeutralKronOptions, NeutralKronReport,
 };
 
 use crate::codes;
@@ -472,6 +473,93 @@ pub fn apply_geo_layer(
             "apply_geo_layer did not receive a network value",
         )
     })?;
+    Ok((derived, report))
+}
+
+/// Eliminate explicitly grounded neutral conductors with the default Kron
+/// projection options.
+///
+/// The source module is left unchanged. The returned module retains its
+/// records, clears locators into the pre-projection value, appends the
+/// projection findings, and records one same-family transform history entry.
+pub fn neutral_kron(
+    module: &powerio_core::PioModule<crate::PioValue>,
+) -> Result<(powerio_core::PioModule<crate::PioValue>, NeutralKronReport), powerio_core::Error> {
+    neutral_kron_with_options(module, &NeutralKronOptions::default())
+}
+
+/// Eliminate explicitly grounded neutral conductors with explicit projection
+/// options.
+///
+/// The returned report keeps its input-network targets. Copies appended to the
+/// output module have those targets cleared because terminal arrays changed.
+///
+/// # Errors
+/// The module does not contain a multiconductor network, the neutral
+/// projection cannot preserve its semantics, or the derived module cannot
+/// accept the new history and diagnostic records.
+pub fn neutral_kron_with_options(
+    module: &powerio_core::PioModule<crate::PioValue>,
+    options: &NeutralKronOptions,
+) -> Result<(powerio_core::PioModule<crate::PioValue>, NeutralKronReport), powerio_core::Error> {
+    let crate::PioValue::MulticonductorNetwork(network) = module.value() else {
+        return Err(powerio_core::Error::new(
+            &codes::REQUEST_MODULE_WRONG_MODEL_KIND,
+            format!(
+                "neutral_kron requires powerio.MulticonductorNetwork; the module contains {}",
+                module.value().type_name()
+            ),
+        ));
+    };
+    let reduction = powerio_dist::neutral_kron_reduce(network, options).map_err(|cause| {
+        powerio_core::Error::new(cause.code(), cause.to_string()).with_cause(cause)
+    })?;
+    let (network, report) = reduction.into_parts();
+    let neutral_terminals = options
+        .neutral_terminals
+        .iter()
+        .map(|(bus, terminal)| (bus.clone(), serde_json::Value::String(terminal.clone())))
+        .collect();
+    let parameters = BTreeMap::from([
+        (
+            "allow_forced_ideal_ground".to_owned(),
+            serde_json::Value::Bool(options.allow_forced_ideal_ground),
+        ),
+        (
+            "neutral_terminals".to_owned(),
+            serde_json::Value::Object(neutral_terminals),
+        ),
+    ]);
+    let history = HistoryEntry::new(
+        unused_history_id(module, "neutral_kron"),
+        HistoryKind::Transform,
+        "neutral_kron",
+    )?
+    .with_input_type("powerio.MulticonductorNetwork")?
+    .with_output_type("powerio.MulticonductorNetwork")?
+    .with_parameters(parameters)?;
+    let producer = powerio_core::Producer::new("powerio", crate::VERSION)?;
+    let mut derived = module.clone().try_derive_value(
+        producer,
+        history,
+        move |value| match value {
+            crate::PioValue::MulticonductorNetwork(_) => {
+                Ok(crate::PioValue::MulticonductorNetwork(network))
+            }
+            value => Err(powerio_core::Error::new(
+                &codes::REQUEST_MODULE_WRONG_MODEL_KIND,
+                format!(
+                    "neutral_kron requires powerio.MulticonductorNetwork; the module contains {}",
+                    value.type_name()
+                ),
+            )),
+        },
+    )?;
+    for diagnostic in &report.diagnostics {
+        let mut diagnostic = diagnostic.clone();
+        diagnostic.clear_target();
+        derived.add_diagnostic(diagnostic)?;
+    }
     Ok((derived, report))
 }
 

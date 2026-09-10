@@ -54,22 +54,21 @@ Multiconductor admittance matrices build directly from the multiconductor
 network through `powerio_matrix::calc_multiconductor_admittance_matrix`,
 which is Rust only in 0.11.
 
-LinDist3Flow construction is likewise explicit. A network with an explicit
-neutral first passes through `powerio_dist::neutral_kron_reduce`; the resulting
-network records the projection provenance. Instance construction then checks
-the supported radial model slice, fixes the voltage reference, and creates the
-portable input:
+LinDist3Flow construction is likewise explicit. A module with an explicit
+neutral first passes through the facade's `neutral_kron`; the returned network
+records the projection provenance and the module records the transform and its
+diagnostics. Instance construction then checks the supported radial model
+slice, fixes the voltage reference, and creates the portable input:
 
 ```rust,ignore
-use powerio::{LinDist3FlowBuildOptions, LinDist3FlowOpfInstance};
-use powerio_dist::{NeutralKronOptions, neutral_kron_reduce};
+use powerio::{neutral_kron, to_lindist3flow_opf_instance};
 
-let reduced = neutral_kron_reduce(&network, &NeutralKronOptions::default())?;
-let instance = LinDist3FlowOpfInstance::from_network(
-    reduced.network().clone(),
-    LinDist3FlowBuildOptions::default(),
-)?;
+let (reduced, report) = neutral_kron(&feeder)?;
+let instance = to_lindist3flow_opf_instance(&reduced)?;
 ```
+
+`powerio_dist::neutral_kron_reduce` remains available when an application
+needs the independently owned network projection without module records.
 
 `powerio-matrix` compiles that instance to sparse affine rows, bounds, and
 second-order cones. It does not select or invoke a solver, so the same bundle

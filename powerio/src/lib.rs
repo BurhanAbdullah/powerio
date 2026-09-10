@@ -145,7 +145,7 @@ pub type Result<T> = std::result::Result<T, powerio_core::Error>;
 pub use powerio_dist as dist;
 pub use powerio_dist::{
     BmopfEmitOptions, BmopfSchemaVersion, ConductorMatrix, DistGeoMeta, DistGraphEdgeKind,
-    MulticonductorNetwork,
+    MulticonductorNetwork, NeutralKronOptions, NeutralKronReport,
 };
 
 pub use powerio_prob::solution::{SocwrOpfDuals, SocwrOpfSolution, SocwrOpfValues};
@@ -195,9 +195,9 @@ pub use ir::generate_ir_schema;
 pub use ir::{deserialize, serialize, serialize_diagnostics};
 pub mod transform;
 pub use transform::{
-    apply_geo_layer, to_ac_opf_instance, to_ac_pf_instance, to_dc_opf_instance, to_dc_pf_instance,
-    to_lindist3flow_opf_instance, to_lindist3flow_opf_instance_with_options, to_mc_ac_opf_instance,
-    to_mc_ac_pf_instance,
+    apply_geo_layer, neutral_kron, neutral_kron_with_options, to_ac_opf_instance,
+    to_ac_pf_instance, to_dc_opf_instance, to_dc_pf_instance, to_lindist3flow_opf_instance,
+    to_lindist3flow_opf_instance_with_options, to_mc_ac_opf_instance, to_mc_ac_pf_instance,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
