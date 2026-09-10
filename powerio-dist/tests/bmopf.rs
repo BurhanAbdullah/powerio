@@ -4070,3 +4070,63 @@ fn bmopftools_element_geometry_and_projected_crs_survive_mutation() {
     );
     assert_eq!(again.geo(), net.geo());
 }
+
+#[test]
+fn bmopf_geometry_reads_named_crs_objects() {
+    let doc = serde_json::json!({
+        "bus": {"a": {"terminal_names": ["1"]}},
+        "extras": {"geojson": {
+            "type": "FeatureCollection",
+            "crs": {"type": "name", "properties": {"name": "EPSG:2193"}},
+            "features": [{"type": "Feature", "properties": {"kind": "bus", "id": "a"},
+                "geometry": {"type": "Point", "coordinates": [1_700_000, 5_400_000]}}]
+        }}
+    });
+    let net = parse_bmopf_str(&doc.to_string()).unwrap();
+    assert!((net.buses()[0].location.unwrap().x - 1_700_000.0).abs() < f64::EPSILON);
+    assert!(matches!(&net.geo().as_ref().unwrap().space,
+        CoordinateSpace::Projected { crs: Some(crs) } if crs == "EPSG:2193"));
+}
+
+#[test]
+fn bmopf_invalid_geometry_metadata_does_not_assign_coordinates() {
+    for metadata in [
+        serde_json::json!({"crs": 123}),
+        serde_json::json!({"powerio_geo": {"space": "invalid"}}),
+    ] {
+        let mut collection = serde_json::json!({
+            "type": "FeatureCollection", "features": [{
+                "type": "Feature", "properties": {"kind": "bus", "id": "a"},
+                "geometry": {"type": "Point", "coordinates": [1, 2]}
+            }]
+        });
+        collection
+            .as_object_mut()
+            .unwrap()
+            .extend(metadata.as_object().unwrap().clone());
+        let doc = serde_json::json!({"bus": {"a": {"terminal_names": ["1"]}},
+            "extras": {"geojson": collection}});
+        let net = parse_bmopf_str(&doc.to_string()).unwrap();
+        assert!(net.buses()[0].location.is_none());
+        assert!(
+            net.warnings
+                .iter()
+                .any(|warning| warning.contains("geometry retained without assigning coordinates"))
+        );
+    }
+}
+
+#[test]
+fn bmopf_geometry_without_element_identity_is_reported() {
+    let doc = serde_json::json!({"bus": {"a": {"terminal_names": ["1"]}},
+    "extras": {"geojson": {"type": "FeatureCollection", "features": [{
+        "type": "Feature", "geometry": {"type": "Point", "coordinates": [1, 2]}
+    }]}}});
+    let net = parse_bmopf_str(&doc.to_string()).unwrap();
+    assert!(net.buses()[0].location.is_none());
+    assert!(
+        net.warnings
+            .iter()
+            .any(|warning| warning.contains("missing kind or id"))
+    );
+}

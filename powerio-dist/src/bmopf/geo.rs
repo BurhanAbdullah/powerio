@@ -16,14 +16,23 @@ fn point(value: &Value) -> Option<DistLocation> {
     })
 }
 
-fn read_meta(meta: &Value, collection: &Value) -> DistGeoMeta {
-    let crs = meta["crs"]
-        .as_str()
-        .or_else(|| collection["crs"].as_str())
-        .unwrap_or("EPSG:4326");
+fn read_meta(meta: &Value, collection: &Value) -> Result<DistGeoMeta, String> {
+    if let Some(declared) = collection.get("powerio_geo") {
+        return serde_json::from_value(declared.clone())
+            .map_err(|error| format!("invalid powerio_geo metadata: {error}"));
+    }
+    let crs = meta.get("crs").or_else(|| collection.get("crs"));
+    let crs = match crs {
+        None => "EPSG:4326",
+        Some(value) => value
+            .as_str()
+            .or_else(|| value.pointer("/properties/name").and_then(Value::as_str))
+            .filter(|name| !name.trim().is_empty())
+            .ok_or_else(|| "invalid geometry coordinate reference system".to_owned())?,
+    };
     let wgs84 = matches!(
         crs.to_ascii_uppercase().as_str(),
-        "EPSG:4326" | "OGC:CRS84" | "WGS84"
+        "EPSG:4326" | "OGC:CRS84" | "WGS84" | "URN:OGC:DEF:CRS:OGC:1.3:CRS84"
     );
     let fallback_space = if wgs84 {
         CoordinateSpace::Geographic {
@@ -34,10 +43,7 @@ fn read_meta(meta: &Value, collection: &Value) -> DistGeoMeta {
             crs: Some(crs.into()),
         }
     };
-    let declared = collection
-        .get("powerio_geo")
-        .and_then(|v| serde_json::from_value::<DistGeoMeta>(v.clone()).ok());
-    declared.unwrap_or(DistGeoMeta {
+    Ok(DistGeoMeta {
         space: fallback_space,
         kind: Some(DistCoordsKind::Source),
     })
@@ -52,7 +58,24 @@ pub(super) fn read(
         .get("extras")
         .and_then(|v| v.get("geojson"))
         .unwrap_or(&Value::Null);
-    let geo_meta = read_meta(doc.get("meta").unwrap_or(&Value::Null), collection);
+    let geo_meta = match read_meta(doc.get("meta").unwrap_or(&Value::Null), collection) {
+        Ok(meta) => meta,
+        Err(reason) => {
+            diagnostics.push(
+                &crate::diagnostics::codes::READ_BMOPF_RETAINED_SOURCE_ONLY,
+                format!("{reason}; geometry retained without assigning coordinates"),
+            );
+            return;
+        }
+    };
+    if !collection.is_null()
+        && (collection["type"] != "FeatureCollection" || !collection["features"].is_array())
+    {
+        diagnostics.push(
+            &crate::diagnostics::codes::READ_BMOPF_RETAINED_SOURCE_ONLY,
+            "invalid GeoJSON feature collection; retained without assigning its coordinates",
+        );
+    }
     let geographic = matches!(geo_meta.space, CoordinateSpace::Geographic { .. });
     let buses: std::collections::HashMap<_, _> = net
         .buses()
@@ -104,13 +127,18 @@ pub(super) fn read(
             diagnostics.push(&crate::diagnostics::codes::READ_BMOPF_RETAINED_SOURCE_ONLY,format!("{kind} {id}: geometry is invalid or names no matching element; retained without assigning coordinates"));
         }
     };
-    if let Some(features) = collection["features"].as_array() {
+    if let Some(features) = collection["features"]
+        .as_array()
+        .filter(|_| collection["type"] == "FeatureCollection")
+    {
         for f in features {
             if let (Some(kind), Some(id)) = (
                 f["properties"]["kind"].as_str(),
                 f["properties"]["id"].as_str(),
             ) {
                 apply(kind, id, &f["geometry"]);
+            } else {
+                apply("feature", "(missing kind or id)", &f["geometry"]);
             }
         }
     }
