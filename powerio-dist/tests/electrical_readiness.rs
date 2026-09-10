@@ -65,12 +65,8 @@ new line.l bus1=sourcebus.1 bus2=b.1 geometry=g length=1 units=m
     );
 }
 
-// The two cases from eigenergy/powerio#479 as Burhan Abdullah's draft PR #480
-// stated them: a geometry defined line is retained as its source object and
-// reported when it is read, and it never receives the OpenDSS `Line` factory
-// impedance (`R1 = 0.058, X1 = 0.1206, R0 = 0.1784, X0 = 0.4047`, whose phase
-// domain self term is `(R0 + 2 R1) / 3 = 0.098133…`) or a fabricated
-// conductor count.
+// Unresolved geometry retains its source object and emits a parse diagnostic.
+// The Line factory self resistance is (R0 + 2 R1) / 3 in the phase domain.
 
 const OPENDSS_FACTORY_R11_PER_M: f64 = 0.098_133_333_333_333_34;
 

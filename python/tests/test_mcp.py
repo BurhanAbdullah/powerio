@@ -299,7 +299,8 @@ def test_matrix_response_names_every_axis():
 
     lacpf = server.calc_matrix("lacpf", path=str(DATA / "case9.m"))
     assert len(lacpf["row_ids"]) == 18
-    assert lacpf["row_ids"][0].endswith(":va") and lacpf["row_ids"][9].endswith(":vm")
+    assert lacpf["row_ids"][0].endswith(":p") and lacpf["row_ids"][9].endswith(":q")
+    assert lacpf["col_ids"][0].endswith(":vm") and lacpf["col_ids"][9].endswith(":va")
 
 
 def test_matrix_tool_serves_the_dc_calculations_by_name():
@@ -326,6 +327,68 @@ def test_matrix_tool_serves_the_dc_calculations_by_name():
     )
     assert injection["formula"] == "reactance_only"
     assert injection["row_ids"] == incidence["col_ids"]
+
+
+def _resistive_case_ir(resistance=0.1):
+    document = json.loads(powerio.serialize(powerio.parse(DATA / "case9.m")).text)
+    for branch in document["value"]["data"]["branches"]:
+        branch["r"] = resistance
+        branch["x"] = 0.0
+    return json.dumps(document)
+
+
+def test_adjacency_axes_do_not_require_dc_impedance():
+    result = server.calc_matrix("adjacency", powerio_ir=_resistive_case_ir(0.0))
+    assert result["shape"] == [9, 9]
+    assert result["row_ids"] == result["col_ids"] == list(range(1, 10))
+    assert result["nnz"] > 0
+
+
+def test_multiconductor_operating_point_summary_does_not_request_a_balanced_network():
+    document = json.loads(powerio.serialize(powerio.parse(DSS)).text)
+    document["value"] = {
+        "type": "powerio.OperatingPoint<powerio.MulticonductorNetwork>",
+        "data": {"network": document["value"]["data"], "quantities": {}},
+    }
+    text = json.dumps(document)
+    result = server.summarize(powerio_ir=text)
+    assert result["operating_point"] is True
+    assert result["network"] is None
+    with pytest.raises(ValueError, match="BalancedNetwork"):
+        server.calc_matrix("adjacency", powerio_ir=text)
+
+
+@pytest.mark.parametrize("matrix,scheme", [
+    ("bprime", "bx"), ("bdoubleprime", "xb"),
+    ("admittance_real", "bx"), ("admittance_imag", "bx"), ("lacpf", "bx"),
+])
+def test_ac_axes_do_not_apply_the_dc_reactance_formula(matrix, scheme):
+    result = server.calc_matrix(
+        matrix, powerio_ir=_resistive_case_ir(), scheme=scheme, formula="reactance_only"
+    )
+    assert result["shape"] == [len(result["row_ids"]), len(result["col_ids"])]
+    assert result["skipped_branch_rows"] == []
+
+
+@pytest.mark.parametrize("matrix,scheme", [("bprime", "xb"), ("bdoubleprime", "bx")])
+def test_fdpf_skipped_rows_follow_the_selected_scheme(matrix, scheme):
+    result = server.calc_matrix(
+        matrix, powerio_ir=_resistive_case_ir(), scheme=scheme, skip_zero_impedance=True
+    )
+    assert result["skipped_branch_rows"] == list(range(9))
+
+
+def test_lacpf_axes_match_the_power_voltage_blocks():
+    np = pytest.importorskip("numpy")
+    sparse = pytest.importorskip("scipy.sparse")
+    net = powerio.parse(DATA / "case9.m").value
+    result = server.calc_matrix("lacpf", path=str(DATA / "case9.m"))
+    matrix = sparse.coo_matrix((result["data"], (result["row"], result["col"])), shape=result["shape"])
+    vm = np.linspace(-0.01, 0.02, 9)
+    va = np.linspace(0.02, -0.03, 9)
+    ybus = net.calc_admittance_matrix()
+    expected = np.r_[ybus.real @ vm - ybus.imag @ va, -ybus.imag @ vm - ybus.real @ va]
+    np.testing.assert_allclose(matrix @ np.r_[vm, va], expected)
 
 
 def test_matrix_tool_rejects_skip_zero_impedance_where_it_would_be_ignored():
