@@ -64,6 +64,7 @@ pub mod io;
 mod lindist3flow;
 mod lindist3flow_conic;
 mod lindist3flow_devices;
+mod lindist3flow_standard;
 pub mod matrix;
 mod opf;
 pub mod pipeline;
@@ -101,6 +102,10 @@ pub use lindist3flow_devices::{
     LinDist3FlowPreparation, LinDist3FlowShuntData, LinDist3FlowSourceData, LinDist3FlowVariable,
     LinDist3FlowVoltageTerm, build_lindist3flow_device_data, build_lindist3flow_preparation,
     lindist3flow_connection_incidence,
+};
+pub use lindist3flow_standard::{
+    LinDist3FlowStandardCone, LinDist3FlowStandardForm, LinDist3FlowStandardRowOrigin,
+    build_lindist3flow_standard_form,
 };
 pub use opf::{AnalysisBranchSource, PiecewiseLinearCost, PreparedObjective};
 
