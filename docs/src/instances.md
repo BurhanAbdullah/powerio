@@ -71,8 +71,7 @@ mathematical input only. The choice of equations, B-theta or PTDF for DC OPF
 and polar or SOC for AC OPF, belongs to the solver and does not create
 another instance type. LinDist3Flow is an explicit exception to that general
 AC choice because its fixed-reference linear approximation, radial topology,
-and applicability decisions are part of the instance contract rather than a
-solver's internal representation.
+and applicability decisions define the mathematical problem.
 
 A solution lists its values by stable element identifier, along with the
 termination claim and residuals that PowerIO computes itself rather than

@@ -1222,6 +1222,14 @@ Schema definition: `LinDist3FlowOpfInstance`.
 | `base` | `McAcOpfInstance` | | | complete multiconductor AC OPF instance | required |
 | `options` | `LinDist3FlowBuildOptions` | | | fixed reference, unsupported-data, and neutral-provenance policies used to construct the formulation | required |
 
+Schema definition: `LinDist3FlowBuildOptions`.
+
+| field | type | unit | sign | invariant | if absent |
+|---|---|---|---|---|---|
+| `reference_policy` | `auto`, `explicit`, or `source_propagated` | | | selects the fixed coefficient phasors | required |
+| `unsupported` | `reject`, `lower`, `approximate`, or `permissive` | | | only `reject` is implemented; other values fail construction | required |
+| `require_neutral_provenance` | bool | | | requires a recorded neutral-Kron projection when true | required |
+
 Schema definition: `MulticonductorActiveConstraints`.
 
 | field | type | unit | sign | invariant | if absent |
