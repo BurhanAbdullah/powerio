@@ -1043,7 +1043,7 @@ fn split_source_network(sources: Vec<VoltageSource>) -> MulticonductorNetwork {
 }
 
 #[test]
-fn bmopf_coordinates_are_strict_by_default_and_opt_in_as_sideloads() {
+fn bmopf_coordinates_keep_schema_valid_geometry_after_mutation() {
     let mut net =
         split_source_network(vec![single_phase_source("source", "1", 0.0, Extras::new())]);
     *net.geo_mut() = Some(DistGeoMeta {
@@ -1055,56 +1055,31 @@ fn bmopf_coordinates_are_strict_by_default_and_opt_in_as_sideloads() {
         y: 35.0,
         kind: None,
     });
-
-    let strict = emit_bmopf_json(&net);
-    let strict_doc: serde_json::Value = serde_json::from_str(&strict.text).unwrap();
-    assert!(strict_doc["bus"]["sourcebus"].get("longitude").is_none());
-    assert!(
-        strict
-            .warnings
-            .iter()
-            .any(|w| w.contains("EMIT.BMOPF.BUS_LOCATION_DROPPED")),
-        "{:?}",
-        strict.warnings
-    );
-    assert_eq!(
-        diagnostic(&strict, "EMIT.BMOPF.BUS_LOCATION_DROPPED", "bus sourcebus").severity(),
-        DiagnosticSeverity::Warning
-    );
-
-    let mut options = BmopfEmitOptions::default();
-    options.sideload_coordinates = true;
-    let sideloaded = emit_bmopf_json_with_options(&net, options);
-    let doc: serde_json::Value = serde_json::from_str(&sideloaded.text).unwrap();
-    assert_eq!(
-        doc["bus"]["sourcebus"]["longitude"],
-        serde_json::json!(-80.0)
-    );
-    assert_eq!(doc["bus"]["sourcebus"]["latitude"], serde_json::json!(35.0));
-    assert!(
-        sideloaded
-            .warnings
-            .iter()
-            .all(|w| !w.contains("BUS_LOCATION_DROPPED")),
-        "{:?}",
-        sideloaded.warnings
-    );
-
-    *net.geo_mut() = Some(DistGeoMeta {
-        space: CoordinateSpace::Unknown,
-        kind: Some(DistCoordsKind::Source),
-    });
-    let unknown = emit_bmopf_json_with_options(&net, options);
-    let doc: serde_json::Value = serde_json::from_str(&unknown.text).unwrap();
-    assert!(doc["bus"]["sourcebus"].get("longitude").is_none());
-    assert!(
-        unknown
-            .warnings
-            .iter()
-            .any(|w| w.contains("EMIT.BMOPF.BUS_LOCATION_DROPPED")),
-        "{:?}",
-        unknown.warnings
-    );
+    for sideload in [false, true] {
+        let mut options = BmopfEmitOptions::default();
+        options.sideload_coordinates = sideload;
+        let encoded = emit_bmopf_json_with_options(&net, options);
+        let doc: serde_json::Value = serde_json::from_str(&encoded.text).unwrap();
+        assert!(doc["bus"]["sourcebus"].get("longitude").is_none());
+        assert_eq!(
+            doc["extras"]["geojson"]["features"][0]["geometry"]["coordinates"],
+            serde_json::json!([-80.0, 35.0])
+        );
+        assert!(
+            !encoded
+                .warnings
+                .iter()
+                .any(|w| w.contains("BUS_LOCATION_DROPPED"))
+        );
+        let mut restored = parse_bmopf_str(&encoded.text).unwrap();
+        restored.buses_mut()[0].location.as_mut().unwrap().x = -81.0;
+        let changed = emit_bmopf_json(&restored);
+        let again = parse_bmopf_str(&changed.text).unwrap();
+        assert_eq!(
+            again.buses()[0].location.unwrap().x.to_bits(),
+            (-81.0_f64).to_bits()
+        );
+    }
 }
 
 #[test]
@@ -4065,4 +4040,93 @@ fn no_load_shunt_preserves_winding_units_and_tap_after_conversion() {
             assert!((actual[key].as_f64().unwrap() - shunt[key].as_f64().unwrap()).abs() < 1e-12);
         }
     }
+}
+
+#[test]
+fn bmopftools_element_geometry_and_projected_crs_survive_mutation() {
+    let text = r#"{"meta":{"crs":"EPSG:2193"},"bus":{"a":{"terminal_names":["1"],"geo":{"type":"Point","coordinates":[1700000,5400000]}},"b":{"terminal_names":["1"],"geo":{"type":"Point","coordinates":[1700010,5400010]}}},"line":{"ab":{"bus_from":"a","bus_to":"b","terminal_map_from":["1"],"terminal_map_to":["1"],"R_series_1_1":1,"X_series_1_1":1,"geo":{"type":"LineString","coordinates":[[1700000,5400000],[1700003,5400007],[1700010,5400010]]}}}}"#;
+    let mut net = parse_bmopf_str(text).unwrap();
+    assert!(
+        matches!(&net.geo().as_ref().unwrap().space,CoordinateSpace::Projected {crs:Some(crs)} if crs=="EPSG:2193")
+    );
+    assert_eq!(net.lines()[0].route.as_ref().unwrap().len(), 3);
+    net.buses_mut()[0].location.as_mut().unwrap().x += 4.0;
+    net.lines_mut()[0].route.as_mut().unwrap()[1].y += 2.0;
+    let emitted = emit_bmopf_json(&net);
+    assert!(
+        schema_validator()
+            .is_valid(&serde_json::from_str::<serde_json::Value>(&emitted.text).unwrap()),
+        "{:?}",
+        errors(&schema_validator(), &emitted.text)
+    );
+    let again = parse_bmopf_str(&emitted.text).unwrap();
+    assert_eq!(
+        again.buses()[0].location.unwrap().x.to_bits(),
+        1_700_004.0_f64.to_bits()
+    );
+    assert_eq!(
+        again.lines()[0].route.as_ref().unwrap()[1].y.to_bits(),
+        5_400_009.0_f64.to_bits()
+    );
+    assert_eq!(again.geo(), net.geo());
+}
+
+#[test]
+fn bmopf_geometry_reads_named_crs_objects() {
+    let doc = serde_json::json!({
+        "bus": {"a": {"terminal_names": ["1"]}},
+        "extras": {"geojson": {
+            "type": "FeatureCollection",
+            "crs": {"type": "name", "properties": {"name": "EPSG:2193"}},
+            "features": [{"type": "Feature", "properties": {"kind": "bus", "id": "a"},
+                "geometry": {"type": "Point", "coordinates": [1_700_000, 5_400_000]}}]
+        }}
+    });
+    let net = parse_bmopf_str(&doc.to_string()).unwrap();
+    assert!((net.buses()[0].location.unwrap().x - 1_700_000.0).abs() < f64::EPSILON);
+    assert!(matches!(&net.geo().as_ref().unwrap().space,
+        CoordinateSpace::Projected { crs: Some(crs) } if crs == "EPSG:2193"));
+}
+
+#[test]
+fn bmopf_invalid_geometry_metadata_does_not_assign_coordinates() {
+    for metadata in [
+        serde_json::json!({"crs": 123}),
+        serde_json::json!({"powerio_geo": {"space": "invalid"}}),
+    ] {
+        let mut collection = serde_json::json!({
+            "type": "FeatureCollection", "features": [{
+                "type": "Feature", "properties": {"kind": "bus", "id": "a"},
+                "geometry": {"type": "Point", "coordinates": [1, 2]}
+            }]
+        });
+        collection
+            .as_object_mut()
+            .unwrap()
+            .extend(metadata.as_object().unwrap().clone());
+        let doc = serde_json::json!({"bus": {"a": {"terminal_names": ["1"]}},
+            "extras": {"geojson": collection}});
+        let net = parse_bmopf_str(&doc.to_string()).unwrap();
+        assert!(net.buses()[0].location.is_none());
+        assert!(
+            net.warnings
+                .iter()
+                .any(|warning| warning.contains("geometry retained without assigning coordinates"))
+        );
+    }
+}
+
+#[test]
+fn bmopf_geometry_without_element_identity_is_reported() {
+    let doc = serde_json::json!({"bus": {"a": {"terminal_names": ["1"]}},
+    "extras": {"geojson": {"type": "FeatureCollection", "features": [{
+        "type": "Feature", "geometry": {"type": "Point", "coordinates": [1, 2]}
+    }]}}});
+    let net = parse_bmopf_str(&doc.to_string()).unwrap();
+    assert!(net.buses()[0].location.is_none());
+    assert!(
+        net.warnings
+            .iter()
+            .any(|warning| warning.contains("missing kind or id"))
+    );
 }

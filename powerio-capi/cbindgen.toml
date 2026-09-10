@@ -40,6 +40,7 @@ typedef struct PioArtifact PioArtifact;
 typedef struct PioActivePower PioActivePower;
 typedef struct PioAcOpfPreparation PioAcOpfPreparation;
 typedef struct PioDcOpfPreparation PioDcOpfPreparation;
+typedef struct PioDcOperators PioDcOperators;
 typedef struct PioApparentPower PioApparentPower;
 typedef struct PioBalancedNetwork PioBalancedNetwork;
 typedef struct PioCalculationUpdate PioCalculationUpdate;

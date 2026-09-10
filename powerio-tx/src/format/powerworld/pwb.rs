@@ -729,7 +729,13 @@ fn checked_network(
         name: name_hint.unwrap_or("case").to_string(),
         base_mva: MVA_BASE,
         base_frequency: crate::network::DEFAULT_BASE_FREQUENCY,
-        geo: None,
+        geo: buses
+            .iter()
+            .any(|bus| bus.location.is_some())
+            .then_some(crate::geo::GeoMeta {
+                space: crate::geo::CoordinateSpace::Geographic { crs: None },
+                kind: Some(crate::geo::CoordsKind::Source),
+            }),
         case_metadata: crate::network::CaseMetadata::default(),
         detailed_connectivity: None,
         generated_uids: std::sync::Arc::default(),
@@ -1335,11 +1341,73 @@ fn read_bus_head(b: &[u8], at: usize) -> Probe<(BusHead, usize)> {
         zone,
         name: Some(String::from_utf8_lossy(name).into_owned()),
         uid: None,
-        location: None,
+        location: bus_tail_location(b, c.pos, unk),
         extras: Extras::new(),
     };
     let shunt = bus_tail_shunt(b, c.pos, BusId(num));
     Ok((BusHead { bus, shunt, unk }, c.pos))
+}
+
+/// Decode latitude/longitude in the validated 425 and 537 bus-tail layouts.
+/// Presence flags and the fixed display fields locate the pair; coordinate values
+/// never determine a record boundary or select a candidate byte offset.
+fn bus_tail_location(bytes: &[u8], after_head: usize, flags: u32) -> Option<crate::geo::Location> {
+    let version = u64::from_le_bytes(bytes.get(8..16)?.try_into().ok()?);
+    if !matches!(version, 425 | 537) || flags & 0x3000 != 0x3000 || flags & 0x414 != 0 {
+        return None;
+    }
+    let mut c = Cur {
+        b: bytes,
+        pos: after_head,
+    };
+    match c.u8().ok()? {
+        0 => {
+            if !c.f32().ok()?.is_finite() || !c.f32().ok()?.is_finite() {
+                return None;
+            }
+        }
+        1 => {}
+        _ => return None,
+    }
+    if !c.f32().ok()?.is_finite() || c.u32().ok()? > 5 || c.u8().ok()? != 5 {
+        return None;
+    }
+    let scale = c.f32().ok()?;
+    if !scale.is_finite() || scale <= 0.0 || c.u8().ok()? != 0 {
+        return None;
+    }
+    if version == 537 && c.u8().ok()? != 0 {
+        return None;
+    }
+    if c.u8().ok()? != 1 {
+        return None;
+    }
+    let expected = if flags & 0x20 != 0 { 0x4300 } else { 0x4000 };
+    if c.u16().ok()? != expected {
+        return None;
+    }
+    let fields = 4
+        + if flags & 0x20 != 0 { 12 } else { 0 }
+        + if flags & 0x40 != 0 { 4 } else { 0 }
+        + if flags & 0x100 != 0 { 4 } else { 0 };
+    let tail = c.take(fields).ok()?;
+    if tail[fields - 3..] != [0, 0, 0] {
+        return None;
+    }
+    let lat = c.f64().ok()?;
+    let lon = c.f64().ok()?;
+    if !lat.is_finite()
+        || !lon.is_finite()
+        || !(-90.0..=90.0).contains(&lat)
+        || !(-180.0..=180.0).contains(&lon)
+    {
+        return None;
+    }
+    Some(crate::geo::Location {
+        x: lon,
+        y: lat,
+        kind: Some(crate::geo::CoordsKind::Source),
+    })
 }
 
 /// Decode the optional fixed shunt stored in some bus record tails.
@@ -2370,5 +2438,78 @@ mod probe_budget_tests {
             worst.0,
             worst.1
         );
+    }
+}
+
+#[cfg(test)]
+mod bus_location_tests {
+    use super::*;
+    fn record(version: u64, flags: u32, shunt: bool, lat: f64, lon: f64) -> Vec<u8> {
+        let mut b = vec![0; 32];
+        b[8..16].copy_from_slice(&version.to_le_bytes());
+        b.push(u8::from(!shunt));
+        if shunt {
+            b.extend([0; 8]);
+        }
+        b.extend(0f32.to_le_bytes());
+        b.extend(3u32.to_le_bytes());
+        b.push(5);
+        b.extend(1f32.to_le_bytes());
+        b.push(0);
+        if version == 537 {
+            b.push(0);
+        }
+        b.push(1);
+        b.extend(
+            if flags & 0x20 != 0 {
+                0x4300u16
+            } else {
+                0x4000u16
+            }
+            .to_le_bytes(),
+        );
+        b.extend(vec![
+            0;
+            4 + if flags & 0x20 != 0 { 12 } else { 0 }
+                + if flags & 0x40 != 0 { 4 } else { 0 }
+                + if flags & 0x100 != 0 { 4 } else { 0 }
+        ]);
+        b.extend(lat.to_le_bytes());
+        b.extend(lon.to_le_bytes());
+        b
+    }
+    #[test]
+    fn coordinates_follow_flags_and_optional_shunts() {
+        for version in [425, 537] {
+            for flags in [0x3002, 0x3022, 0x3062, 0x3163] {
+                for shunt in [false, true] {
+                    let b = record(version, flags, shunt, -33.5, 151.2);
+                    let point = bus_tail_location(&b, 32, flags).unwrap();
+                    assert_eq!((point.x, point.y), (151.2, -33.5));
+                    for length in 32..b.len() {
+                        assert!(bus_tail_location(&b[..length], 32, flags).is_none());
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn invalid_or_unrecognized_location_records_remain_unavailable() {
+        for (lat, lon) in [
+            (91.0, 0.0),
+            (0.0, 181.0),
+            (f64::NAN, 0.0),
+            (0.0, f64::INFINITY),
+        ] {
+            assert!(bus_tail_location(&record(425, 0x3163, false, lat, lon), 32, 0x3163).is_none());
+        }
+        let mut b = record(425, 0x3163, false, 0.0, 0.0);
+        assert!(bus_tail_location(&b, 32, 0x163).is_none());
+        assert_eq!(
+            bus_tail_location(&b, 32, 0x3163).unwrap().x.to_bits(),
+            0.0_f64.to_bits()
+        );
+        b[8..16].copy_from_slice(&554u64.to_le_bytes());
+        assert!(bus_tail_location(&b, 32, 0x3163).is_none());
     }
 }

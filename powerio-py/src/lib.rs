@@ -22,12 +22,12 @@ use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 use sprs::CsMat;
 
 use powerio::{BalancedNetwork, BranchSusceptanceFormula, PwdDisplay};
-use powerio_matrix::DcOperators;
 use powerio_matrix::matrix::{
     BuildOptions, Scheme, SensitivityOptions, SensitivitySolver, calc_adjacency_matrix,
     calc_admittance_matrix, calc_bdoubleprime_matrix, calc_bprime_matrix, calc_lacpf_matrix,
     calc_ptdf_lodf_with_options,
 };
+use powerio_matrix::{DcOperatorOptions, DcOperators};
 use powerio_tx::{
     Detection, IndexCore, IndexedNetwork, JsonClass, NormalizeOptions,
     POWER_MODELS_ANGLE_BOUND_PAD, classify_json_text as classify_balanced_json_text,
@@ -374,12 +374,13 @@ impl PyBalancedNetwork {
         self.module.diagnostics()
     }
 
-    fn dc_operators(&self, formula: &str) -> PyResult<DcOperators> {
+    fn dc_operators(&self, formula: &str, skip_zero_impedance: bool) -> PyResult<DcOperators> {
         let formula = parse_formula(formula)?;
         let instance = powerio_prob::DcPfInstance::from_network(self.inner().clone())
             .map_err(|error| core_error_pyerr(&error))?
             .with_branch_susceptance_formula(formula);
-        DcOperators::build(&instance).map_err(|error| core_error_pyerr(&error))
+        let options = DcOperatorOptions::new().with_skip_zero_impedance(skip_zero_impedance);
+        DcOperators::build_with(&instance, &options).map_err(|error| core_error_pyerr(&error))
     }
 }
 
@@ -945,73 +946,184 @@ impl PyBalancedNetwork {
     }
 
     /// Calculate the PowerModels branch by bus incidence matrix.
-    #[pyo3(signature = (formula="series_susceptance"))]
+    #[pyo3(signature = (formula="series_susceptance", *, skip_zero_impedance=false))]
     fn calc_incidence_matrix<'py>(
         &self,
         py: Python<'py>,
         formula: &str,
+        skip_zero_impedance: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
-        coo_triplets(py, &self.dc_operators(formula)?.calc_incidence_matrix())
+        coo_triplets(
+            py,
+            &self
+                .dc_operators(formula, skip_zero_impedance)?
+                .calc_incidence_matrix(),
+        )
     }
 
     /// Calculate the per branch susceptances.
-    #[pyo3(signature = (formula="series_susceptance"))]
-    fn calc_branch_susceptances(&self, formula: &str) -> PyResult<Vec<f64>> {
+    #[pyo3(signature = (formula="series_susceptance", *, skip_zero_impedance=false))]
+    fn calc_branch_susceptances(
+        &self,
+        formula: &str,
+        skip_zero_impedance: bool,
+    ) -> PyResult<Vec<f64>> {
         Ok(self
-            .dc_operators(formula)?
+            .dc_operators(formula, skip_zero_impedance)?
             .calc_branch_susceptances()
             .to_vec())
     }
 
     /// Calculate `Bf = diag(b) A`, branches by buses.
-    #[pyo3(signature = (formula="series_susceptance"))]
+    #[pyo3(signature = (formula="series_susceptance", *, skip_zero_impedance=false))]
     fn calc_branch_flow_matrix<'py>(
         &self,
         py: Python<'py>,
         formula: &str,
+        skip_zero_impedance: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
-        coo_triplets(py, &self.dc_operators(formula)?.calc_branch_flow_matrix())
+        coo_triplets(
+            py,
+            &self
+                .dc_operators(formula, skip_zero_impedance)?
+                .calc_branch_flow_matrix(),
+        )
     }
 
     /// Calculate `B = A' diag(b) A`, buses by buses.
-    #[pyo3(signature = (formula="series_susceptance"))]
+    #[pyo3(signature = (formula="series_susceptance", *, skip_zero_impedance=false))]
     fn calc_bus_susceptance_matrix<'py>(
         &self,
         py: Python<'py>,
         formula: &str,
+        skip_zero_impedance: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         coo_triplets(
             py,
-            &self.dc_operators(formula)?.calc_bus_susceptance_matrix(),
+            &self
+                .dc_operators(formula, skip_zero_impedance)?
+                .calc_bus_susceptance_matrix(),
         )
     }
 
     /// Calculate `b .* shift` in branch order.
-    #[pyo3(signature = (formula="series_susceptance"))]
-    fn calc_branch_phase_shift_injection(&self, formula: &str) -> PyResult<Vec<f64>> {
+    #[pyo3(signature = (formula="series_susceptance", *, skip_zero_impedance=false))]
+    fn calc_branch_phase_shift_injection(
+        &self,
+        formula: &str,
+        skip_zero_impedance: bool,
+    ) -> PyResult<Vec<f64>> {
         Ok(self
-            .dc_operators(formula)?
+            .dc_operators(formula, skip_zero_impedance)?
             .calc_branch_phase_shift_injection())
     }
 
     /// Calculate `A' (b .* shift)` in bus order.
-    #[pyo3(signature = (formula="series_susceptance"))]
-    fn calc_bus_phase_shift_injection(&self, formula: &str) -> PyResult<Vec<f64>> {
-        Ok(self.dc_operators(formula)?.calc_bus_phase_shift_injection())
+    #[pyo3(signature = (formula="series_susceptance", *, skip_zero_impedance=false))]
+    fn calc_bus_phase_shift_injection(
+        &self,
+        formula: &str,
+        skip_zero_impedance: bool,
+    ) -> PyResult<Vec<f64>> {
+        Ok(self
+            .dc_operators(formula, skip_zero_impedance)?
+            .calc_bus_phase_shift_injection())
+    }
+
+    /// Calculate the bus and branch axes the DC calculations share.
+    #[pyo3(signature = (formula="series_susceptance", *, skip_zero_impedance=false))]
+    fn calc_dc_index_map<'py>(
+        &self,
+        py: Python<'py>,
+        formula: &str,
+        skip_zero_impedance: bool,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let operators = self.dc_operators(formula, skip_zero_impedance)?;
+        let out = PyDict::new(py);
+        out.set_item(
+            "bus_ids",
+            operators
+                .bus_ids()
+                .iter()
+                .map(|bus| bus.0)
+                .collect::<Vec<usize>>(),
+        )?;
+        out.set_item("branch_rows", operators.branch_rows().to_vec())?;
+        out.set_item("branch_ids", operators.branch_identities().to_vec())?;
+        out.set_item(
+            "skipped_branch_rows",
+            operators.skipped_branch_rows().to_vec(),
+        )?;
+        Ok(out)
+    }
+
+    /// Analysis identities for graph, sensitivity and admittance matrices.
+    #[pyo3(signature = (*, zero_resistance=false, skip_zero_impedance=false))]
+    fn _matrix_index_map<'py>(
+        &self,
+        py: Python<'py>,
+        zero_resistance: bool,
+        skip_zero_impedance: bool,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let view = IndexedNetwork::with_core(self.inner(), &self.core);
+        let mut skipped = Vec::new();
+        let mut branch_ids = Vec::new();
+        for (row, branch) in view.in_service_branches() {
+            if skip_zero_impedance {
+                let resistance = if zero_resistance { 0.0 } else { branch.r };
+                if powerio_tx::calc_series_admittance_of(resistance, branch.x, row)
+                    .map_err(|error| to_pyerr(error.into()))?
+                    .is_none()
+                {
+                    skipped.push(row);
+                    continue;
+                }
+            }
+            if branch.from != branch.to {
+                branch_ids.push(
+                    branch
+                        .uid
+                        .clone()
+                        .unwrap_or_else(|| format!("branches:{row}")),
+                );
+            }
+        }
+        let out = PyDict::new(py);
+        out.set_item(
+            "bus_ids",
+            view.network()
+                .buses()
+                .iter()
+                .map(|bus| bus.id.0)
+                .collect::<Vec<_>>(),
+        )?;
+        out.set_item("branch_ids", branch_ids)?;
+        out.set_item("skipped_branch_rows", skipped)?;
+        Ok(out)
     }
 
     /// Calculate `-Bf * va + b .* shift` in active branch order.
-    #[pyo3(signature = (voltage_angles, formula="series_susceptance"))]
-    fn calc_branch_flow_dc(&self, voltage_angles: Vec<f64>, formula: &str) -> PyResult<Vec<f64>> {
-        self.dc_operators(formula)?
+    #[pyo3(signature = (voltage_angles, formula="series_susceptance", *, skip_zero_impedance=false))]
+    fn calc_branch_flow_dc(
+        &self,
+        voltage_angles: Vec<f64>,
+        formula: &str,
+        skip_zero_impedance: bool,
+    ) -> PyResult<Vec<f64>> {
+        self.dc_operators(formula, skip_zero_impedance)?
             .calc_branch_flow_dc(&voltage_angles)
             .map_err(|error| core_error_pyerr(&error))
     }
 
     /// Calculate `-B * va + p_shift` in bus order.
-    #[pyo3(signature = (voltage_angles, formula="series_susceptance"))]
-    fn calc_bus_injection_dc(&self, voltage_angles: Vec<f64>, formula: &str) -> PyResult<Vec<f64>> {
-        self.dc_operators(formula)?
+    #[pyo3(signature = (voltage_angles, formula="series_susceptance", *, skip_zero_impedance=false))]
+    fn calc_bus_injection_dc(
+        &self,
+        voltage_angles: Vec<f64>,
+        formula: &str,
+        skip_zero_impedance: bool,
+    ) -> PyResult<Vec<f64>> {
+        self.dc_operators(formula, skip_zero_impedance)?
             .calc_bus_injection_dc(&voltage_angles)
             .map_err(|error| core_error_pyerr(&error))
     }
@@ -1118,7 +1230,7 @@ impl PyBalancedNetwork {
         formula: Option<&str>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let mut l = self
-            .dc_operators(formula.unwrap_or("series_susceptance"))?
+            .dc_operators(formula.unwrap_or("series_susceptance"), false)?
             .calc_bus_susceptance_matrix();
         l.data_mut().iter_mut().for_each(|value| *value = -*value);
         coo_triplets(py, &l)
@@ -3833,6 +3945,22 @@ impl PyPioModule {
         let module = self.module()?;
         let network = self.balanced_calculation_network()?.clone();
         Ok(case_from_module(module_with_records(module, network)?))
+    }
+
+    /// The balanced network a balanced operating point states, with the
+    /// point's values applied to a copy.
+    fn _operating_point_network(&self) -> PyResult<PyBalancedNetwork> {
+        let module = self.module()?;
+        match module.value() {
+            powerio::PioValue::BalancedOperatingPoint(point) => {
+                let network = powerio::network_with_operating_point(point);
+                Ok(case_from_module(module_with_records(module, network)?))
+            }
+            other => Err(PyTypeError::new_err(format!(
+                "OperatingPoint.network requires powerio.OperatingPoint<powerio.BalancedNetwork>; this value is {}",
+                other.type_name()
+            ))),
+        }
     }
 
     /// The multiconductor network shared by a multiconductor calculation

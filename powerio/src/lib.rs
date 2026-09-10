@@ -195,9 +195,10 @@ pub use ir::generate_ir_schema;
 pub use ir::{deserialize, serialize, serialize_diagnostics};
 pub mod transform;
 pub use transform::{
-    apply_geo_layer, neutral_kron, neutral_kron_with_options, to_ac_opf_instance,
-    to_ac_pf_instance, to_dc_opf_instance, to_dc_pf_instance, to_lindist3flow_opf_instance,
-    to_lindist3flow_opf_instance_with_options, to_mc_ac_opf_instance, to_mc_ac_pf_instance,
+    apply_geo_layer, network_with_operating_point, neutral_kron, neutral_kron_with_options,
+    to_ac_opf_instance, to_ac_pf_instance, to_dc_opf_instance, to_dc_pf_instance,
+    to_lindist3flow_opf_instance, to_lindist3flow_opf_instance_with_options, to_mc_ac_opf_instance,
+    to_mc_ac_pf_instance,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -551,8 +552,8 @@ fn parse_geo_layer(
         Err(error) => return Err(error.with_source(source)),
     };
     let (layer, diagnostics) = if is_display {
-        match powerio_tx::format::powerworld::__parse_pwd_display(buffer.content_bytes()) {
-            Ok(display) => (powerio_tx::geo::to_geo_layer_from_pwd(&display), Vec::new()),
+        match powerio_tx::format::powerworld::__parse_pwd_layer(buffer.content_bytes()) {
+            Ok(parsed) => (parsed.layer, parsed.diagnostics),
             Err(error) => {
                 return Err(Error::new(error.code(), error.to_string())
                     .with_cause(error)

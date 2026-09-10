@@ -129,10 +129,9 @@ def test_collection_summary_uses_normal_indexing_without_conversion(
     assert selected["selection"] == {"time_index": 1}
     assert selected["value_type"] == "OperatingPoint"
     assert "elements" not in selected
+    assert selected["network"]["elements"]["buses"] == 9
     with pytest.raises(ValueError, match="BalancedNetwork"):
-        server.calc_matrix(
-            "bprime", powerio_ir=time_series_powerio_ir, time_index=1
-        )
+        server.calc_matrix("bprime", powerio_ir=time_series_powerio_ir)
 
 
 def test_collection_selector_refuses_the_wrong_collection_operation(
@@ -284,3 +283,138 @@ def test_public_module_has_no_removed_mcp_callables():
         "save",
     ):
         assert not hasattr(server, name)
+
+
+def test_matrix_response_names_every_axis():
+    bprime = server.calc_matrix("bprime", path=str(DATA / "case9.m"))
+    assert bprime["row_ids"] == bprime["col_ids"]
+    assert len(bprime["row_ids"]) == 9
+    assert bprime["skipped_branch_rows"] == []
+    assert bprime["skip_zero_impedance"] is False
+
+    ptdf = server.calc_matrix("ptdf", path=str(DATA / "case9.m"))
+    assert ptdf["shape"] == [len(ptdf["row_ids"]), len(ptdf["col_ids"])]
+    assert all(isinstance(identity, str) for identity in ptdf["row_ids"])
+    assert ptdf["col_ids"] == bprime["col_ids"]
+
+    lacpf = server.calc_matrix("lacpf", path=str(DATA / "case9.m"))
+    assert len(lacpf["row_ids"]) == 18
+    assert lacpf["row_ids"][0].endswith(":p") and lacpf["row_ids"][9].endswith(":q")
+    assert lacpf["col_ids"][0].endswith(":vm") and lacpf["col_ids"][9].endswith(":va")
+
+
+def test_matrix_tool_serves_the_dc_calculations_by_name():
+    # case14 has 14 buses and 20 branches, so a transposed result changes the
+    # shape; case9's 9 by 9 incidence would hide the swap.
+    case14 = str(DATA / "case14.m")
+    index_map = powerio.parse(case14).value.calc_dc_index_map()
+
+    incidence = server.calc_matrix("incidence", path=case14)
+    assert incidence["format"] == "coo"
+    assert incidence["shape"] == [20, 14]
+    assert incidence["row_ids"] == list(index_map["branch_ids"])
+    assert incidence["col_ids"] == list(index_map["bus_ids"])
+
+    susceptances = server.calc_matrix("branch_susceptances", path=case14)
+    assert susceptances["format"] == "vector"
+    assert susceptances["shape"] == [20]
+    assert len(susceptances["data"]) == 20
+    assert susceptances["row_ids"] == incidence["row_ids"]
+    assert "col_ids" not in susceptances
+
+    injection = server.calc_matrix(
+        "bus_phase_shift_injection", path=case14, formula="reactance_only"
+    )
+    assert injection["formula"] == "reactance_only"
+    assert injection["row_ids"] == incidence["col_ids"]
+
+
+def _resistive_case_ir(resistance=0.1):
+    document = json.loads(powerio.serialize(powerio.parse(DATA / "case9.m")).text)
+    for branch in document["value"]["data"]["branches"]:
+        branch["r"] = resistance
+        branch["x"] = 0.0
+    return json.dumps(document)
+
+
+def test_adjacency_axes_do_not_require_dc_impedance():
+    result = server.calc_matrix("adjacency", powerio_ir=_resistive_case_ir(0.0))
+    assert result["shape"] == [9, 9]
+    assert result["row_ids"] == result["col_ids"] == list(range(1, 10))
+    assert result["nnz"] > 0
+
+
+def test_multiconductor_operating_point_summary_does_not_request_a_balanced_network():
+    document = json.loads(powerio.serialize(powerio.parse(DSS)).text)
+    document["value"] = {
+        "type": "powerio.OperatingPoint<powerio.MulticonductorNetwork>",
+        "data": {"network": document["value"]["data"], "quantities": {}},
+    }
+    text = json.dumps(document)
+    result = server.summarize(powerio_ir=text)
+    assert result["operating_point"] is True
+    assert result["network"] is None
+    with pytest.raises(ValueError, match="BalancedNetwork"):
+        server.calc_matrix("adjacency", powerio_ir=text)
+
+
+@pytest.mark.parametrize("matrix,scheme", [
+    ("bprime", "bx"), ("bdoubleprime", "xb"),
+    ("admittance_real", "bx"), ("admittance_imag", "bx"), ("lacpf", "bx"),
+])
+def test_ac_axes_do_not_apply_the_dc_reactance_formula(matrix, scheme):
+    result = server.calc_matrix(
+        matrix, powerio_ir=_resistive_case_ir(), scheme=scheme, formula="reactance_only"
+    )
+    assert result["shape"] == [len(result["row_ids"]), len(result["col_ids"])]
+    assert result["skipped_branch_rows"] == []
+
+
+@pytest.mark.parametrize("matrix,scheme", [("bprime", "xb"), ("bdoubleprime", "bx")])
+def test_fdpf_skipped_rows_follow_the_selected_scheme(matrix, scheme):
+    result = server.calc_matrix(
+        matrix, powerio_ir=_resistive_case_ir(), scheme=scheme, skip_zero_impedance=True
+    )
+    assert result["skipped_branch_rows"] == list(range(9))
+
+
+def test_lacpf_axes_match_the_power_voltage_blocks():
+    np = pytest.importorskip("numpy")
+    sparse = pytest.importorskip("scipy.sparse")
+    net = powerio.parse(DATA / "case9.m").value
+    result = server.calc_matrix("lacpf", path=str(DATA / "case9.m"))
+    matrix = sparse.coo_matrix((result["data"], (result["row"], result["col"])), shape=result["shape"])
+    vm = np.linspace(-0.01, 0.02, 9)
+    va = np.linspace(0.02, -0.03, 9)
+    ybus = net.calc_admittance_matrix()
+    expected = np.r_[ybus.real @ vm - ybus.imag @ va, -ybus.imag @ vm - ybus.real @ va]
+    np.testing.assert_allclose(matrix @ np.r_[vm, va], expected)
+
+
+def test_matrix_tool_rejects_skip_zero_impedance_where_it_would_be_ignored():
+    for name in ("ptdf", "lodf", "adjacency", "weighted_laplacian"):
+        with pytest.raises(ValueError, match="does not take skip_zero_impedance"):
+            server.calc_matrix(
+                name, path=str(DATA / "case9.m"), skip_zero_impedance=True
+            )
+    # The message names the DC calculations that do take it.
+    with pytest.raises(ValueError, match="bus_phase_shift_injection"):
+        server.calc_matrix(
+            "ptdf", path=str(DATA / "case9.m"), skip_zero_impedance=True
+        )
+    # The flag still reaches the calculations that accept it.
+    incidence = server.calc_matrix(
+        "incidence", path=str(DATA / "case9.m"), skip_zero_impedance=True
+    )
+    assert incidence["skip_zero_impedance"] is True
+
+
+def test_matrix_tool_computes_over_an_operating_point_entry(time_series_powerio_ir):
+    matrix = server.calc_matrix(
+        "bprime", powerio_ir=time_series_powerio_ir, time_index=1
+    )
+    assert matrix["selection"] == {"time_index": 1}
+    assert matrix["shape"] == [9, 9]
+    summary = server.summarize(powerio_ir=time_series_powerio_ir, time_index=1)
+    assert summary["value_type"] == "OperatingPoint"
+    assert summary["network"]["elements"]["buses"] == 9

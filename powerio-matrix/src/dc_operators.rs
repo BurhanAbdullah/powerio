@@ -61,11 +61,47 @@ pub struct ReferenceConstrainedSystem {
     pub retained_rows: Vec<usize>,
 }
 
+/// Build options for [`DcOperators`].
+///
+/// The default refuses a zero impedance branch, because it has no finite DC
+/// operator row. `skip_zero_impedance` drops such a branch from the operator
+/// axis instead and records its analysis row in
+/// [`DcOperators::skipped_branch_rows`], the same choice
+/// `BuildOptions::skip_zero_impedance` offers the admittance builders.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DcOperatorOptions {
+    /// Drop a zero impedance branch instead of refusing the build.
+    pub skip_zero_impedance: bool,
+}
+
+impl DcOperatorOptions {
+    /// The default options: refuse a zero impedance branch.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            skip_zero_impedance: false,
+        }
+    }
+
+    /// Set whether a zero impedance branch is dropped instead of refused.
+    #[must_use]
+    pub const fn with_skip_zero_impedance(mut self, skip: bool) -> Self {
+        self.skip_zero_impedance = skip;
+        self
+    }
+}
+
 /// DC matrix operations built once from an instance.
 #[derive(Clone, Debug)]
 pub struct DcOperators {
     bus_ids: Vec<BusId>,
     branch_identities: Vec<String>,
+    /// Operator column to the analysis branch row it was built from.
+    branch_rows: Vec<usize>,
+    /// Analysis branch rows dropped under `DcOperatorOptions::skip_zero_impedance`.
+    skipped_branch_rows: Vec<usize>,
+    options: DcOperatorOptions,
     analysis_sources: Vec<AnalysisBranchSource>,
     /// `n × m`, `+1` at the from bus and `-1` at the to bus of each branch.
     incidence: SparseMatrix,
@@ -99,6 +135,22 @@ impl DcOperators {
     /// A zero impedance branch, a non-finite branch value, or a branch naming
     /// an undeclared bus.
     pub fn build(instance: &DcPfInstance) -> Result<Self, Error> {
+        Self::build_with(instance, &DcOperatorOptions::default())
+    }
+
+    /// Build the operators under explicit [`DcOperatorOptions`]. With
+    /// `skip_zero_impedance` set, a zero impedance branch is dropped from the
+    /// operator axis and listed by [`skipped_branch_rows`](Self::skipped_branch_rows)
+    /// instead of refusing the build; every other rule of [`build`](Self::build)
+    /// holds.
+    ///
+    /// # Errors
+    /// A zero impedance branch when it is not skipped, a non-finite branch
+    /// value, or a branch naming an undeclared bus.
+    // One pass over the branch table that fills every axis and operator
+    // column; splitting it would scatter the invariants the columns share.
+    #[expect(clippy::too_many_lines)]
+    pub fn build_with(instance: &DcPfInstance, options: &DcOperatorOptions) -> Result<Self, Error> {
         let source = instance.network();
         let view = IndexedNetwork::new(source);
         let network = view.network();
@@ -113,6 +165,8 @@ impl DcOperators {
         let position_of = |bus: BusId| row_of.get(&bus).copied();
 
         let mut branch_identities = Vec::new();
+        let mut branch_rows = Vec::new();
+        let mut skipped_branch_rows = Vec::new();
         let mut active_analysis_sources = Vec::new();
         let mut branch_susceptance = Vec::new();
         let mut shift_radians = Vec::new();
@@ -156,10 +210,14 @@ impl DcOperators {
                 _ => branch.x.abs() < powerio_tx::dc::MIN_DIVISIBLE_MAGNITUDE,
             };
             if degenerate {
+                if options.skip_zero_impedance {
+                    skipped_branch_rows.push(row);
+                    continue;
+                }
                 return Err(Error::new(
                     &codes::BUILD_OPERATOR_ZERO_IMPEDANCE,
                     format!(
-                        "zero impedance branch `{identity}` has no finite DC operator row; resolve it explicitly with merge_zero_impedance_buses"
+                        "zero impedance branch `{identity}` has no finite DC operator row; resolve it explicitly with merge_zero_impedance_buses or build with skip_zero_impedance"
                     ),
                 ));
             }
@@ -180,6 +238,7 @@ impl DcOperators {
                 ));
             }
             branch_identities.push(identity);
+            branch_rows.push(row);
             active_analysis_sources.push(analysis_sources[row]);
             branch_susceptance.push(susceptance);
             shift_radians.push(shift);
@@ -190,6 +249,9 @@ impl DcOperators {
         let mut operators = Self {
             bus_ids,
             branch_identities,
+            branch_rows,
+            skipped_branch_rows,
+            options: *options,
             analysis_sources: active_analysis_sources,
             incidence,
             branch_susceptance,
@@ -267,6 +329,30 @@ impl DcOperators {
     #[must_use]
     pub fn branch_identities(&self) -> &[String] {
         &self.branch_identities
+    }
+
+    /// Operator column to the analysis branch row it represents: the
+    /// position in the network's branch table (three winding transformer
+    /// windings follow the branches). Out of service branches, self loops,
+    /// and skipped zero impedance branches have no column, so this is the
+    /// row selection every branch axis shares.
+    #[must_use]
+    pub fn branch_rows(&self) -> &[usize] {
+        &self.branch_rows
+    }
+
+    /// Analysis branch rows dropped under
+    /// [`DcOperatorOptions::skip_zero_impedance`], in table order. Empty
+    /// unless the option was set and a zero impedance branch existed.
+    #[must_use]
+    pub fn skipped_branch_rows(&self) -> &[usize] {
+        &self.skipped_branch_rows
+    }
+
+    /// The options the operators were built with.
+    #[must_use]
+    pub const fn options(&self) -> DcOperatorOptions {
+        self.options
     }
 
     /// Operator column to the source branch or three winding transformer

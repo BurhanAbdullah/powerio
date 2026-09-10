@@ -2732,3 +2732,95 @@ def test_geo_layer_is_a_module_value():
     # No grid exchange format states a standalone layer.
     with pytest.raises(powerio.PowerIOError):
         powerio.emit(module, "matpower")
+
+
+# ---- DC axes: bus ids and branch identities (PowerIO.jl#139, #140) -------------
+
+ZERO_IMPEDANCE_CASE = """function mpc = case3_zero_impedance
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+  1 3  0 0 0 0 1 1 0 230 1 1.1 0.9;
+  2 1 50 0 0 0 1 1 0 230 1 1.1 0.9;
+  3 1 50 0 0 0 1 1 0 230 1 1.1 0.9;
+];
+mpc.gen = [
+  1 100 0 100 -100 1 100 1 200 0;
+];
+mpc.branch = [
+  1 2 0 0    0.02 100 100 100 0 0 1 -60 60;
+  2 3 0 0.1  0    100 100 100 0 0 1 -60 60;
+];
+mpc.gencost = [
+  2 0 0 3 0.01 10 0;
+];
+"""
+
+
+def test_dc_index_map_names_both_axes(case9):
+    index_map = case9.calc_dc_index_map()
+    assert index_map["bus_ids"] == [bus["id"] for bus in case9.buses]
+    assert index_map["branch_rows"] == list(range(case9.n_branches))
+    assert len(index_map["branch_ids"]) == case9.n_branches
+    assert all(isinstance(identity, str) for identity in index_map["branch_ids"])
+    assert index_map["skipped_branch_rows"] == []
+    assert case9.calc_incidence_matrix().shape == (
+        len(index_map["branch_ids"]),
+        len(index_map["bus_ids"]),
+    )
+
+
+def test_dc_index_map_drops_inactive_branch_rows():
+    net = powerio.parse(DATA / "t_case9_oos.m").value
+    index_map = net.calc_dc_index_map()
+    active_rows = [
+        row for row, branch in enumerate(net.branches) if branch["in_service"]
+    ]
+    assert index_map["branch_rows"] == active_rows
+    assert len(index_map["branch_ids"]) == len(active_rows)
+    assert net.calc_branch_susceptances().shape == (len(active_rows),)
+
+
+def test_dc_calculations_refuse_or_skip_a_zero_impedance_branch():
+    net = powerio.parse(
+        io.StringIO(ZERO_IMPEDANCE_CASE), format="matpower", name="zero.m"
+    ).value
+    with pytest.raises(powerio.PowerIOError) as refused:
+        net.calc_incidence_matrix()
+    assert refused.value.code == "BUILD.OPERATOR.ZERO_IMPEDANCE"
+    with pytest.raises(powerio.PowerIOError):
+        net.calc_dc_index_map()
+
+    index_map = net.calc_dc_index_map(skip_zero_impedance=True)
+    assert index_map["skipped_branch_rows"] == [0]
+    assert index_map["branch_rows"] == [1]
+    assert net.calc_incidence_matrix(skip_zero_impedance=True).shape == (1, 3)
+    assert net.calc_branch_susceptances(skip_zero_impedance=True).shape == (1,)
+    assert net.calc_bus_susceptance_matrix(skip_zero_impedance=True).shape == (3, 3)
+    flows = net.calc_branch_flow_dc([0.0, 0.0, 0.1], skip_zero_impedance=True)
+    assert flows.shape == (1,)
+    injections = net.calc_bus_injection_dc([0.0, 0.0, 0.1], skip_zero_impedance=True)
+    assert injections.shape == (3,)
+
+
+def test_operating_point_network_applies_the_point(time_series_powerio_ir):
+    document = json.loads(time_series_powerio_ir)
+    base = powerio.parse(DATA / "case9.m").value
+    # A stored quantity is dense over its component table: every load states
+    # a value, and only the first one changes.
+    identities = [
+        load.get("uid") or f"loads:{row}" for row, load in enumerate(base.loads)
+    ]
+    values = [91.5, *(load["p"] for load in base.loads[1:])]
+    document["value"]["data"]["values"][1] = {
+        "quantities": {
+            "load_active_power": {"identities": identities, "values": values}
+        }
+    }
+    series = _parse_module(json.dumps(document)).value
+    network = series[1].network
+    assert isinstance(network, powerio.BalancedNetwork)
+    assert network.n_buses == base.n_buses
+    assert network.loads[0]["p"] == pytest.approx(91.5)
+    assert base.loads[0]["p"] != pytest.approx(91.5)
+    assert series[0].network.loads[0]["p"] == pytest.approx(base.loads[0]["p"])

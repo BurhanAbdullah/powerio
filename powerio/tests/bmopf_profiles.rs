@@ -294,3 +294,62 @@ fn inverter_energy_prices_survive_ir_and_legacy_relocation() {
         );
     }
 }
+
+#[test]
+fn geojson_bus_and_line_edits_survive_ir_and_explicit_bmopf_output() {
+    let mut data: Value = serde_json::from_slice(&case()).unwrap();
+    data["bus"]["b"]["geo"] = json!({"type":"Point","coordinates":[-83.7,42.3]});
+    data["bus"]["c"] = data["bus"]["b"].clone();
+    data["bus"]["c"]["geo"]["coordinates"] = json!([-83.6, 42.4]);
+    data["line"] = json!({"bc": {"bus_from":"b","bus_to":"c",
+        "terminal_map_from":["a"],"terminal_map_to":["a"],
+        "R_series_1_1":0.1,"X_series_1_1":0.2,
+        "geo":{"type":"LineString","coordinates":[[-83.7,42.3],[-83.68,42.36],[-83.6,42.4]]}}});
+    let parsed = powerio::parse(
+        Source::from_memory("case.bmopf.json", serde_json::to_vec(&data).unwrap()).unwrap(),
+    )
+    .unwrap();
+    let edited = parsed.map_value(|value| {
+        let PioValue::MulticonductorNetwork(mut network) = value else {
+            panic!("expected multiconductor network")
+        };
+        network.buses_mut()[0].location.as_mut().unwrap().x = -83.72;
+        network.lines_mut()[0].route.as_mut().unwrap()[1].y = 42.37;
+        PioValue::MulticonductorNetwork(network)
+    });
+    let ir = powerio::serialize(&edited, Destination::memory("case.pio.json").unwrap()).unwrap();
+    let restored =
+        powerio::deserialize(Source::from_memory("case.pio.json", bytes(&ir).to_vec()).unwrap())
+            .unwrap();
+    for version in ["0.1.0", "0.2.0"] {
+        let out = powerio::emit(
+            &restored,
+            &format!("bmopf-json@{version}"),
+            Destination::memory("case.json").unwrap(),
+        )
+        .unwrap();
+        let doc: Value = serde_json::from_slice(bytes(&out)).unwrap();
+        assert!(doc["bus"]["b"].get("geo").is_none());
+        assert_eq!(
+            doc["extras"]["geojson"]["features"][0]["geometry"]["coordinates"],
+            json!([-83.72, 42.3])
+        );
+        let again =
+            powerio::parse(Source::from_memory("case.bmopf.json", bytes(&out).to_vec()).unwrap())
+                .unwrap();
+        let PioValue::MulticonductorNetwork(network) = again.value() else {
+            panic!("expected network")
+        };
+        assert_eq!(
+            network.buses()[0].location.unwrap().x.to_bits(),
+            (-83.72_f64).to_bits()
+        );
+        assert_eq!(
+            network.lines()[0].route.as_ref().unwrap()[1].y.to_bits(),
+            42.37_f64.to_bits()
+        );
+        let layer = powerio::dist_geo::to_dist_geo_layer(network);
+        let round = powerio::GeoLayer::parse(&layer.to_geojson(), None).unwrap();
+        assert_eq!(round.layer.features.len(), 3);
+    }
+}

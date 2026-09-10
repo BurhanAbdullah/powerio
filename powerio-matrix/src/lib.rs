@@ -77,7 +77,7 @@ pub use acopf::{
     NodalAcGeneratorData, PreparedAcBusSpecification, build_ac_opf_preparation,
     build_ac_pf_preparation,
 };
-pub use dc_operators::{DcOperators, ReferenceConstrainedSystem};
+pub use dc_operators::{DcOperatorOptions, DcOperators, ReferenceConstrainedSystem};
 pub use dcopf::{
     DcBranchParameters, DcGeneratorParameters, DcOpfAssemblyOptions, DcOpfBundleMetadata,
     DcOpfBundleOptions, DcOpfMatrices, DcOpfOutputs, DcOpfPreparation, NodalGeneratorParameters,

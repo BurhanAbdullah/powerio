@@ -563,6 +563,18 @@ pub fn neutral_kron_with_options(
     Ok((derived, report))
 }
 
+/// The balanced network an operating point states: the point's network with
+/// the point's bus voltages, generator dispatch and setpoints, load powers,
+/// service flags, taps, phase shifts, and switch positions applied. The
+/// collection's shared network is not changed. Net bus injection columns have
+/// no network field and are not applied; `emit` reports that omission.
+#[must_use]
+pub fn network_with_operating_point(
+    point: &powerio_prob::OperatingPoint<BalancedNetwork>,
+) -> BalancedNetwork {
+    crate::write::network_with_balanced_operating_point(point, "network").0
+}
+
 /// Construct a DC power flow calculation from a balanced network module.
 /// Module diagnostics, source descriptions, provenance, and prior history are
 /// preserved. Retained source bytes and value locators are cleared because

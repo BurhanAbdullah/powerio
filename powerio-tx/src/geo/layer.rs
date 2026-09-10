@@ -190,6 +190,27 @@ impl GeoLayer {
                 .map_err(|error| bad(format!("invalid JSON: {error}")))?;
             if let Some(features) = feature_collection(&value) {
                 declared_space = read_powerio_geo_member(&value, &mut parsed.layer);
+                if !declared_space
+                    && let Some(crs) = value.get("crs").and_then(|v| {
+                        v.as_str()
+                            .or_else(|| v.pointer("/properties/name").and_then(Value::as_str))
+                    })
+                {
+                    let geographic = matches!(
+                        crs.to_ascii_uppercase().as_str(),
+                        "EPSG:4326" | "OGC:CRS84" | "WGS84" | "URN:OGC:DEF:CRS:OGC:1.3:CRS84"
+                    );
+                    parsed.layer.space = if geographic {
+                        CoordinateSpace::Geographic {
+                            crs: Some(crs.into()),
+                        }
+                    } else {
+                        CoordinateSpace::Projected {
+                            crs: Some(crs.into()),
+                        }
+                    };
+                    declared_space = true;
+                }
                 for feature in features {
                     read_geojson_feature(feature, &mut parsed);
                 }
@@ -312,8 +333,8 @@ fn feature_value(feature: &GeoFeature) -> Value {
 const BUS_ID_ALIASES: &[&str] = &["busi", "bus", "busid", "busnumber", "number", "id"];
 const LAT_ALIASES: &[&str] = &["lat", "latitude", "y"];
 const LON_ALIASES: &[&str] = &["lon", "lng", "longitude", "x"];
-const FROM_ALIASES: &[&str] = &["fbus", "from", "frombus"];
-const TO_ALIASES: &[&str] = &["tbus", "to", "tobus"];
+const FROM_ALIASES: &[&str] = &["fbus", "from", "frombus", "busfrom"];
+const TO_ALIASES: &[&str] = &["tbus", "to", "tobus", "busto"];
 const BRANCH_ID_ALIASES: &[&str] = &["branch", "branchid", "branchnumber", "catsid"];
 const PATH_ALIASES: &[&str] = &["path", "geometry", "coordinates"];
 const FROM_LAT_ALIASES: &[&str] = &["lat1", "fromlat"];
@@ -495,9 +516,12 @@ fn branch_key(record: &Record) -> ElementKey {
     // which would place the route on an unrelated branch. A named identifier
     // there still matches a uid, so only the integer case is dropped.
     let id = record.string(BRANCH_ID_ALIASES).or_else(|| {
-        record
-            .string(&["id"])
-            .filter(|raw| raw.parse::<usize>().is_err())
+        record.string(&["id"]).filter(|raw| {
+            raw.parse::<usize>().is_err()
+                || record.string(&["kind", "target"]).is_some_and(|kind| {
+                    matches!(kind.to_ascii_lowercase().as_str(), "line" | "branch")
+                })
+        })
     });
     let index = id
         .as_deref()
@@ -544,7 +568,10 @@ fn coordinate(raw: &Value) -> Option<[f64; 2]> {
 }
 
 fn coordinate_path(raw: &[Value]) -> Vec<[f64; 2]> {
-    raw.iter().filter_map(coordinate).collect()
+    raw.iter()
+        .map(coordinate)
+        .collect::<Option<Vec<_>>>()
+        .unwrap_or_default()
 }
 
 /// Flatten arbitrary JSON into candidate records: arrays recurse, an object
@@ -1164,4 +1191,33 @@ fn payload_uid(table: &str, row: usize, uid: Option<&str>) -> String {
 
 fn ordered_pair(a: BusId, b: BusId) -> (BusId, BusId) {
     if b.0 < a.0 { (b, a) } else { (a, b) }
+}
+
+#[cfg(test)]
+mod bmopftools_geo_tests {
+    use super::*;
+    #[test]
+    fn identities_endpoints_and_crs_follow_bmopftools_geojson() {
+        let source = r#"{"type":"FeatureCollection","crs":"EPSG:2193","features":[{"type":"Feature","properties":{"kind":"bus","id":"a"},"geometry":{"type":"Point","coordinates":[1700000,5400000]}},{"type":"Feature","properties":{"kind":"line","id":"21","bus_from":"a","bus_to":"b"},"geometry":{"type":"LineString","coordinates":[[1700000,5400000],[1700010,5400000]]}}]}"#;
+        let p = GeoLayer::parse(source, None).unwrap();
+        assert!(p.diagnostics.is_empty());
+        assert!(
+            matches!(&p.layer.space,CoordinateSpace::Projected {crs:Some(s)} if s=="EPSG:2193")
+        );
+        let line = &p.layer.features[1];
+        assert_eq!(line.key.id.as_deref(), Some("21"));
+        assert_eq!(line.from.as_deref(), Some("a"));
+        assert_eq!(line.to.as_deref(), Some("b"));
+        assert_eq!(
+            GeoLayer::parse(&p.layer.to_geojson(), None).unwrap().layer,
+            p.layer
+        );
+    }
+    #[test]
+    fn malformed_route_vertex_never_becomes_a_different_route() {
+        let source = r#"{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"kind":"bus","id":"a"},"geometry":{"type":"Point","coordinates":[-80,35]}},{"type":"Feature","properties":{"kind":"line","id":"a"},"geometry":{"type":"LineString","coordinates":[[-80,35],["bad",36],[-81,37]]}}]}"#;
+        let p = GeoLayer::parse(source, None).unwrap();
+        assert_eq!(p.layer.features.len(), 1);
+        assert!(!p.diagnostics.is_empty());
+    }
 }

@@ -178,10 +178,34 @@ p_branch = network.calc_branch_flow_dc(voltage_angles)
 p_bus = network.calc_bus_injection_dc(voltage_angles)
 ```
 
+Every DC calculation shares two axes. `calc_dc_index_map` names them:
+`bus_ids` maps a bus row to the source bus id (every bus in table order),
+`branch_rows` maps a branch row to its position in the branch table (three
+winding transformer windings follow the branches), and `branch_ids` gives the
+stable identity of that row, the branch uid when the source states one and
+`branches:<row>` otherwise. Out of service branches and self loops have no
+row. A zero impedance branch fails a DC calculation with
+`BUILD.OPERATOR.ZERO_IMPEDANCE`; `skip_zero_impedance=True` drops it and
+`calc_dc_index_map` lists it under `skipped_branch_rows`.
+
+```python
+axes = network.calc_dc_index_map(skip_zero_impedance=True)
+A = network.calc_incidence_matrix(skip_zero_impedance=True)
+assert A.shape == (len(axes["branch_ids"]), len(axes["bus_ids"]))
+```
+
 `calc_admittance_matrix`, `calc_bprime_matrix`, `calc_ptdf`, `calc_lodf`,
 `to_normalized`, and `to_networkx` are methods of the same class. SciPy is
 imported only when you ask for a sparse matrix, NumPy only for the array based
 helpers, and NetworkX only inside `to_networkx`.
+
+An `OperatingPoint` entry of a `TimeSeries` or `ScenarioSet` exposes
+`.network`, the balanced network with that point's values applied, so a solver
+receives the entry without emitting and reparsing it. The property returns the
+network alone: net bus injection quantities have no balanced network field, so
+they are dropped and the property reports nothing. `emit` states that same
+omission as `EMIT.OPERATING_POINT.DATA_OMITTED`, so emit the collection when
+you need the diagnostic.
 
 ## Other functions
 

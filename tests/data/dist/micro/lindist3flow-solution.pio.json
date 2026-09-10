@@ -183,12 +183,14 @@
           "require_neutral_provenance": false
         }
       },
-      "termination": "converged",
+      "termination": {
+        "kind": "converged"
+      },
       "residuals": {},
       "producer": "synthetic",
       "values": {
         "terminal_voltage_magnitude_squared": [
-          52900.0,
+          52460.0,
           52900.0
         ],
         "line_active_power": [
