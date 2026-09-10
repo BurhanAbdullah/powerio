@@ -482,7 +482,16 @@ pub fn build_lindist3flow_network_data(
                     node.bus, node.terminal
                 ))
             })?;
-        let (squared_voltage_min, squared_voltage_max) = terminal_bounds(bus, terminal_position)?;
+        let voltage_bounds_selected = instance
+            .base_instance()
+            .constraints()
+            .terminal_voltage_bounds
+            .selects(&bus.id);
+        let (squared_voltage_min, squared_voltage_max) = if voltage_bounds_selected {
+            terminal_bounds(bus, terminal_position)?
+        } else {
+            (None, None)
+        };
         if squared_voltage_min
             .zip(squared_voltage_max)
             .is_some_and(|(lower, upper)| lower > upper)
@@ -613,16 +622,29 @@ pub fn build_lindist3flow_network_data(
             })
             .collect::<Vec<_>>();
         let drop = line_drop_coefficients(&impedance, &reference_from)?;
-        let current_limit = optional_ratings(
-            line.i_max.as_deref().or(code.i_max.as_deref()),
-            n,
-            "line current limit",
-        )?;
-        let apparent_power_limit = optional_ratings(
-            line.s_max.as_deref().or(code.s_max.as_deref()),
-            n,
-            "line apparent-power limit",
-        )?;
+        let limits_selected = instance
+            .base_instance()
+            .constraints()
+            .conductor_limits
+            .selects(&line.name);
+        let current_limit = if limits_selected {
+            optional_ratings(
+                line.i_max.as_deref().or(code.i_max.as_deref()),
+                n,
+                "line current limit",
+            )?
+        } else {
+            vec![None; n]
+        };
+        let apparent_power_limit = if limits_selected {
+            optional_ratings(
+                line.s_max.as_deref().or(code.s_max.as_deref()),
+                n,
+                "line apparent-power limit",
+            )?
+        } else {
+            vec![None; n]
+        };
         lines.push(LinDist3FlowLineData {
             line: line.name.clone(),
             source_line_row: line_row,
