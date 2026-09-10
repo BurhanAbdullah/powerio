@@ -1057,6 +1057,51 @@ impl PyBalancedNetwork {
         Ok(out)
     }
 
+    /// Analysis identities for graph, sensitivity and admittance matrices.
+    #[pyo3(signature = (*, zero_resistance=false, skip_zero_impedance=false))]
+    fn _matrix_index_map<'py>(
+        &self,
+        py: Python<'py>,
+        zero_resistance: bool,
+        skip_zero_impedance: bool,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let view = IndexedNetwork::with_core(self.inner(), &self.core);
+        let mut skipped = Vec::new();
+        let mut branch_ids = Vec::new();
+        for (row, branch) in view.in_service_branches() {
+            if skip_zero_impedance {
+                let resistance = if zero_resistance { 0.0 } else { branch.r };
+                if powerio_tx::calc_series_admittance_of(resistance, branch.x, row)
+                    .map_err(|error| to_pyerr(error.into()))?
+                    .is_none()
+                {
+                    skipped.push(row);
+                    continue;
+                }
+            }
+            if branch.from != branch.to {
+                branch_ids.push(
+                    branch
+                        .uid
+                        .clone()
+                        .unwrap_or_else(|| format!("branches:{row}")),
+                );
+            }
+        }
+        let out = PyDict::new(py);
+        out.set_item(
+            "bus_ids",
+            view.network()
+                .buses()
+                .iter()
+                .map(|bus| bus.id.0)
+                .collect::<Vec<_>>(),
+        )?;
+        out.set_item("branch_ids", branch_ids)?;
+        out.set_item("skipped_branch_rows", skipped)?;
+        Ok(out)
+    }
+
     /// Calculate `-Bf * va + b .* shift` in active branch order.
     #[pyo3(signature = (voltage_angles, formula="series_susceptance", *, skip_zero_impedance=false))]
     fn calc_branch_flow_dc(

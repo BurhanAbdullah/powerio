@@ -2,8 +2,8 @@
 
 Every input becomes a :class:`powerio.PioModule`. ``powerio_ir`` is serialized
 PowerIO IR; external grid exchange data enters through ``path`` or ``content``.
-Collections remain collections. Tools that inspect a collection use its normal
-time index or scenario ID and never turn an operating point into a network.
+Tools select collection entries by time index or scenario ID. Matrix tools
+use the network carried by a balanced operating point.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ _MATRIX_NAMES = frozenset(
     }
 )
 # Axis names: "bus" rows or columns map to `bus_ids`, "branch" to `branch_ids`
-# of the DC index map, "2bus" to the LACPF block axis of two entries per bus.
+# of the calculation index map. LACPF maps voltage deviations to power injections.
 _MATRIX_AXES = {
     "bprime": ("bus", "bus"),
     "bdoubleprime": ("bus", "bus"),
@@ -54,7 +54,7 @@ _MATRIX_AXES = {
     "ptdf": ("branch", "bus"),
     "lodf": ("branch", "branch"),
     "weighted_laplacian": ("bus", "bus"),
-    "lacpf": ("2bus", "2bus"),
+    "lacpf": ("bus_power", "bus_voltage"),
     "incidence": ("branch", "bus"),
     "branch_susceptances": ("branch", None),
     "bus_susceptance": ("bus", "bus"),
@@ -337,7 +337,7 @@ def _value_summary(value: Any) -> Dict[str, Any]:
         summary = {
             "operating_point": True,
             "network": _balanced_summary(value.network)
-            if hasattr(value, "network")
+            if _canonical_type(value.module) == "powerio.OperatingPoint<powerio.BalancedNetwork>"
             else None,
         }
     elif isinstance(value, powerio.GeoLayer):
@@ -499,9 +499,10 @@ def _axis_ids(axis: Optional[str], index_map: Mapping[str, Any]) -> Optional[lis
         return list(index_map["bus_ids"])
     if axis == "branch":
         return list(index_map["branch_ids"])
-    if axis == "2bus":
+    if axis in ("bus_power", "bus_voltage"):
         buses = list(index_map["bus_ids"])
-        return [f"{bus}:va" for bus in buses] + [f"{bus}:vm" for bus in buses]
+        quantities = ("p", "q") if axis == "bus_power" else ("vm", "va")
+        return [f"{bus}:{quantity}" for quantity in quantities for bus in buses]
     return None
 
 
@@ -535,6 +536,8 @@ def _matrix_impl(
         module.value, time_index=time_index, scenario_id=scenario_id
     )
     if isinstance(value, powerio.OperatingPoint):
+        if _canonical_type(value.module) != "powerio.OperatingPoint<powerio.BalancedNetwork>":
+            raise ValueError("matrix calculations require a BalancedNetwork")
         value = value.network
     if not isinstance(value, powerio.BalancedNetwork):
         raise ValueError("matrix calculations require a BalancedNetwork")
@@ -581,7 +584,13 @@ def _matrix_impl(
             )
         else:
             raise AssertionError(f"unhandled matrix name: {canonical}")
-        index_map = value.calc_dc_index_map(formula, skip_zero_impedance=skip)
+        if canonical in _SKIP_ZERO_IMPEDANCE_DC_NAMES or canonical == "weighted_laplacian":
+            index_map = value.calc_dc_index_map(formula, skip_zero_impedance=skip)
+        else:
+            index_map = value._inner._matrix_index_map(
+                zero_resistance=(canonical, scheme) in (("bprime", "xb"), ("bdoubleprime", "bx")),
+                skip_zero_impedance=skip,
+            )
     except ImportError as exc:
         raise ValueError(str(exc)) from exc
     except powerio.PowerIOError as exc:
