@@ -104,8 +104,10 @@ pub use lindist3flow_devices::{
     lindist3flow_connection_incidence,
 };
 pub use lindist3flow_standard::{
-    LinDist3FlowStandardCone, LinDist3FlowStandardForm, LinDist3FlowStandardRowOrigin,
-    build_lindist3flow_standard_form,
+    LinDist3FlowScaling, LinDist3FlowStandardCone, LinDist3FlowStandardForm,
+    LinDist3FlowStandardFormOptions, LinDist3FlowStandardRowOrigin,
+    build_lindist3flow_standard_form, build_lindist3flow_standard_form_with_options,
+    lindist3flow_values_from_standard_primal,
 };
 pub use opf::{AnalysisBranchSource, PiecewiseLinearCost, PreparedObjective};
 

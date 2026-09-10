@@ -139,6 +139,17 @@ fn column(column: usize, coefficient: f64) -> LinDist3FlowLinearExpression {
     }
 }
 
+fn scaled_expression(
+    mut expression: LinDist3FlowLinearExpression,
+    scale: f64,
+) -> LinDist3FlowLinearExpression {
+    expression.constant *= scale;
+    for term in &mut expression.terms {
+        term.coefficient *= scale;
+    }
+    expression
+}
+
 fn normalized_expression(
     constant: f64,
     terms: impl IntoIterator<Item = (usize, f64)>,
@@ -441,6 +452,7 @@ pub fn build_lindist3flow_conic_problem(
             }
             if let Some(limit) = data.current_limit[conductor] {
                 for &node in &[data.parent_nodes[conductor], data.child_nodes[conductor]] {
+                    let reference_voltage = preparation.network.nodes[node].reference_magnitude;
                     cones.push(LinDist3FlowCone::RotatedSecondOrder {
                         origin: LinDist3FlowConeOrigin::LineCurrent {
                             line,
@@ -448,8 +460,8 @@ pub fn build_lindist3flow_conic_problem(
                             node,
                         },
                         arguments: vec![
-                            column(voltage_columns[node], 1.0),
-                            constant(limit.powi(2) / 2.0),
+                            column(voltage_columns[node], limit / reference_voltage),
+                            constant(limit * reference_voltage / 2.0),
                             column(active, 1.0),
                             column(reactive, 1.0),
                         ],
@@ -475,14 +487,18 @@ pub fn build_lindist3flow_conic_problem(
                 });
             }
             if let Some(limit) = channel_data.current_limit {
+                let reference_voltage = channel_data.reference_winding_voltage;
                 cones.push(LinDist3FlowCone::RotatedSecondOrder {
                     origin: LinDist3FlowConeOrigin::GeneratorCurrent { generator, channel },
                     arguments: vec![
-                        voltage_expression(
-                            &channel_data.squared_winding_voltage,
-                            &voltage_columns,
-                        )?,
-                        constant(limit.powi(2) / 2.0),
+                        scaled_expression(
+                            voltage_expression(
+                                &channel_data.squared_winding_voltage,
+                                &voltage_columns,
+                            )?,
+                            limit / reference_voltage,
+                        ),
+                        constant(limit * reference_voltage / 2.0),
                         column(active, 1.0),
                         column(reactive, 1.0),
                     ],
@@ -790,8 +806,8 @@ mod tests {
             origin,
             LinDist3FlowConeOrigin::LineCurrent { node: 0, .. }
         ));
-        assert_relative_eq!(arguments[1].constant, 50.0);
-        assert_relative_eq!(coefficient(&arguments[0], 0), 1.0);
+        assert_relative_eq!(arguments[1].constant, 1_150.0);
+        assert_relative_eq!(coefficient(&arguments[0], 0), 10.0 / 230.0);
 
         let LinDist3FlowCone::RotatedSecondOrder { origin, arguments } = &problem.cones[4] else {
             panic!("generator current should use a rotated SOC")
@@ -803,7 +819,7 @@ mod tests {
                 channel: 0
             }
         );
-        assert_relative_eq!(arguments[1].constant, 12.5);
+        assert_relative_eq!(arguments[1].constant, 575.0);
     }
 
     #[test]

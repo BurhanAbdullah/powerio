@@ -10,9 +10,58 @@ use powerio_prob::LinDist3FlowOpfInstance;
 use crate::matrix::triplet::CooBuilder;
 use crate::{
     Error, LinDist3FlowCone, LinDist3FlowConeOrigin, LinDist3FlowConicProblem,
-    LinDist3FlowEqualityOrigin, LinDist3FlowLinearExpression, Result, SparseMatrix,
-    build_lindist3flow_conic_problem,
+    LinDist3FlowDecisionVariable, LinDist3FlowEqualityOrigin, LinDist3FlowLinearExpression, Result,
+    SparseMatrix, build_lindist3flow_conic_problem, lindist3flow_values_from_primal,
 };
+
+/// Numerical coordinate choices for the sparse solver program.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct LinDist3FlowStandardFormOptions {
+    /// Use per-unit decision variables and scaled constraint rows.
+    pub per_unit: bool,
+    /// System apparent-power base in VA.
+    pub apparent_power_base: f64,
+}
+
+impl LinDist3FlowStandardFormOptions {
+    #[must_use]
+    pub const fn si() -> Self {
+        Self {
+            per_unit: false,
+            apparent_power_base: 1_000_000.0,
+        }
+    }
+
+    #[must_use]
+    pub const fn per_unit(apparent_power_base: f64) -> Self {
+        Self {
+            per_unit: true,
+            apparent_power_base,
+        }
+    }
+}
+
+impl Default for LinDist3FlowStandardFormOptions {
+    fn default() -> Self {
+        Self::per_unit(1_000_000.0)
+    }
+}
+
+/// Diagonal coordinate maps applied to the canonical SI program.
+///
+/// Physical primals satisfy `x_si = variable_scale .* x_solver`. Scaled rows
+/// satisfy `(A_solver, b_solver) = row_scale .* (A_si * variable_scale, b_si)`.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct LinDist3FlowScaling {
+    /// Apparent-power base in VA, or `None` when solver coordinates are SI.
+    pub apparent_power_base: Option<f64>,
+    /// One positive SI-unit multiplier per decision variable.
+    pub variable_scale: Vec<f64>,
+    /// One positive multiplier per standard-form constraint row.
+    pub row_scale: Vec<f64>,
+}
 
 /// One contiguous cone block in standard-form row order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +117,8 @@ pub struct LinDist3FlowStandardForm {
     pub cones: Vec<LinDist3FlowStandardCone>,
     /// One semantic origin per constraint row.
     pub row_origins: Vec<LinDist3FlowStandardRowOrigin>,
+    /// Exact diagonal maps between solver coordinates and canonical SI.
+    pub scaling: LinDist3FlowScaling,
     /// Canonical model retained for primal decoding and identity lookup.
     pub canonical: LinDist3FlowConicProblem,
 }
@@ -147,7 +198,7 @@ fn push_cone_origins(
 /// As [`build_lindist3flow_conic_problem`], or a cone has an invalid
 /// dimension or produces non-finite standard-form data.
 #[allow(clippy::many_single_char_names, clippy::too_many_lines)]
-pub fn build_lindist3flow_standard_form(
+fn build_lindist3flow_standard_form_si(
     instance: &LinDist3FlowOpfInstance,
 ) -> Result<LinDist3FlowStandardForm> {
     let canonical = build_lindist3flow_conic_problem(instance)?;
@@ -289,8 +340,146 @@ pub fn build_lindist3flow_standard_form(
         b,
         cones,
         row_origins,
+        scaling: LinDist3FlowScaling {
+            apparent_power_base: None,
+            variable_scale: vec![1.0; n],
+            row_scale: vec![1.0; m],
+        },
         canonical,
     })
+}
+
+fn per_unit_scales(
+    form: &LinDist3FlowStandardForm,
+    power_base: f64,
+) -> Result<LinDist3FlowScaling> {
+    if !power_base.is_finite() || power_base <= 0.0 {
+        return Err(invalid(
+            "LinDist3Flow apparent-power base must be finite and positive",
+        ));
+    }
+    let variable_scale = form
+        .canonical
+        .variables
+        .iter()
+        .map(|variable| match &variable.variable {
+            LinDist3FlowDecisionVariable::SquaredVoltage { node } => {
+                form.canonical.preparation.network.nodes[*node]
+                    .reference_magnitude
+                    .powi(2)
+            }
+            LinDist3FlowDecisionVariable::Power(_) => power_base,
+        })
+        .collect::<Vec<_>>();
+    if variable_scale
+        .iter()
+        .any(|scale| !scale.is_finite() || *scale <= 0.0)
+    {
+        return Err(invalid(
+            "LinDist3Flow variable scaling contains a non-finite or nonpositive base",
+        ));
+    }
+    let row_scale = form
+        .row_origins
+        .iter()
+        .map(|origin| match origin {
+            LinDist3FlowStandardRowOrigin::Equality(LinDist3FlowEqualityOrigin::LineDrop {
+                line,
+                conductor,
+            }) => {
+                let node = form.canonical.preparation.network.lines[*line].child_nodes[*conductor];
+                1.0 / form.canonical.preparation.network.nodes[node]
+                    .reference_magnitude
+                    .powi(2)
+            }
+            LinDist3FlowStandardRowOrigin::Equality(
+                LinDist3FlowEqualityOrigin::ActiveBalance { .. }
+                | LinDist3FlowEqualityOrigin::ReactiveBalance { .. },
+            )
+            | LinDist3FlowStandardRowOrigin::Cone { .. } => 1.0 / power_base,
+            LinDist3FlowStandardRowOrigin::VariableLowerBound { column }
+            | LinDist3FlowStandardRowOrigin::VariableUpperBound { column } => {
+                1.0 / variable_scale[*column]
+            }
+        })
+        .collect::<Vec<_>>();
+    Ok(LinDist3FlowScaling {
+        apparent_power_base: Some(power_base),
+        variable_scale,
+        row_scale,
+    })
+}
+
+fn apply_scaling(form: &mut LinDist3FlowStandardForm, scaling: LinDist3FlowScaling) {
+    for (column, mut entries) in form.a.outer_iterator_mut().enumerate() {
+        for (row, value) in entries.iter_mut() {
+            *value *= scaling.variable_scale[column] * scaling.row_scale[row];
+        }
+    }
+    for (coefficient, scale) in form.q.iter_mut().zip(&scaling.variable_scale) {
+        *coefficient *= scale;
+    }
+    for (right_hand_side, scale) in form.b.iter_mut().zip(&scaling.row_scale) {
+        *right_hand_side *= scale;
+    }
+    form.scaling = scaling;
+}
+
+/// Compile a LinDist3Flow instance in the default per-unit coordinates using
+/// a 1 MVA system power base. Input, canonical data, and decoded results remain
+/// SI.
+///
+/// # Errors
+/// As [`build_lindist3flow_standard_form_with_options`].
+pub fn build_lindist3flow_standard_form(
+    instance: &LinDist3FlowOpfInstance,
+) -> Result<LinDist3FlowStandardForm> {
+    build_lindist3flow_standard_form_with_options(
+        instance,
+        LinDist3FlowStandardFormOptions::default(),
+    )
+}
+
+/// Compile sparse standard form using explicit SI or per-unit solver
+/// coordinates.
+///
+/// # Errors
+/// As [`build_lindist3flow_conic_problem`], or the requested power base is
+/// non-finite or nonpositive.
+pub fn build_lindist3flow_standard_form_with_options(
+    instance: &LinDist3FlowOpfInstance,
+    options: LinDist3FlowStandardFormOptions,
+) -> Result<LinDist3FlowStandardForm> {
+    let mut form = build_lindist3flow_standard_form_si(instance)?;
+    if options.per_unit {
+        let scaling = per_unit_scales(&form, options.apparent_power_base)?;
+        apply_scaling(&mut form, scaling);
+    }
+    Ok(form)
+}
+
+/// Decode a solver-coordinate primal vector into physical SI values.
+///
+/// # Errors
+/// The primal vector has the wrong length or contains an inconsistent
+/// canonical semantic index.
+pub fn lindist3flow_values_from_standard_primal(
+    form: &LinDist3FlowStandardForm,
+    primal: &[f64],
+) -> Result<powerio_prob::LinDist3FlowOpfValues> {
+    if primal.len() != form.scaling.variable_scale.len() {
+        return Err(invalid(format!(
+            "LinDist3Flow solver primal has length {}, expected {}",
+            primal.len(),
+            form.scaling.variable_scale.len()
+        )));
+    }
+    let physical = primal
+        .iter()
+        .zip(&form.scaling.variable_scale)
+        .map(|(value, scale)| value * scale)
+        .collect::<Vec<_>>();
+    lindist3flow_values_from_primal(&form.canonical, &physical)
 }
 
 #[cfg(test)]
@@ -355,9 +544,17 @@ mod tests {
         matrix.get(row, column).copied().unwrap_or_default()
     }
 
+    fn si_form() -> LinDist3FlowStandardForm {
+        build_lindist3flow_standard_form_with_options(
+            &instance(),
+            LinDist3FlowStandardFormOptions::si(),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn sparse_shapes_and_cone_blocks_match_clarabel_standard_form() {
-        let form = build_lindist3flow_standard_form(&instance()).unwrap();
+        let form = si_form();
         assert_eq!(form.p.shape(), (8, 8));
         assert!(form.p.is_csc());
         assert_eq!(form.p.nnz(), 0);
@@ -382,7 +579,7 @@ mod tests {
 
     #[test]
     fn equality_and_bound_rows_have_ax_plus_s_equals_b_signs() {
-        let form = build_lindist3flow_standard_form(&instance()).unwrap();
+        let form = si_form();
         assert_relative_eq!(entry(&form.a, 0, 0), -1.0);
         assert_relative_eq!(entry(&form.a, 0, 1), 1.0);
         assert_relative_eq!(entry(&form.a, 0, 2), 0.2);
@@ -397,15 +594,111 @@ mod tests {
 
     #[test]
     fn rotated_current_cone_is_an_equivalent_ordinary_soc() {
-        let form = build_lindist3flow_standard_form(&instance()).unwrap();
+        let form = si_form();
         // Five equalities, eight bounds, then the 3-row line apparent-power
         // cone. The first line-current SOC therefore starts at row 16.
         let row = 16;
-        assert_relative_eq!(entry(&form.a, row, 0), -1.0);
-        assert_relative_eq!(form.b[row], 50.0);
-        assert_relative_eq!(entry(&form.a, row + 1, 0), -1.0);
-        assert_relative_eq!(form.b[row + 1], -50.0);
+        assert_relative_eq!(entry(&form.a, row, 0), -10.0 / 230.0);
+        assert_relative_eq!(form.b[row], 1_150.0);
+        assert_relative_eq!(entry(&form.a, row + 1, 0), -10.0 / 230.0);
+        assert_relative_eq!(form.b[row + 1], -1_150.0);
         assert_relative_eq!(entry(&form.a, row + 2, 2), -std::f64::consts::SQRT_2);
         assert_relative_eq!(entry(&form.a, row + 3, 3), -std::f64::consts::SQRT_2);
+    }
+
+    #[test]
+    fn default_per_unit_coordinates_round_trip_to_si_values() {
+        let form = build_lindist3flow_standard_form(&instance()).unwrap();
+        assert_eq!(form.scaling.apparent_power_base, Some(1_000_000.0));
+        assert_relative_eq!(form.scaling.variable_scale[0], 230.0f64.powi(2));
+        assert_relative_eq!(form.scaling.variable_scale[2], 1_000_000.0);
+
+        // The physical cost rates are applied to per-unit power variables.
+        assert_relative_eq!(form.q[4], 100.0);
+        assert_relative_eq!(form.q[6], 300.0);
+
+        // Per-unit voltage bounds are normalized by each node's reference
+        // magnitude. The source voltage is fixed at 230 V.
+        assert_relative_eq!(entry(&form.a, 5, 0), -1.0);
+        assert_relative_eq!(form.b[5], -1.0);
+        assert_relative_eq!(entry(&form.a, 6, 0), 1.0);
+        assert_relative_eq!(form.b[6], 1.0);
+
+        // Canonical order is w(source), w(load), line p/q, generator p/q,
+        // source p/q. Solver values decode back to physical SI values.
+        let primal = vec![
+            1.0,
+            228.0f64.powi(2) / 230.0f64.powi(2),
+            0.001,
+            0.0002,
+            0.0005,
+            0.0,
+            0.001,
+            0.0002,
+        ];
+        let values = lindist3flow_values_from_standard_primal(&form, &primal).unwrap();
+        assert_relative_eq!(
+            values.terminal_voltage_magnitude_squared[0],
+            230.0f64.powi(2)
+        );
+        assert_relative_eq!(
+            values.terminal_voltage_magnitude_squared[1],
+            228.0f64.powi(2)
+        );
+        assert_relative_eq!(values.line_active_power[0], 1_000.0);
+        assert_relative_eq!(values.generator_active_power[0], 500.0);
+        assert_relative_eq!(values.source_reactive_power[0], 200.0);
+    }
+
+    #[test]
+    fn per_unit_form_is_an_exact_diagonal_scaling_of_si_form() {
+        let si = si_form();
+        let per_unit = build_lindist3flow_standard_form_with_options(
+            &instance(),
+            LinDist3FlowStandardFormOptions::per_unit(2_000_000.0),
+        )
+        .unwrap();
+
+        assert_eq!(per_unit.a.shape(), si.a.shape());
+        assert_eq!(per_unit.cones, si.cones);
+        assert_eq!(per_unit.row_origins, si.row_origins);
+        for column in 0..si.a.cols() {
+            for row in 0..si.a.rows() {
+                assert_relative_eq!(
+                    entry(&per_unit.a, row, column),
+                    entry(&si.a, row, column)
+                        * per_unit.scaling.variable_scale[column]
+                        * per_unit.scaling.row_scale[row],
+                    epsilon = 1e-12
+                );
+            }
+        }
+        for column in 0..si.q.len() {
+            assert_relative_eq!(
+                per_unit.q[column],
+                si.q[column] * per_unit.scaling.variable_scale[column],
+                epsilon = 1e-12
+            );
+        }
+        for row in 0..si.b.len() {
+            assert_relative_eq!(
+                per_unit.b[row],
+                si.b[row] * per_unit.scaling.row_scale[row],
+                epsilon = 1e-12
+            );
+        }
+    }
+
+    #[test]
+    fn per_unit_power_base_must_be_positive_and_finite() {
+        for power_base in [0.0, -1.0, f64::INFINITY, f64::NAN] {
+            assert!(
+                build_lindist3flow_standard_form_with_options(
+                    &instance(),
+                    LinDist3FlowStandardFormOptions::per_unit(power_base),
+                )
+                .is_err()
+            );
+        }
     }
 }
