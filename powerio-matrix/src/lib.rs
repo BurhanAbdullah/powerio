@@ -62,6 +62,7 @@ mod dc_operators;
 mod dcopf;
 pub mod io;
 mod lindist3flow;
+mod lindist3flow_conic;
 mod lindist3flow_devices;
 pub mod matrix;
 mod opf;
@@ -86,6 +87,12 @@ pub use lindist3flow::{
     LinDist3FlowNetworkData, LinDist3FlowNodeData, LineDropCoefficients,
     build_lindist3flow_network_data, connection_power_map, cross_voltage_coefficients,
     evaluate_affine, evaluate_cross_voltage, line_drop_coefficients, winding_voltage_coefficients,
+};
+pub use lindist3flow_conic::{
+    LinDist3FlowCone, LinDist3FlowConeOrigin, LinDist3FlowConicProblem,
+    LinDist3FlowDecisionVariable, LinDist3FlowEquality, LinDist3FlowEqualityOrigin,
+    LinDist3FlowLinearExpression, LinDist3FlowLinearTerm, LinDist3FlowVariableData,
+    build_lindist3flow_conic_problem,
 };
 pub use lindist3flow_devices::{
     LinDist3FlowAffineExpression, LinDist3FlowBalanceEquation, LinDist3FlowBalanceRow,
