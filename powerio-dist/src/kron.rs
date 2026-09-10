@@ -329,6 +329,27 @@ fn slice_if_conductor_aligned(values: &mut Option<Vec<f64>>, old_n: usize, neutr
     }
 }
 
+fn reduce_phase_bound(
+    values: &mut Option<Vec<f64>>,
+    terminal_count: usize,
+    neutral: usize,
+    label: &str,
+) -> Result<()> {
+    let Some(values) = values else {
+        return Ok(());
+    };
+    if values.len() == terminal_count {
+        values.remove(neutral);
+    } else if values.len() != terminal_count.saturating_sub(1) {
+        return Err(fail(format!(
+            "{label} has {} entries; expected {} phase entries or {terminal_count} terminal entries",
+            values.len(),
+            terminal_count.saturating_sub(1)
+        )));
+    }
+    Ok(())
+}
+
 fn strip_map(map: &mut Vec<String>, neutral: &NeutralKronBus, label: &str) -> Result<bool> {
     let Some(position) = terminal_position(map, &neutral.neutral_terminal, label)? else {
         return Ok(false);
@@ -593,6 +614,19 @@ fn reduce_buses(network: &mut MulticonductorNetwork, report: &mut NeutralKronRep
             .iter_mut()
             .find(|bus| bus.id.eq_ignore_ascii_case(&bus_reduction.bus))
             .expect("identified bus remains present");
+        let terminal_count = bus.terminals.len();
+        reduce_phase_bound(
+            &mut bus.v_min_phase,
+            terminal_count,
+            bus_reduction.source_position,
+            &format!("bus `{}` phase minimum bound", bus.id),
+        )?;
+        reduce_phase_bound(
+            &mut bus.v_max_phase,
+            terminal_count,
+            bus_reduction.source_position,
+            &format!("bus `{}` phase maximum bound", bus.id),
+        )?;
         merge_phase_neutral_bounds(bus)?;
         bus.terminals.remove(bus_reduction.source_position);
         bus.grounded

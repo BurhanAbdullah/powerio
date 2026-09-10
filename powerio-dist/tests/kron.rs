@@ -70,13 +70,23 @@ fn basic_network(grounded: bool) -> MulticonductorNetwork {
 
 #[test]
 fn reduces_series_impedance_and_terminal_aligned_data_without_mutating_input() {
-    let network = basic_network(true);
+    let mut network = basic_network(true);
+    network.buses_mut()[1].v_min_phase = Some(vec![210.0, 211.0, 212.0, 0.0]);
+    network.buses_mut()[1].v_max_phase = Some(vec![240.0, 241.0, 242.0, 0.0]);
     let reduction = neutral_kron_reduce(&network, &NeutralKronOptions::default()).unwrap();
     let reduced = reduction.network();
 
     assert_eq!(network.buses()[0].terminals.len(), 4, "input was mutated");
     assert_eq!(reduced.buses()[0].terminals, ["1", "2", "3"]);
     assert_eq!(reduced.buses()[1].terminals, ["1", "2", "3"]);
+    assert_eq!(
+        reduced.buses()[1].v_min_phase.as_deref(),
+        Some(&[210.0, 211.0, 212.0][..])
+    );
+    assert_eq!(
+        reduced.buses()[1].v_max_phase.as_deref(),
+        Some(&[240.0, 241.0, 242.0][..])
+    );
     assert!(reduced.buses().iter().all(|bus| bus.grounded.is_empty()));
     assert_eq!(reduced.lines()[0].terminal_map_from, ["1", "2", "3"]);
     assert_eq!(reduced.lines()[0].terminal_map_to, ["1", "2", "3"]);
