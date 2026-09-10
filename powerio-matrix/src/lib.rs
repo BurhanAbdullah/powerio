@@ -61,6 +61,7 @@ mod acopf;
 mod dc_operators;
 mod dcopf;
 pub mod io;
+mod lindist3flow;
 pub mod matrix;
 mod opf;
 pub mod pipeline;
@@ -78,6 +79,12 @@ pub use dcopf::{
     DcBranchParameters, DcGeneratorParameters, DcOpfAssemblyOptions, DcOpfBundleMetadata,
     DcOpfBundleOptions, DcOpfMatrices, DcOpfOutputs, DcOpfPreparation, NodalGeneratorParameters,
     Units, build_dc_opf_preparation, calc_dc_opf_matrices, emit_dcopf_bundle,
+};
+pub use lindist3flow::{
+    AffineScalarCoefficients, ConnectionPowerMap, CrossVoltageCoefficients, LinDist3FlowLineData,
+    LinDist3FlowNetworkData, LinDist3FlowNodeData, LineDropCoefficients,
+    build_lindist3flow_network_data, connection_power_map, cross_voltage_coefficients,
+    evaluate_affine, evaluate_cross_voltage, line_drop_coefficients, winding_voltage_coefficients,
 };
 pub use opf::{AnalysisBranchSource, PiecewiseLinearCost, PreparedObjective};
 

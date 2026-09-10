@@ -525,6 +525,7 @@ fn build_topology(network: &MulticonductorNetwork) -> Result<LinDist3FlowTopolog
     let mut nodes = Vec::new();
     let mut positions = BTreeMap::new();
     let mut bus_ids = BTreeSet::new();
+    let mut bus_positions = BTreeMap::new();
     for bus in network.buses() {
         if !bus_ids.insert(bus.id.to_ascii_lowercase()) {
             return Err(format!(
@@ -532,6 +533,7 @@ fn build_topology(network: &MulticonductorNetwork) -> Result<LinDist3FlowTopolog
                 bus.id
             ));
         }
+        bus_positions.insert(bus.id.to_ascii_lowercase(), bus_positions.len());
         let mut terminals = BTreeSet::new();
         for terminal in &bus.terminals {
             if !terminals.insert(terminal.clone()) {
@@ -550,6 +552,7 @@ fn build_topology(network: &MulticonductorNetwork) -> Result<LinDist3FlowTopolog
     }
 
     let mut forest = UnionFind::new(nodes.len());
+    let mut bus_forest = UnionFind::new(bus_positions.len());
     let mut edges = Vec::new();
     for (line_row, line) in network.lines().iter().enumerate() {
         if line.terminal_map_from.len() != line.terminal_map_to.len()
@@ -560,6 +563,23 @@ fn build_topology(network: &MulticonductorNetwork) -> Result<LinDist3FlowTopolog
                 line.name
             ));
         }
+        let from_bus = *bus_positions
+            .get(&line.bus_from.to_ascii_lowercase())
+            .ok_or_else(|| {
+                format!(
+                    "line `{}` names unknown from bus `{}`",
+                    line.name, line.bus_from
+                )
+            })?;
+        let to_bus = *bus_positions
+            .get(&line.bus_to.to_ascii_lowercase())
+            .ok_or_else(|| {
+                format!(
+                    "line `{}` names unknown to bus `{}`",
+                    line.name, line.bus_to
+                )
+            })?;
+        bus_forest.join(from_bus, to_bus);
         for (conductor, (from_terminal, to_terminal)) in line
             .terminal_map_from
             .iter()
@@ -606,7 +626,20 @@ fn build_topology(network: &MulticonductorNetwork) -> Result<LinDist3FlowTopolog
             .push(node);
     }
     let mut source_nodes: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    let mut island_sources: BTreeMap<usize, Vec<&str>> = BTreeMap::new();
     for source in network.sources() {
+        let bus = *bus_positions
+            .get(&source.bus.to_ascii_lowercase())
+            .ok_or_else(|| {
+                format!(
+                    "voltage source `{}` names unknown bus `{}`",
+                    source.name, source.bus
+                )
+            })?;
+        island_sources
+            .entry(bus_forest.find(bus))
+            .or_default()
+            .push(&source.name);
         for terminal in &source.terminal_map {
             let node = *positions
                 .get(&node_key(&source.bus, terminal))
@@ -620,6 +653,24 @@ fn build_topology(network: &MulticonductorNetwork) -> Result<LinDist3FlowTopolog
                 .entry(forest.find(node))
                 .or_default()
                 .push(node);
+        }
+    }
+    let mut physical_islands: BTreeMap<usize, Vec<&str>> = BTreeMap::new();
+    for bus in network.buses() {
+        let position = bus_positions[&bus.id.to_ascii_lowercase()];
+        physical_islands
+            .entry(bus_forest.find(position))
+            .or_default()
+            .push(&bus.id);
+    }
+    for (component, buses) in physical_islands {
+        let sources: &[&str] = island_sources.get(&component).map_or(&[], Vec::as_slice);
+        if sources.len() != 1 {
+            return Err(format!(
+                "physical island containing bus `{}` has {} voltage source records; exactly one is required",
+                buses[0],
+                sources.len()
+            ));
         }
     }
 
@@ -656,6 +707,20 @@ fn build_topology(network: &MulticonductorNetwork) -> Result<LinDist3FlowTopolog
                 directions[edge_index] = Some((parent, child));
                 stack.push((child, edge_index));
             }
+        }
+    }
+    let mut line_directions = BTreeMap::new();
+    for (edge, direction) in edges.iter().zip(&directions) {
+        let (parent, _) = direction.expect("each source-rooted forest edge is visited");
+        let reversed = parent != edge.from;
+        if line_directions
+            .insert(edge.line, reversed)
+            .is_some_and(|previous| previous != reversed)
+        {
+            return Err(format!(
+                "line `{}` is reached in conflicting directions across its coupled conductors",
+                network.lines()[edge.line].name
+            ));
         }
     }
     let conductors = edges

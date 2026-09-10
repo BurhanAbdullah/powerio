@@ -246,14 +246,42 @@ fn a_conductor_cycle_is_reported_before_instance_construction() {
 }
 
 #[test]
-fn multiple_sources_on_one_conductor_island_are_rejected() {
-    let mut network = three_phase_network(false);
-    network.sources_mut().push(VoltageSource::new(
-        "second-grid",
+fn multiple_source_records_on_one_physical_island_are_rejected() {
+    let phases = terminals(&["1", "2"]);
+    let mut network = MulticonductorNetwork::named("two-source");
+    network
+        .buses_mut()
+        .push(DistBus::new("source", phases.clone()));
+    network
+        .buses_mut()
+        .push(DistBus::new("load", phases.clone()));
+    network.line_codes_mut().push(DistLineCode::new(
+        "two-phase",
+        vec![vec![0.4, 0.05], vec![0.05, 0.4]],
+        vec![vec![0.3, 0.02], vec![0.02, 0.3]],
+    ));
+    network.lines_mut().push(DistLine::new(
+        "feeder",
+        "source",
         "load",
+        phases.clone(),
+        phases,
+        "two-phase",
+        10.0,
+    ));
+    network.sources_mut().push(VoltageSource::new(
+        "first-grid",
+        "source",
         terminals(&["1"]),
         vec![230.0],
         vec![0.0],
+    ));
+    network.sources_mut().push(VoltageSource::new(
+        "second-grid",
+        "source",
+        terminals(&["2"]),
+        vec![230.0],
+        vec![-2.0 * std::f64::consts::PI / 3.0],
     ));
     let error = LinDist3FlowOpfInstance::from_network(network, LinDist3FlowBuildOptions::default())
         .unwrap_err();

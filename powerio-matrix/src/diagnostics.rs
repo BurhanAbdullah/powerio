@@ -29,6 +29,8 @@ pub mod codes {
             "the requested multiconductor calculation requires unsupported equipment equations", category = Data;
         BUILD_MULTI_UNSUPPORTED_STAMP = "BUILD.MULTI.UNSUPPORTED_STAMP", Warning,
             "an element has no exact multiconductor admittance or ideal stamp and was omitted loudly";
+        BUILD_LINDIST3FLOW_COEFFICIENT_INVALID = "BUILD.LINDIST3FLOW.COEFFICIENT_INVALID", Error,
+            "a LinDist3Flow affine coefficient operand is invalid", category = Data;
         BUILD_SENSITIVITY_SINGULAR = "BUILD.SENSITIVITY.SINGULAR", Error,
             "the reference grounded Laplacian is singular", category = Data;
         BUILD_SENSITIVITY_INVALID_OPTION = "BUILD.SENSITIVITY.INVALID_OPTION", Error,
