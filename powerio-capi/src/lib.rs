@@ -17887,8 +17887,7 @@ mod tests {
             pio_calculation_solution_release(solution);
             let values_view = pio_vector_values(values);
             assert_eq!(values_view.len, 1);
-            assert!(!values_view.data.is_null());
-            assert_eq!(*values_view.data, 1000.0);
+            assert_eq!(values_view.data.as_ref(), Some(&1000.0));
             assert_eq!(pio_lindist3flow_opf_instance_node_count(instance), 2);
             assert_eq!(pio_lindist3flow_opf_instance_conductor_count(instance), 1);
             let mut node = std::mem::MaybeUninit::<PioLinDist3FlowNodeView>::uninit();
