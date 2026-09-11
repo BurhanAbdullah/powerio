@@ -7,8 +7,8 @@ history, and extensions. A current document begins like this:
 ```json
 {
   "schema": "pio-ir",
-  "version": 3,
-  "producer": { "name": "powerio", "version": "0.11.0" },
+  "version": 2,
+  "producer": { "name": "powerio", "version": "0.11.1" },
   "value": {
     "type": "powerio.BalancedNetwork",
     "data": {}
@@ -26,8 +26,8 @@ both sides consume PowerIO values, including calculation instances, solutions,
 time series, and scenario sets.
 
 The generated JSON Schema is checked in at
-`docs/schema/pio-ir/3/schema.json` and served from
-`https://powerio.dev/schema/pio-ir/3/schema.json`. That schema, the
+`docs/schema/pio-ir/2/0.11.1/schema.json` and served from
+`https://powerio.dev/schema/pio-ir/2/0.11.1/schema.json`. That schema, the
 serializer, and the deserializer are all tested from the same Rust types.
 `docs/schema/README.md` lists the earlier `pio-package` and
 `powerio.module` documents as one history under `pio-ir`.
@@ -122,16 +122,22 @@ an allocation failure or a truncated result.
 The integer `version` is the generation of the serialized representation. It
 is a property of the document alone, separate from the Rust memory layout,
 the PowerIO release, any grid exchange format, and the C ABI, and it changes
-only when the representation changes. `producer.version` records the release
+only when an existing representation changes incompatibly. `producer.version` records the release
 that wrote the document; the reader reports it and ignores it when deciding
 compatibility.
 
-When a generation bumps inside one minor release line, the release ships with
-readers for earlier generations in that line. Older releases do not read
-newer generations. `powerio::IR_VERSION` is the generation
-a build writes and `powerio::IR_MIN_VERSION` the oldest it reads; in 0.11.1
-they are `3` and `2`, respectively. LinDist3Flow instance and solution values
-require generation 3. A refused document is reported with the schema name,
+PowerIO 0.11.1 keeps generation 2. `powerio::IR_VERSION` and
+`powerio::IR_MIN_VERSION` are both `2`. Additive structural types do not change
+the generation: older readers continue to accept existing types and reject
+types they do not implement. An incompatible change to an existing record's
+representation or meaning requires a separate generation and release decision.
+
+Schema snapshots describe the structural types available in a release.
+`pio-ir/2/schema.json` is the frozen 0.11.0 catalog;
+`pio-ir/2/0.11.1/schema.json` adds the LinDist3Flow instance and solution types.
+The release in that path identifies the snapshot, not another document version.
+Patch releases without catalog changes can reuse the same snapshot.
+A refused document is reported with the schema name,
 generation, and producer it claims and the remedy: a later generation needs a
 newer PowerIO, and an earlier schema name or generation has to be regenerated
 from its source data.

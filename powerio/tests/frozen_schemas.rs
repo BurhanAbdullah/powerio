@@ -4,7 +4,7 @@
 use std::path::Path;
 
 const SCHEMA_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/schema");
-const CURRENT_SCHEMA: &str = "pio-ir/3/schema.json";
+const CURRENT_SCHEMA: &str = "pio-ir/2/0.11.1/schema.json";
 
 fn read_schema_file(relative: &str) -> String {
     let path = Path::new(SCHEMA_ROOT).join(relative);
@@ -50,8 +50,8 @@ fn the_schema_directory_contains_the_documented_powerio_ir_history() {
             "pio-ir/0.2/schema.json",
             "pio-ir/0.9/schema.json",
             "pio-ir/1/schema.json",
-            "pio-ir/2/schema.json",
             CURRENT_SCHEMA,
+            "pio-ir/2/schema.json",
         ]
     );
 }
@@ -100,6 +100,39 @@ fn the_current_powerio_ir_schema_is_committed() {
         schema["properties"]["version"]["const"],
         powerio::IR_VERSION
     );
+}
+
+/// Additive type catalogs preserve every existing record and document rule.
+#[test]
+fn the_generation_two_catalog_only_adds_structural_types() {
+    let mut published: serde_json::Value =
+        serde_json::from_str(&read_schema_file("pio-ir/2/schema.json")).unwrap();
+    let mut current: serde_json::Value =
+        serde_json::from_str(&read_schema_file(CURRENT_SCHEMA)).unwrap();
+    let published_defs = published.as_object_mut().unwrap().remove("$defs").unwrap();
+    let current_defs = current.as_object_mut().unwrap().remove("$defs").unwrap();
+    published.as_object_mut().unwrap().remove("$id");
+    current.as_object_mut().unwrap().remove("$id");
+    assert_eq!(published, current, "existing document rules changed");
+
+    for (name, definition) in published_defs.as_object().unwrap() {
+        if name == "StoredValue" {
+            for variant in definition["oneOf"].as_array().unwrap() {
+                let type_name = &variant["properties"]["type"]["const"];
+                let matching = current_defs[name]["oneOf"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|candidate| candidate["properties"]["type"]["const"] == *type_name);
+                assert_eq!(matching, Some(variant), "existing type {type_name} changed");
+            }
+        } else {
+            assert_eq!(
+                &current_defs[name], definition,
+                "existing record {name} changed"
+            );
+        }
+    }
 }
 
 /// Every property of every value kind in the current document carries a type,

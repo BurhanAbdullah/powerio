@@ -1,67 +1,68 @@
 # PowerIO IR schema history
 
-One PowerIO IR lineage lives here. Each directory is named for the version its
-document declared: the `pio-package` lineages `0.1`, `0.2`, and `0.9`, then
-the integer generations that replaced them. The current generation is the only
-document the generator writes. The others are frozen copies of what earlier
-releases published.
+PowerIO IR has one document lineage. Generations identify incompatible changes
+to existing record layouts or meanings. A release can add structural types
+without changing the generation. Schema snapshots list the types implemented
+by a release and keep their published bytes and identifiers.
 
-| Generation | PowerIO release | Document identity | Archived schema | Read by 0.11.1 |
+| Generation | First release | Document identity | Schema snapshot | Read by 0.11.1 |
 |---|---|---|---|---|
-| none | v0.6.1 to v0.7.3 | `pio-package` lineage `0.1` | `pio-ir/0.1/schema.json` | no |
-| none | v0.8.0 to v0.8.3 | `pio-package` lineage `0.2` | `pio-ir/0.2/schema.json` | no |
+| none | v0.6.1 | `pio-package` lineage `0.1` | `pio-ir/0.1/schema.json` | no |
+| none | v0.8.0 | `pio-package` lineage `0.2` | `pio-ir/0.2/schema.json` | no |
 | none | v0.9.0 | `pio-package` lineage `0.9` | `pio-ir/0.9/schema.json` | no |
 | 1 | v0.10.0 | `powerio.module`, version `1` | `pio-ir/1/schema.json` | no |
 | 2 | v0.11.0 | `pio-ir`, version `2` | `pio-ir/2/schema.json` | yes |
-| 3 | v0.11.1 | `pio-ir`, version `3`, LinDist3Flow values | `pio-ir/3/schema.json` | yes |
+| 2 | v0.11.1, additive type catalog | `pio-ir`, version `2` | `pio-ir/2/0.11.1/schema.json` | yes |
 
 The current document begins:
 
 ```json
 {
   "schema": "pio-ir",
-  "version": 3,
+  "version": 2,
   "producer": { "name": "powerio", "version": "0.11.1" }
 }
 ```
 
-## The version rule
+## Compatibility
 
-`version` is the generation of the serialized representation. It advances only
-when that representation changes. A bump inside one minor release line ships
-with readers for earlier generations in that line. PowerIO 0.11.1 writes
-generation 3 and reads generations 2 and 3. PowerIO 0.11.0 reads generation 2
-only; forward compatibility with newer generations is not promised. `powerio::IR_VERSION` is the
-generation a build writes and `powerio::IR_MIN_VERSION` the oldest generation
-it reads; the floor rises only at a minor release boundary.
+PowerIO 0.11.1 keeps IR generation 2 and every existing record layout.
+The new LinDist3Flow instance and solution types use distinct structural type
+names. A reader accepts the types it implements; an older reader rejects an
+unknown type without losing the ability to read familiar types. A generation
+bump requires an incompatible change to an existing representation and an
+explicit release decision. Adding fields to a record is not automatically
+compatible: readers can reject unknown fields, so existing records retain
+their layout throughout the 0.11.x line.
 
-`producer.version` records the release that wrote a document. The reader
-reports it and never consults it for compatibility. The C ABI is versioned
-separately.
+`powerio::IR_VERSION` is the generation a build writes and
+`powerio::IR_MIN_VERSION` the oldest it reads. Both remain 2 in 0.11.1.
+`producer.version` records the producing release for diagnostics; it does not
+determine whether a document can be read. The C ABI remains independently
+versioned at 7.
 
-A refused document names the identity, generation, and producer it states, and
-the remedy. A later generation needs a newer PowerIO. An earlier identity or
-generation has to be regenerated from its source data.
-
-This split follows LLVM bitcode, whose identification block carries a producer
-string and an epoch, and MLIR bytecode, whose header carries an integer format
-version and a producer string. PowerIO makes no LLVM or MLIR compatibility
-claim.
+The 0.11.0 schema at `pio-ir/2/schema.json` is a frozen snapshot of its 32
+structural types. The 0.11.1 snapshot adds two structural types and their
+supporting definitions. The release name in the snapshot path does not create
+a new IR generation. A later release without catalog changes can reuse that
+snapshot. CI checks that all existing definitions and document rules remain
+identical and that the published 0.11.0 file remains byte-exact.
 
 ## Served identifiers
 
-Every archived document keeps the `$id` its release published. The
-documentation site serves each file at its archive path and at that `$id`
-path (`pio-package/0.1`, `pio-package/0.2`, `pio-package/0.9`, and
-`pio-module/1`), so a document quoting the identifier still resolves. Keep the
-archived files byte for byte. `powerio/tests/frozen_schemas.rs` pins the
-directory listing and the identifiers.
+Every published snapshot keeps its `$id` and original archive path. The
+historical identifiers are `pio-package/0.1`, `pio-package/0.2`,
+`pio-package/0.9/schema.json`, `pio-module/1/schema.json`, and
+`pio-ir/2/schema.json` beneath `https://powerio.dev/schema/`.
+The current catalog uses `pio-ir/2/0.11.1/schema.json` under that same root.
+The documentation site serves the archive paths and published identifiers.
 
-## Regenerating the current schema
+## Regenerating the current catalog
 
 ```text
 cargo run -p powerio --example generate_schemas --features schema -- docs/schema
 ```
 
-CI regenerates `pio-ir/3/schema.json` on every pull request and fails on a
-difference.
+The generator writes the path named by `powerio::IR_SCHEMA_ID`, currently
+`pio-ir/2/0.11.1/schema.json`. It leaves earlier snapshots untouched. CI fails
+if the generated catalog differs from the committed file.

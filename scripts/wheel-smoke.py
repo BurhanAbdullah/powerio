@@ -25,7 +25,7 @@ def main() -> None:
     assert powerio.__version__ == versions["powerio_version"], versions
     assert versions["powerio_ir"] == {
         "schema": "pio-ir",
-        "version": 3,
+        "version": 2,
     }, versions
 
     module = powerio.parse(
@@ -41,7 +41,7 @@ def main() -> None:
     assert document is not None
     decoded = json.loads(document)
     assert decoded["schema"] == "pio-ir"
-    assert decoded["version"] == 3
+    assert decoded["version"] == 2
     # Deterministic release: the stored document is byte stable.
     assert (
         powerio.serialize(powerio.deserialize(document.encode())).text == document

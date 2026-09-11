@@ -79,29 +79,29 @@ pub const IR_SCHEMA_NAME: &str = "pio-ir";
 /// The PowerIO IR generation this build writes.
 ///
 /// The generation is an integer that advances only when the serialized
-/// representation changes. It is independent of the PowerIO release, which
-/// the `producer` record of a document names, and of the C ABI version.
+/// representation changes incompatibly for an existing value type. It is
+/// independent of the PowerIO release, which the `producer` record of a
+/// document names, and of the C ABI version.
 ///
 /// | Generation | First release | Change |
 /// |---|---|---|
 /// | 1 | v0.10.0 | the `PioModule` serialization, under the identity `powerio.module` |
 /// | 2 | v0.11.0 | the identity `pio-ir`; the producer release recorded apart from the generation; retained source bytes left out |
-/// | 3 | v0.11.1 | LinDist3Flow OPF instance and solution types |
 ///
-/// A bump within one minor release line retains readers for earlier
-/// generations in that line. Older builds cannot read newer generations.
+/// Additive structural types keep the generation unchanged. A reader accepts
+/// the types it implements; an unknown type requires a newer reader.
 /// [`IR_MIN_VERSION`] is the oldest generation this build reads.
-pub const IR_VERSION: u64 = 3;
+pub const IR_VERSION: u64 = 2;
 
 /// The oldest PowerIO IR generation this build reads.
 ///
-/// The floor rises only at a minor release boundary. The 0.11 line reads
-/// generation 2 onward, up to the generation that each build writes.
+/// The floor rises only at a minor release boundary. PowerIO 0.11 writes and
+/// reads generation 2.
 pub const IR_MIN_VERSION: u64 = 2;
 
-/// The `$id` of the JSON Schema for the documents this build writes, which is
-/// also the address the schema is served from.
-pub const IR_SCHEMA_ID: &str = "https://powerio.dev/schema/pio-ir/3/schema.json";
+/// The `$id` of the schema snapshot describing this build's structural types.
+/// The release in the path identifies the catalog, not a new IR generation.
+pub const IR_SCHEMA_ID: &str = "https://powerio.dev/schema/pio-ir/2/0.11.1/schema.json";
 
 use powerio_tx::format;
 pub use powerio_tx::{

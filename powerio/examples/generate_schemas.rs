@@ -23,13 +23,14 @@ mod generate {
             .nth(1)
             .map_or_else(|| PathBuf::from("docs/schema"), PathBuf::from);
 
-        // The schema lives at the version this build writes, and its `$id` is
-        // the address that directory is served from.
+        // The public identifier names the catalog snapshot without replacing
+        // an earlier release's schema at the same IR generation.
+        let relative = powerio::IR_SCHEMA_ID
+            .strip_prefix("https://powerio.dev/schema/")
+            .ok_or("the schema identifier must use the PowerIO schema root")?;
         write_schema(
             serde_json::to_value(powerio::generate_ir_schema())?,
-            &out.join("pio-ir")
-                .join(powerio::IR_VERSION.to_string())
-                .join("schema.json"),
+            &out.join(relative),
             powerio::IR_SCHEMA_ID,
         )
     }

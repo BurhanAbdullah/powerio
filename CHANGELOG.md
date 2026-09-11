@@ -7,10 +7,10 @@
   SI primal decoding. Typed C, Python, and Julia access includes physical
   axes, reference voltages, and solution columns. Finite current limits on
   eliminated neutrals are rejected because the reduced model cannot retain them.
-- Write PowerIO IR generation 3 and continue reading generation 2. The
-  published generation-2 schema stays frozen; LinDist3Flow values require
-  generation 3. Compatibility is backward: older builds do not read newer
-  generations.
+- Keep PowerIO IR generation 2 and existing record layouts. LinDist3Flow adds
+  two structural types that require a reader implementing them. The published
+  0.11.0 schema stays byte-exact; a separate 0.11.1 catalog snapshot lists the
+  additional types without changing the document generation.
 
 - Read bus latitude and longitude from validated PowerWorld PWB records, and
   retain bus positions and branch paths from supported PWD drawings. Empty

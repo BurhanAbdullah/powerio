@@ -71,17 +71,6 @@ pub fn read_module(text: &str) -> Result<PioModule<PioValue>> {
     // or not PowerIO IR at all.
     let decode_error = match serde_json::from_str::<StoredModule>(text) {
         Ok(stored) if is_readable(&stored.schema, stored.version) => {
-            if stored.version == 2
-                && matches!(
-                    &stored.value,
-                    dto::StoredValue::LinDist3FlowOpfInstance(_)
-                        | dto::StoredValue::LinDist3FlowOpfSolution(_)
-                )
-            {
-                return Err(invalid(
-                    "LinDist3Flow values require PowerIO IR generation 3",
-                ));
-            }
             dto::validate(&stored).map_err(invalid)?;
             return decode_stored(stored);
         }

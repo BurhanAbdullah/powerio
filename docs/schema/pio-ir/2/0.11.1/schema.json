@@ -16000,7 +16000,7 @@
       "type": "object"
     }
   },
-  "$id": "https://powerio.dev/schema/pio-ir/3/schema.json",
+  "$id": "https://powerio.dev/schema/pio-ir/2/0.11.1/schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -16043,7 +16043,7 @@
       "$ref": "#/$defs/StoredValue"
     },
     "version": {
-      "const": 3,
+      "const": 2,
       "format": "uint64",
       "minimum": 0,
       "type": "integer"

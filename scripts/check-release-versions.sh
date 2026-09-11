@@ -33,20 +33,39 @@ done
 # The generated schema is what a consumer validates a document against, so it
 # is the artifact that states the IR identity: CI regenerates it from the Rust
 # constants, and this gate reads the identity back out of it.
-schema_path="docs/schema/pio-ir/$ir_version/schema.json"
+schema_id=$(python3 - <<'PY'
+from pathlib import Path
+import re
+
+source = Path("powerio/src/lib.rs").read_text()
+match = re.search(r'pub const IR_SCHEMA_ID: &str\s*=\s*"([^"]+)"', source)
+if match is None:
+    raise SystemExit("IR_SCHEMA_ID is not a string constant")
+print(match.group(1))
+PY
+)
+case "$schema_id" in
+    "https://powerio.dev/schema/pio-ir/$ir_version/"*) ;;
+    *) echo "IR_SCHEMA_ID does not name the current IR generation" >&2; exit 1 ;;
+esac
+schema_path="docs/schema/${schema_id#https://powerio.dev/schema/}"
 if [ ! -f "$schema_path" ]; then
     echo "$schema_path is not checked in" >&2
     exit 1
 fi
-schema_name=$(python3 - "$schema_path" "$ir_version" <<'PY'
+schema_name=$(python3 - "$schema_path" "$ir_version" "$schema_id" <<'PY'
 import json
 import sys
+import hashlib
+from pathlib import Path
 
-path, version = sys.argv[1], int(sys.argv[2])
+path, version, expected_id = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+published = Path("docs/schema/pio-ir/2/schema.json").read_bytes()
+if hashlib.sha256(published).hexdigest() != "8700329706173edb90924460464673310dabb5f4c5264b96fc0ff03eea42c812":
+    raise SystemExit("the published 0.11.0 IR 2 schema changed")
 with open(path, encoding="utf-8") as handle:
     schema = json.load(handle)
 header = schema["properties"]
-expected_id = f"https://powerio.dev/schema/pio-ir/{version}/schema.json"
 problems = []
 if schema.get("$id") != expected_id:
     problems.append(f"$id is {schema.get('$id')!r}, not {expected_id}")

@@ -105,11 +105,11 @@ pio_destination_release(destination);
 ```
 
 `pio_module_serialize` writes PowerIO IR and `pio_module_deserialize` reads
-it. PowerIO 0.11.1 writes `"schema": "pio-ir"` with integer `"version": 3`, and
+it. PowerIO 0.11.1 writes `"schema": "pio-ir"` with integer `"version": 2`, and
 `pio_schema_report` reports both; the producer record names the PowerIO
 release separately. `pio_module_deserialize` refuses an unsupported schema
-name or generation and reports what it found. The reader accepts generations
-2 and 3. C ABI 7 has no module JSON aliases.
+name or generation and reports what it found. The reader accepts generation 2
+and the structural types implemented by the library. C ABI 7 has no module JSON aliases.
 
 ## Collections, updates, and calculations
 

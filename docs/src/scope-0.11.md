@@ -54,7 +54,7 @@ and PowerIO.jl. The boundaries checked independently are:
 |---|---|---|---|
 | PowerIO release | 0.11.1 | the manifests, `powerio::VERSION`, `powerio.versions()`, `pio_version` | every release |
 | C ABI | 7 | the `pio_abi_version` handshake at load | an existing C signature or documented behavior changes |
-| PowerIO IR generation | 3, and the reader accepts 2 and 3 | the document header, `powerio::IR_VERSION`, `powerio::IR_MIN_VERSION` | the serialized representation changes |
+| PowerIO IR generation | 2, unchanged | the document header, `powerio::IR_VERSION`, `powerio::IR_MIN_VERSION` | an existing representation changes incompatibly |
 | Rust toolchain | 1.88 | `rust-version` in the workspace manifest, checked by CI | a dependency in the locked graph requires a newer compiler |
 | Python | 3.9 or later; the `mcp` extra needs 3.10, the `bench` extra 3.11 | `pyproject.toml` | a dependency drops a version |
 

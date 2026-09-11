@@ -43,7 +43,7 @@ def test_lindist3flow_solution_access_and_lifetimes():
     assert metadata["reference_provenance"] == "source_propagated"
     assert network.n_buses == 2
     document = json.loads(powerio.serialize(instance.module).text)
-    assert document["version"] == 3
+    assert document["version"] == 2
     assert document["value"]["type"] == "powerio.LinDist3FlowOpfInstance"
 
 
@@ -57,6 +57,11 @@ def test_lindist3flow_construction_and_ir_generation():
     assert isinstance(instance.value, powerio.LinDist3FlowOpfInstance)
     assert instance.value.metadata["roots"] == [("source", "a")]
     for document in [json.loads(FIXTURE.read_text()), json.loads(powerio.serialize(instance).text)]:
-        document["version"] = 2
-        with pytest.raises(powerio.PowerIOError, match="require PowerIO IR generation 3"):
+        assert document["version"] == 2
+        assert isinstance(
+            powerio.deserialize(io.StringIO(json.dumps(document))).value,
+            (powerio.LinDist3FlowOpfInstance, powerio.LinDist3FlowOpfSolution),
+        )
+        document["version"] = 3
+        with pytest.raises(powerio.PowerIOError, match="unsupported"):
             powerio.deserialize(io.StringIO(json.dumps(document)))

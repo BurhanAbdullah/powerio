@@ -112,8 +112,8 @@ and directory formats.
 PowerIO IR goes through `serialize` and `deserialize` instead. `.pio.json` is
 not a grid exchange format, so format discovery does not list it. Both calls
 use the PowerIO IR document shape, `"schema": "pio-ir"` with integer
-`"version": 3` in PowerIO 0.11.1; the producer record names the PowerIO release
-separately. The reader accepts generations 2 and 3. Documents older than
+`"version": 2` in PowerIO 0.11.1; the producer record names the PowerIO release
+separately. The reader accepts generation 2. Documents older than
 generation 2 have to be regenerated from their original power system data.
 
 These 0.10 names are removed:
