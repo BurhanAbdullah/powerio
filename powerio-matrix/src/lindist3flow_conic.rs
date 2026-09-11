@@ -304,7 +304,11 @@ pub fn build_lindist3flow_conic_problem(
             }
             (Some(fixed), Some(fixed))
         } else {
-            (data.squared_voltage_min, data.squared_voltage_max)
+            // Squared magnitudes remain nonnegative without operating limits.
+            (
+                Some(data.squared_voltage_min.unwrap_or(0.0)),
+                data.squared_voltage_max,
+            )
         };
         variables.push(LinDist3FlowVariableData {
             variable: LinDist3FlowDecisionVariable::SquaredVoltage { node },

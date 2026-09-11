@@ -2,12 +2,19 @@ use approx::assert_relative_eq;
 use std::path::PathBuf;
 
 use powerio_core::Source;
-use powerio_dist::{NeutralKronOptions, neutral_kron_reduce};
-use powerio_matrix::{
-    LinDist3FlowDecisionVariable, LinDist3FlowStandardCone, LinDist3FlowVariable,
-    build_lindist3flow_standard_form, lindist3flow_values_from_standard_primal,
+use powerio_dist::{
+    Configuration, DistBus, DistLine, DistLineCode, DistLoad, MulticonductorNetwork,
+    NeutralKronOptions, VoltageSource, neutral_kron_reduce,
 };
-use powerio_prob::{LinDist3FlowBuildOptions, LinDist3FlowOpfInstance};
+use powerio_matrix::{
+    LinDist3FlowDecisionVariable, LinDist3FlowStandardCone, LinDist3FlowStandardFormOptions,
+    LinDist3FlowStandardRowOrigin, LinDist3FlowVariable, build_lindist3flow_standard_form,
+    build_lindist3flow_standard_form_with_options, lindist3flow_values_from_standard_primal,
+};
+use powerio_prob::{
+    ConstraintSelection, LinDist3FlowBuildOptions, LinDist3FlowOpfInstance, McAcOpfInstance,
+    MulticonductorActiveConstraints,
+};
 
 const EXPLICIT_NEUTRAL_TWO_BUS: &str = r#"
 {
@@ -135,6 +142,134 @@ fn assert_standard_feasible(form: &powerio_matrix::LinDist3FlowStandardForm, pri
         row += dimension;
     }
     assert_eq!(row, form.b.len());
+}
+
+fn voltage_domain_instance(deselect_bounds: bool, load_power: f64) -> LinDist3FlowOpfInstance {
+    let terminal = vec!["a".to_owned()];
+    let mut network = MulticonductorNetwork::named("voltage_domain");
+    network
+        .buses_mut()
+        .push(DistBus::new("source", terminal.clone()));
+    let mut load_bus = DistBus::new("load", terminal.clone());
+    if deselect_bounds {
+        load_bus.v_min = Some(0.5);
+        load_bus.v_max = Some(1.1);
+    }
+    network.buses_mut().push(load_bus);
+    network.line_codes_mut().push(DistLineCode::new(
+        "resistance",
+        vec![vec![1.0]],
+        vec![vec![0.0]],
+    ));
+    network.lines_mut().push(DistLine::new(
+        "line",
+        "source",
+        "load",
+        terminal.clone(),
+        terminal.clone(),
+        "resistance",
+        1.0,
+    ));
+    network.sources_mut().push(VoltageSource::new(
+        "source",
+        "source",
+        terminal.clone(),
+        vec![1.0],
+        vec![0.0],
+    ));
+    network.loads_mut().push(DistLoad::new(
+        "load",
+        "load",
+        terminal,
+        Configuration::Wye,
+        vec![load_power],
+        vec![0.0],
+    ));
+    let mut base = McAcOpfInstance::from_network(network).unwrap();
+    if deselect_bounds {
+        let mut constraints = MulticonductorActiveConstraints::default();
+        constraints.terminal_voltage_bounds = ConstraintSelection::None;
+        base = base.with_constraints(constraints);
+    }
+    LinDist3FlowOpfInstance::from_mc_ac(base, LinDist3FlowBuildOptions::default()).unwrap()
+}
+
+#[test]
+fn squared_voltage_domain_applies_without_selected_voltage_limits() {
+    for deselect_bounds in [false, true] {
+        for load_power in [0.25, 1.0] {
+            let instance = voltage_domain_instance(deselect_bounds, load_power);
+            for options in [
+                LinDist3FlowStandardFormOptions::si(),
+                LinDist3FlowStandardFormOptions::default(),
+            ] {
+                let form =
+                    build_lindist3flow_standard_form_with_options(&instance, options).unwrap();
+                // Lossless balance fixes p = load_power and w_load = 1 - 2*p.
+                let primal = form
+                    .canonical
+                    .variables
+                    .iter()
+                    .zip(&form.scaling.variable_scale)
+                    .map(|(variable, scale)| {
+                        let physical = match &variable.variable {
+                            LinDist3FlowDecisionVariable::SquaredVoltage { node } => {
+                                if form.canonical.preparation.network.nodes[*node].node.bus
+                                    == "source"
+                                {
+                                    1.0
+                                } else {
+                                    1.0 - 2.0 * load_power
+                                }
+                            }
+                            LinDist3FlowDecisionVariable::Power(
+                                LinDist3FlowVariable::LineActive { .. }
+                                | LinDist3FlowVariable::SourceActive { .. },
+                            ) => load_power,
+                            LinDist3FlowDecisionVariable::Power(_) => 0.0,
+                            other => panic!("unexpected decision variable {other:?}"),
+                        };
+                        physical / scale
+                    })
+                    .collect::<Vec<_>>();
+                if load_power < 0.5 {
+                    assert_standard_feasible(&form, &primal);
+                    continue;
+                }
+                let slack = standard_slack(&form, &primal);
+                let mut row = 0;
+                let mut violations = Vec::new();
+                for cone in &form.cones {
+                    for (offset, &value) in slack[row..row + cone.dimension()].iter().enumerate() {
+                        match cone {
+                            LinDist3FlowStandardCone::Zero { .. } => assert!(value.abs() < 1e-12),
+                            LinDist3FlowStandardCone::Nonnegative { .. } if value < -1e-12 => {
+                                violations.push(row + offset);
+                            }
+                            LinDist3FlowStandardCone::Nonnegative { .. } => {}
+                            other => panic!("unexpected cone {other:?}"),
+                        }
+                    }
+                    row += cone.dimension();
+                }
+                assert_eq!(
+                    violations.len(),
+                    1,
+                    "negative squared voltage must violate its domain"
+                );
+                let LinDist3FlowStandardRowOrigin::VariableLowerBound { column } =
+                    form.row_origins[violations[0]]
+                else {
+                    panic!("expected the squared-voltage lower bound");
+                };
+                assert!(primal[column] < 0.0);
+                assert!(matches!(
+                    form.canonical.variables[column].variable,
+                    LinDist3FlowDecisionVariable::SquaredVoltage { .. }
+                ));
+            }
+        }
+    }
 }
 
 #[test]
