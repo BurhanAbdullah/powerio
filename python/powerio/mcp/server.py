@@ -2,8 +2,8 @@
 
 Every input becomes a :class:`powerio.PioModule`. ``powerio_ir`` is serialized
 PowerIO IR; external grid exchange data enters through ``path`` or ``content``.
-Collections remain collections. Tools that inspect a collection use its normal
-time index or scenario ID and never turn an operating point into a network.
+Tools select collection entries by time index or scenario ID. Matrix tools
+use the network carried by a balanced operating point.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import base64
 import io
 import json
 from pathlib import Path
-from typing import Annotated, Any, Dict, Literal, Optional, cast
+from typing import Annotated, Any, Dict, Literal, Mapping, Optional, cast
 
 from mcp.server.mcpserver import MCPServer
 from pydantic import Field
@@ -35,11 +35,61 @@ _MATRIX_NAMES = frozenset(
         "lodf",
         "weighted_laplacian",
         "lacpf",
+        "incidence",
+        "branch_susceptances",
+        "bus_susceptance",
+        "branch_flow",
+        "branch_phase_shift_injection",
+        "bus_phase_shift_injection",
     }
 )
+# Axis names: "bus" rows or columns map to `bus_ids`, "branch" to `branch_ids`
+# of the calculation index map. LACPF maps voltage deviations to power injections.
+_MATRIX_AXES = {
+    "bprime": ("bus", "bus"),
+    "bdoubleprime": ("bus", "bus"),
+    "admittance_real": ("bus", "bus"),
+    "admittance_imag": ("bus", "bus"),
+    "adjacency": ("bus", "bus"),
+    "ptdf": ("branch", "bus"),
+    "lodf": ("branch", "branch"),
+    "weighted_laplacian": ("bus", "bus"),
+    "lacpf": ("bus_power", "bus_voltage"),
+    "incidence": ("branch", "bus"),
+    "branch_susceptances": ("branch", None),
+    "bus_susceptance": ("bus", "bus"),
+    "branch_flow": ("branch", "bus"),
+    "branch_phase_shift_injection": ("branch", None),
+    "bus_phase_shift_injection": ("bus", None),
+}
 _MATRIX_HELP = ", ".join(sorted(_MATRIX_NAMES))
+# The DC calculations `calc_matrix` reaches that take `skip_zero_impedance`.
+# `calc_branch_flow_dc` and `calc_bus_injection_dc` also take it but need
+# voltage angles, so they are not matrix names. `ptdf` and `lodf` factor the
+# reference grounded DC matrix, `adjacency` and `weighted_laplacian` build on
+# the graph, and none of the four has such an option.
+_SKIP_ZERO_IMPEDANCE_DC_NAMES = (
+    "incidence",
+    "branch_susceptances",
+    "bus_susceptance",
+    "branch_flow",
+    "branch_phase_shift_injection",
+    "bus_phase_shift_injection",
+)
+_SKIP_ZERO_IMPEDANCE_DC_HELP = ", ".join(_SKIP_ZERO_IMPEDANCE_DC_NAMES)
+# Matrix names whose calculation has no such option; the flag is refused so the
+# payload never echoes a choice the result ignored.
+_SKIP_ZERO_IMPEDANCE_REFUSED = ("ptdf", "lodf", "adjacency", "weighted_laplacian")
 _MATRIX_KIND_FIELD = Field(
     json_schema_extra=cast(Any, {"enum": sorted(_MATRIX_NAMES)})
+)
+_SKIP_ZERO_IMPEDANCE_FIELD = Field(
+    description=(
+        "Drop zero impedance branches instead of failing the build. Six DC "
+        f"calculations take it ({_SKIP_ZERO_IMPEDANCE_DC_HELP}), as do "
+        "bprime, bdoubleprime, admittance_real, admittance_imag and lacpf. "
+        "ptdf, lodf, adjacency and weighted_laplacian reject it."
+    )
 )
 _Scheme = Literal["bx", "xb"]
 _BranchSusceptanceFormula = Literal[
@@ -132,6 +182,15 @@ def _diagnostic_record(item: Any) -> Dict[str, Any]:
     identity = getattr(item, "id", None)
     if identity:
         record["id"] = identity
+    suggested_action = getattr(item, "suggested_action", None)
+    if suggested_action:
+        record["suggested_action"] = suggested_action
+    related = getattr(item, "related", None)
+    if related:
+        record["related"] = list(related)
+    details = getattr(item, "details", None)
+    if details is not None:
+        record["details"] = details
     spans = getattr(item, "spans", None)
     if spans:
         record["spans"] = [
@@ -273,6 +332,19 @@ def _value_summary(value: Any) -> Dict[str, Any]:
                 {"id": scenario.id, "probability": scenario.probability}
                 for scenario in value.scenarios
             ],
+        }
+    elif isinstance(value, powerio.OperatingPoint):
+        summary = {
+            "operating_point": True,
+            "network": _balanced_summary(value.network)
+            if _canonical_type(value.module) == "powerio.OperatingPoint<powerio.BalancedNetwork>"
+            else None,
+        }
+    elif isinstance(value, powerio.GeoLayer):
+        layer = json.loads(value.geojson)
+        summary = {
+            "layer": "GeoLayer",
+            "features": len(layer.get("features", [])),
         }
     else:
         summary = {"calculation": type(value).__name__}
@@ -422,6 +494,18 @@ def _normalize_impl(
     }
 
 
+def _axis_ids(axis: Optional[str], index_map: Mapping[str, Any]) -> Optional[list]:
+    if axis == "bus":
+        return list(index_map["bus_ids"])
+    if axis == "branch":
+        return list(index_map["branch_ids"])
+    if axis in ("bus_power", "bus_voltage"):
+        buses = list(index_map["bus_ids"])
+        quantities = ("p", "q") if axis == "bus_power" else ("vm", "va")
+        return [f"{bus}:{quantity}" for quantity in quantities for bus in buses]
+    return None
+
+
 def _matrix_impl(
     matrix: str,
     *,
@@ -433,25 +517,38 @@ def _matrix_impl(
     scenario_id: Optional[str] = None,
     scheme: _Scheme = "bx",
     formula: _BranchSusceptanceFormula = "series_susceptance",
+    skip_zero_impedance: bool = False,
 ) -> Dict[str, Any]:
     canonical = matrix.lower()
     if canonical not in _MATRIX_NAMES:
         raise ValueError(f"unknown matrix {matrix!r}; expected one of: {_MATRIX_HELP}")
+    # These calculations have no such option, so the flag would be echoed
+    # back in the payload while the result ignored it.
+    if skip_zero_impedance and canonical in _SKIP_ZERO_IMPEDANCE_REFUSED:
+        raise ValueError(
+            f"{canonical} does not take skip_zero_impedance; the DC "
+            f"calculations that do are: {_SKIP_ZERO_IMPEDANCE_DC_HELP}"
+        )
     module = _load_module(
         path=path, content=content, powerio_ir=powerio_ir, format=format
     )
     value, selection = _select_value(
         module.value, time_index=time_index, scenario_id=scenario_id
     )
+    if isinstance(value, powerio.OperatingPoint):
+        if _canonical_type(value.module) != "powerio.OperatingPoint<powerio.BalancedNetwork>":
+            raise ValueError("matrix calculations require a BalancedNetwork")
+        value = value.network
     if not isinstance(value, powerio.BalancedNetwork):
         raise ValueError("matrix calculations require a BalancedNetwork")
+    skip = skip_zero_impedance
     try:
         if canonical == "bprime":
-            result = value.calc_bprime_matrix(scheme)
+            result = value.calc_bprime_matrix(scheme, skip_zero_impedance=skip)
         elif canonical == "bdoubleprime":
-            result = value.calc_bdoubleprime_matrix(scheme)
+            result = value.calc_bdoubleprime_matrix(scheme, skip_zero_impedance=skip)
         elif canonical in ("admittance_real", "admittance_imag"):
-            admittance = value.calc_admittance_matrix()
+            admittance = value.calc_admittance_matrix(skip_zero_impedance=skip)
             result = (
                 admittance.real
                 if canonical == "admittance_real"
@@ -464,27 +561,73 @@ def _matrix_impl(
         elif canonical == "lodf":
             result = value.calc_lodf(formula)
         elif canonical == "lacpf":
-            result = value.calc_lacpf_matrix()
+            result = value.calc_lacpf_matrix(skip_zero_impedance=skip)
         elif canonical == "weighted_laplacian":
             result = value.calc_weighted_laplacian(formula)
+        elif canonical == "incidence":
+            result = value.calc_incidence_matrix(formula, skip_zero_impedance=skip)
+        elif canonical == "bus_susceptance":
+            result = value.calc_bus_susceptance_matrix(
+                formula, skip_zero_impedance=skip
+            )
+        elif canonical == "branch_flow":
+            result = value.calc_branch_flow_matrix(formula, skip_zero_impedance=skip)
+        elif canonical == "branch_susceptances":
+            result = value.calc_branch_susceptances(formula, skip_zero_impedance=skip)
+        elif canonical == "branch_phase_shift_injection":
+            result = value.calc_branch_phase_shift_injection(
+                formula, skip_zero_impedance=skip
+            )
+        elif canonical == "bus_phase_shift_injection":
+            result = value.calc_bus_phase_shift_injection(
+                formula, skip_zero_impedance=skip
+            )
         else:
             raise AssertionError(f"unhandled matrix name: {canonical}")
+        if canonical in _SKIP_ZERO_IMPEDANCE_DC_NAMES or canonical == "weighted_laplacian":
+            index_map = value.calc_dc_index_map(formula, skip_zero_impedance=skip)
+        else:
+            index_map = value._inner._matrix_index_map(
+                zero_resistance=(canonical, scheme) in (("bprime", "xb"), ("bdoubleprime", "bx")),
+                skip_zero_impedance=skip,
+            )
     except ImportError as exc:
         raise ValueError(str(exc)) from exc
     except powerio.PowerIOError as exc:
         raise _coded_error("matrix calculation failed", exc) from exc
-    coo = result.tocoo()
+    row_axis, col_axis = _MATRIX_AXES[canonical]
     payload: Dict[str, Any] = {
         "value_type": type(value).__name__,
         "matrix": canonical,
-        "format": "coo",
-        "shape": [int(coo.shape[0]), int(coo.shape[1])],
-        "nnz": int(coo.nnz),
-        "data": coo.data.tolist(),
-        "row": coo.row.tolist(),
-        "col": coo.col.tolist(),
-        "diagnostics": _diagnostic_records(module.diagnostics),
+        "formula": formula,
+        "skip_zero_impedance": skip,
     }
+    if col_axis is None:
+        values = [float(item) for item in result]
+        payload.update(
+            {
+                "format": "vector",
+                "shape": [len(values)],
+                "data": values,
+                "row_ids": _axis_ids(row_axis, index_map),
+            }
+        )
+    else:
+        coo = result.tocoo()
+        payload.update(
+            {
+                "format": "coo",
+                "shape": [int(coo.shape[0]), int(coo.shape[1])],
+                "nnz": int(coo.nnz),
+                "data": coo.data.tolist(),
+                "row": coo.row.tolist(),
+                "col": coo.col.tolist(),
+                "row_ids": _axis_ids(row_axis, index_map),
+                "col_ids": _axis_ids(col_axis, index_map),
+            }
+        )
+    payload["skipped_branch_rows"] = list(index_map["skipped_branch_rows"])
+    payload["diagnostics"] = _diagnostic_records(module.diagnostics)
     if selection:
         payload["selection"] = selection
     return payload
@@ -599,7 +742,8 @@ def _to_normalized_tool(
 
 @mcp.tool(
     name="calc_matrix",
-    description="Calculate a BalancedNetwork matrix in COO form. "
+    description="Calculate a BalancedNetwork matrix in COO form, or a DC "
+    "vector, with the bus ids and branch identities of every axis. "
     + _MODULE_INPUT_HELP,
 )
 def _calc_matrix_tool(
@@ -612,6 +756,7 @@ def _calc_matrix_tool(
     scenario_id: Optional[str] = None,
     scheme: _Scheme = "bx",
     formula: _BranchSusceptanceFormula = "series_susceptance",
+    skip_zero_impedance: Annotated[bool, _SKIP_ZERO_IMPEDANCE_FIELD] = False,
 ) -> dict:
     return _matrix_impl(
         matrix,
@@ -623,6 +768,7 @@ def _calc_matrix_tool(
         scenario_id=scenario_id,
         scheme=scheme,
         formula=formula,
+        skip_zero_impedance=skip_zero_impedance,
     )
 
 
@@ -757,6 +903,7 @@ def calc_matrix(
     scenario_id: Optional[str] = None,
     scheme: _Scheme = "bx",
     formula: _BranchSusceptanceFormula = "series_susceptance",
+    skip_zero_impedance: bool = False,
 ) -> dict:
     return _matrix_impl(
         matrix,
@@ -768,6 +915,7 @@ def calc_matrix(
         scenario_id=scenario_id,
         scheme=scheme,
         formula=formula,
+        skip_zero_impedance=skip_zero_impedance,
     )
 
 

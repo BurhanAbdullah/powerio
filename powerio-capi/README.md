@@ -146,3 +146,11 @@ The public calculations return generic CSR matrix and vector handles:
 
 The branch susceptance formula is named explicitly as
 `series_susceptance`, `tap_adjusted_reactance`, or `reactance_only`.
+
+`pio_calc_dc_operators` builds the same operators once as a `PioDcOperators`
+handle whose axes are named: `pio_dc_operators_bus_ids`,
+`pio_dc_operators_branch_rows`, `pio_dc_operators_branch_identity`, and
+`pio_dc_operators_skipped_branch_rows` (the zero impedance branches dropped
+when `skip_zero_impedance` is true). The eight calculations run over the
+handle as `pio_dc_operators_<name>`; release it with
+`pio_dc_operators_release`.

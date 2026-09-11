@@ -19,7 +19,7 @@ use powerio::{
 };
 use powerio_core::{ComponentId, HistoryEntry, HistoryId, HistoryKind, Producer};
 use powerio_matrix::{
-    AcOpfAssemblyOptions, AcOpfPreparation, AnalysisBranchSource, DcOperators,
+    AcOpfAssemblyOptions, AcOpfPreparation, AnalysisBranchSource, DcOperatorOptions, DcOperators,
     DcOpfAssemblyOptions, DcOpfPreparation, PreparedObjective, SparseMatrix, Units,
     build_ac_opf_preparation, build_dc_opf_preparation,
 };
@@ -15784,6 +15784,316 @@ unsafe fn dc_operators(
     DcOperators::build(&instance).map_err(|failure| error_from_core(&failure))
 }
 
+// ---- DC operators handle -----------------------------------------------------
+
+struct DcOperatorsInner {
+    operators: DcOperators,
+    bus_ids: Vec<usize>,
+}
+
+opaque_handle!(
+    /// DC operators built once from a balanced network: the incidence,
+    /// susceptance, flow, and injection calculations share one bus axis and
+    /// one branch axis, and the handle names both axes.
+    PioDcOperators,
+    DcOperatorsInner
+);
+
+/// Build the DC operators of a balanced network once. `formula` selects the
+/// branch susceptance as in `pio_calc_incidence_matrix`; NULL means
+/// `series_susceptance`. With `skip_zero_impedance` false a zero impedance
+/// branch fails the build with `BUILD.OPERATOR.ZERO_IMPEDANCE`; with it true
+/// the branch is dropped from the branch axis and reported by
+/// `pio_dc_operators_skipped_branch_rows`. The bus axis is every bus in table
+/// order; the branch axis is every in service, non self loop branch in table
+/// order, followed by three winding transformer windings, less any skipped
+/// branch. Release with `pio_dc_operators_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_calc_dc_operators(
+    network: *const PioBalancedNetwork,
+    formula: *const c_char,
+    formula_len: usize,
+    skip_zero_impedance: bool,
+    error: *mut *mut PioError,
+) -> *mut PioDcOperators {
+    unsafe {
+        entry(error, std::ptr::null_mut(), || {
+            let network = PioBalancedNetwork::get(network)
+                .and_then(BalancedNetworkInner::network)
+                .ok_or_else(|| {
+                    boundary_error(
+                        &codes::BIND_CAPI_NULL_HANDLE,
+                        "PioBalancedNetwork must not be NULL",
+                    )
+                })?;
+            let formula_name = optional_str(formula, formula_len, "formula")?;
+            let formula = self::formula(formula_name)?;
+            let instance = DcPfInstance::from_network(network.clone())
+                .map_err(|failure| error_from_core(&failure))?
+                .with_branch_susceptance_formula(formula);
+            let options = DcOperatorOptions::new().with_skip_zero_impedance(skip_zero_impedance);
+            let operators = DcOperators::build_with(&instance, &options)
+                .map_err(|failure| error_from_core(&failure))?;
+            let bus_ids = operators.bus_ids().iter().map(|bus| bus.0).collect();
+            Ok(PioDcOperators::new_raw(DcOperatorsInner {
+                operators,
+                bus_ids,
+            }))
+        })
+    }
+}
+
+/// The length of the bus axis.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_dc_operators_n_buses(operators: *const PioDcOperators) -> usize {
+    unsafe { PioDcOperators::get(operators) }.map_or(0, |inner| inner.bus_ids.len())
+}
+
+/// The length of the branch axis.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_dc_operators_n_branches(operators: *const PioDcOperators) -> usize {
+    unsafe { PioDcOperators::get(operators) }
+        .map_or(0, |inner| inner.operators.branch_identities().len())
+}
+
+/// Bus axis row to source bus id. Borrowed from the handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_dc_operators_bus_ids(operators: *const PioDcOperators) -> PioSizeView {
+    unsafe { PioDcOperators::get(operators) }
+        .map_or(PioSizeView::EMPTY, |inner| PioSizeView::new(&inner.bus_ids))
+}
+
+/// Branch axis row to the analysis branch row it represents: the position in
+/// the network's branch table, with three winding transformer windings after
+/// the branches. Borrowed from the handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_dc_operators_branch_rows(
+    operators: *const PioDcOperators,
+) -> PioSizeView {
+    unsafe { PioDcOperators::get(operators) }.map_or(PioSizeView::EMPTY, |inner| {
+        PioSizeView::new(inner.operators.branch_rows())
+    })
+}
+
+/// Analysis branch rows dropped under `skip_zero_impedance`, in table order.
+/// Borrowed from the handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_dc_operators_skipped_branch_rows(
+    operators: *const PioDcOperators,
+) -> PioSizeView {
+    unsafe { PioDcOperators::get(operators) }.map_or(PioSizeView::EMPTY, |inner| {
+        PioSizeView::new(inner.operators.skipped_branch_rows())
+    })
+}
+
+/// The stable identity of branch axis row `index`: the source uid when one
+/// exists, else `branches:<row>`. An index past the branch axis returns an
+/// empty view. Borrowed from the handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_dc_operators_branch_identity(
+    operators: *const PioDcOperators,
+    index: usize,
+) -> PioStringView {
+    unsafe { PioDcOperators::get(operators) }
+        .and_then(|inner| inner.operators.branch_identities().get(index))
+        .map_or(PioStringView::EMPTY, |identity| {
+            PioStringView::new(identity)
+        })
+}
+
+unsafe fn dc_operators_matrix(
+    operators: *const PioDcOperators,
+    error: *mut *mut PioError,
+    calculation: impl FnOnce(&DcOperators) -> SparseMatrix,
+) -> *mut PioSparseMatrix {
+    unsafe {
+        entry(error, std::ptr::null_mut(), || {
+            let inner = PioDcOperators::get(operators).ok_or_else(|| {
+                boundary_error(
+                    &codes::BIND_CAPI_NULL_HANDLE,
+                    "PioDcOperators must not be NULL",
+                )
+            })?;
+            Ok(PioSparseMatrix::new_raw(SparseMatrixInner::from(
+                calculation(&inner.operators),
+            )))
+        })
+    }
+}
+
+unsafe fn dc_operators_vector(
+    operators: *const PioDcOperators,
+    error: *mut *mut PioError,
+    calculation: impl FnOnce(&DcOperators) -> Vec<f64>,
+) -> *mut PioVector {
+    unsafe {
+        entry(error, std::ptr::null_mut(), || {
+            let inner = PioDcOperators::get(operators).ok_or_else(|| {
+                boundary_error(
+                    &codes::BIND_CAPI_NULL_HANDLE,
+                    "PioDcOperators must not be NULL",
+                )
+            })?;
+            Ok(PioVector::new_raw(VectorInner {
+                values: calculation(&inner.operators),
+            }))
+        })
+    }
+}
+
+unsafe fn dc_operators_vector_from_angles(
+    operators: *const PioDcOperators,
+    voltage_angles: *const f64,
+    voltage_angles_len: usize,
+    error: *mut *mut PioError,
+    calculation: impl FnOnce(&DcOperators, &[f64]) -> Result<Vec<f64>, powerio_core::Error>,
+) -> *mut PioVector {
+    unsafe {
+        entry(error, std::ptr::null_mut(), || {
+            if voltage_angles.is_null() && voltage_angles_len != 0 {
+                return Err(boundary_error(
+                    &codes::BIND_CAPI_NULL_ARGUMENT,
+                    "voltage_angles is NULL with a nonzero length",
+                ));
+            }
+            let angles = if voltage_angles_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(voltage_angles, voltage_angles_len)
+            };
+            let inner = PioDcOperators::get(operators).ok_or_else(|| {
+                boundary_error(
+                    &codes::BIND_CAPI_NULL_HANDLE,
+                    "PioDcOperators must not be NULL",
+                )
+            })?;
+            calculation(&inner.operators, angles)
+                .map(|values| PioVector::new_raw(VectorInner { values }))
+                .map_err(|failure| error_from_core(&failure))
+        })
+    }
+}
+
+/// The incidence matrix `A`, branches by buses, over the handle's axes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_dc_operators_incidence_matrix(
+    operators: *const PioDcOperators,
+    error: *mut *mut PioError,
+) -> *mut PioSparseMatrix {
+    unsafe { dc_operators_matrix(operators, error, DcOperators::calc_incidence_matrix) }
+}
+
+/// The bus susceptance matrix `B = A' diag(b) A`, buses by buses.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_dc_operators_bus_susceptance_matrix(
+    operators: *const PioDcOperators,
+    error: *mut *mut PioError,
+) -> *mut PioSparseMatrix {
+    unsafe { dc_operators_matrix(operators, error, DcOperators::calc_bus_susceptance_matrix) }
+}
+
+/// The branch flow matrix `Bf = diag(b) A`, branches by buses.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_dc_operators_branch_flow_matrix(
+    operators: *const PioDcOperators,
+    error: *mut *mut PioError,
+) -> *mut PioSparseMatrix {
+    unsafe { dc_operators_matrix(operators, error, DcOperators::calc_branch_flow_matrix) }
+}
+
+/// The per branch susceptances `b` over the branch axis.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_dc_operators_branch_susceptances(
+    operators: *const PioDcOperators,
+    error: *mut *mut PioError,
+) -> *mut PioVector {
+    unsafe {
+        dc_operators_vector(operators, error, |operators| {
+            operators.calc_branch_susceptances().to_vec()
+        })
+    }
+}
+
+/// The per branch phase shift injection `b .* shift`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_dc_operators_branch_phase_shift_injection(
+    operators: *const PioDcOperators,
+    error: *mut *mut PioError,
+) -> *mut PioVector {
+    unsafe {
+        dc_operators_vector(
+            operators,
+            error,
+            DcOperators::calc_branch_phase_shift_injection,
+        )
+    }
+}
+
+/// The per bus phase shift injection `A' (b .* shift)`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_dc_operators_bus_phase_shift_injection(
+    operators: *const PioDcOperators,
+    error: *mut *mut PioError,
+) -> *mut PioVector {
+    unsafe {
+        dc_operators_vector(
+            operators,
+            error,
+            DcOperators::calc_bus_phase_shift_injection,
+        )
+    }
+}
+
+/// DC branch flows for bus voltage angles in radians over the bus axis.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_dc_operators_branch_flow_dc(
+    operators: *const PioDcOperators,
+    voltage_angles: *const f64,
+    voltage_angles_len: usize,
+    error: *mut *mut PioError,
+) -> *mut PioVector {
+    unsafe {
+        dc_operators_vector_from_angles(
+            operators,
+            voltage_angles,
+            voltage_angles_len,
+            error,
+            DcOperators::calc_branch_flow_dc,
+        )
+    }
+}
+
+/// DC bus injections for bus voltage angles in radians over the bus axis.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_dc_operators_bus_injection_dc(
+    operators: *const PioDcOperators,
+    voltage_angles: *const f64,
+    voltage_angles_len: usize,
+    error: *mut *mut PioError,
+) -> *mut PioVector {
+    unsafe {
+        dc_operators_vector_from_angles(
+            operators,
+            voltage_angles,
+            voltage_angles_len,
+            error,
+            DcOperators::calc_bus_injection_dc,
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_dc_operators_retain(
+    operators: *const PioDcOperators,
+) -> *mut PioDcOperators {
+    unsafe { PioDcOperators::retain_raw(operators) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pio_dc_operators_release(operators: *mut PioDcOperators) {
+    unsafe { PioDcOperators::release_raw(operators) };
+}
+
 unsafe fn dc_matrix(
     network: *const PioBalancedNetwork,
     formula: *const c_char,
@@ -20039,6 +20349,156 @@ mod tests {
 
             pio_vector_release(branch);
             pio_sparse_matrix_release(incidence);
+            pio_balanced_network_release(network);
+            pio_value_release(value);
+            pio_module_release(module);
+        }
+    }
+
+    /// Three buses and two branches; branch row 0 states r = x = 0.
+    const ZERO_IMPEDANCE_CASE: &str = "\
+function mpc = case3_zero_impedance
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+  1 3  0 0 0 0 1 1 0 230 1 1.1 0.9;
+  2 1 50 0 0 0 1 1 0 230 1 1.1 0.9;
+  3 1 50 0 0 0 1 1 0 230 1 1.1 0.9;
+];
+mpc.gen = [
+  1 100 0 100 -100 1 100 1 200 0;
+];
+mpc.branch = [
+  1 2 0 0    0.02 100 100 100 0 0 1 -60 60;
+  2 3 0 0.1  0    100 100 100 0 0 1 -60 60;
+];
+mpc.gencost = [
+  2 0 0 3 0.01 10 0;
+];
+";
+
+    #[test]
+    fn dc_operators_handle_names_its_axes_and_skips_a_zero_impedance_branch() {
+        unsafe {
+            let name = b"zero.m";
+            let format = b"matpower";
+            let mut error = std::ptr::null_mut();
+            let source = pio_source_from_memory(
+                name.as_ptr().cast(),
+                name.len(),
+                ZERO_IMPEDANCE_CASE.as_ptr(),
+                ZERO_IMPEDANCE_CASE.len(),
+                &mut error,
+            );
+            assert!(!source.is_null(), "{}", error_text(error));
+            let module = pio_parse(source, format.as_ptr().cast(), format.len(), &mut error);
+            pio_source_release(source);
+            assert!(!module.is_null(), "{}", error_text(error));
+            let value = pio_module_value(module);
+            let network = pio_value_balanced_network(value, &mut error);
+            assert!(!network.is_null(), "{}", error_text(error));
+
+            // The zero impedance branch fails the build unless it is skipped.
+            let refused = pio_calc_dc_operators(network, std::ptr::null(), 0, false, &mut error);
+            assert!(refused.is_null());
+            assert_eq!(
+                view_text(pio_error_code(error)),
+                "BUILD.OPERATOR.ZERO_IMPEDANCE"
+            );
+            pio_error_release(error);
+            error = std::ptr::null_mut();
+
+            let operators = pio_calc_dc_operators(network, std::ptr::null(), 0, true, &mut error);
+            assert!(!operators.is_null(), "{}", error_text(error));
+            assert_eq!(pio_dc_operators_n_buses(operators), 3);
+            assert_eq!(pio_dc_operators_n_branches(operators), 1);
+
+            let bus_ids = pio_dc_operators_bus_ids(operators);
+            assert_eq!(
+                std::slice::from_raw_parts(bus_ids.data, bus_ids.len),
+                &[1, 2, 3]
+            );
+            // Original table indices: branch row 0 left the axis.
+            let branch_rows = pio_dc_operators_branch_rows(operators);
+            assert_eq!(
+                std::slice::from_raw_parts(branch_rows.data, branch_rows.len),
+                &[1]
+            );
+            let skipped = pio_dc_operators_skipped_branch_rows(operators);
+            assert_eq!(std::slice::from_raw_parts(skipped.data, skipped.len), &[0]);
+            assert!(!view_text(pio_dc_operators_branch_identity(operators, 0)).is_empty());
+            let past_end = pio_dc_operators_branch_identity(operators, 1);
+            assert!(past_end.data.is_null());
+            assert_eq!(past_end.len, 0);
+
+            let incidence = pio_dc_operators_incidence_matrix(operators, &mut error);
+            assert!(!incidence.is_null(), "{}", error_text(error));
+            assert_eq!(pio_sparse_matrix_rows(incidence), 1);
+            assert_eq!(pio_sparse_matrix_columns(incidence), 3);
+
+            let bus_susceptance = pio_dc_operators_bus_susceptance_matrix(operators, &mut error);
+            assert!(!bus_susceptance.is_null(), "{}", error_text(error));
+            assert_eq!(pio_sparse_matrix_rows(bus_susceptance), 3);
+            assert_eq!(pio_sparse_matrix_columns(bus_susceptance), 3);
+
+            let branch_flow = pio_dc_operators_branch_flow_matrix(operators, &mut error);
+            assert!(!branch_flow.is_null(), "{}", error_text(error));
+            assert_eq!(pio_sparse_matrix_rows(branch_flow), 1);
+            assert_eq!(pio_sparse_matrix_columns(branch_flow), 3);
+
+            let susceptances = pio_dc_operators_branch_susceptances(operators, &mut error);
+            assert!(!susceptances.is_null(), "{}", error_text(error));
+            assert_eq!(pio_vector_values(susceptances).len, 1);
+
+            let branch_shift = pio_dc_operators_branch_phase_shift_injection(operators, &mut error);
+            assert!(!branch_shift.is_null(), "{}", error_text(error));
+            assert_eq!(pio_vector_values(branch_shift).len, 1);
+
+            let bus_shift = pio_dc_operators_bus_phase_shift_injection(operators, &mut error);
+            assert!(!bus_shift.is_null(), "{}", error_text(error));
+            assert_eq!(pio_vector_values(bus_shift).len, 3);
+
+            let angles = [0.0_f64, 0.0, 0.1];
+            let flows = pio_dc_operators_branch_flow_dc(
+                operators,
+                angles.as_ptr(),
+                angles.len(),
+                &mut error,
+            );
+            assert!(!flows.is_null(), "{}", error_text(error));
+            assert_eq!(pio_vector_values(flows).len, 1);
+
+            let injections = pio_dc_operators_bus_injection_dc(
+                operators,
+                angles.as_ptr(),
+                angles.len(),
+                &mut error,
+            );
+            assert!(!injections.is_null(), "{}", error_text(error));
+            assert_eq!(pio_vector_values(injections).len, 3);
+
+            // A retained handle names the same axes and outlives one release.
+            let retained = pio_dc_operators_retain(operators);
+            assert!(!retained.is_null());
+            pio_dc_operators_release(retained);
+            assert_eq!(pio_dc_operators_n_branches(operators), 1);
+
+            // A NULL handle reads as an empty axis rather than faulting.
+            assert_eq!(pio_dc_operators_n_buses(std::ptr::null()), 0);
+            assert_eq!(pio_dc_operators_n_branches(std::ptr::null()), 0);
+            let empty = pio_dc_operators_bus_ids(std::ptr::null());
+            assert!(empty.data.is_null());
+            assert_eq!(empty.len, 0);
+
+            pio_vector_release(injections);
+            pio_vector_release(flows);
+            pio_vector_release(bus_shift);
+            pio_vector_release(branch_shift);
+            pio_vector_release(susceptances);
+            pio_sparse_matrix_release(branch_flow);
+            pio_sparse_matrix_release(bus_susceptance);
+            pio_sparse_matrix_release(incidence);
+            pio_dc_operators_release(operators);
             pio_balanced_network_release(network);
             pio_value_release(value);
             pio_module_release(module);

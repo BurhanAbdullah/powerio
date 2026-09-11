@@ -138,3 +138,21 @@ pio_calc_bus_injection_dc
 
 Sparse matrices come back as owned CSR arrays and vectors as owned `double`
 arrays. The C API has no public DC data bundle.
+
+`pio_calc_dc_operators` builds the same operators once and returns a
+`PioDcOperators` handle whose axes are named: `pio_dc_operators_bus_ids` maps
+each bus row to its source bus id, `pio_dc_operators_branch_rows` maps each
+branch row to its position in the branch table (three winding transformer
+windings follow the branches), and `pio_dc_operators_branch_identity` states
+the stable identity of one branch row. Out of service branches and self loops
+have no row. The `skip_zero_impedance` argument drops a zero impedance branch
+and lists it under `pio_dc_operators_skipped_branch_rows` instead of failing
+the build with `BUILD.OPERATOR.ZERO_IMPEDANCE`. The eight calculations run
+over the handle as `pio_dc_operators_incidence_matrix`,
+`pio_dc_operators_branch_susceptances`,
+`pio_dc_operators_bus_susceptance_matrix`,
+`pio_dc_operators_branch_flow_matrix`,
+`pio_dc_operators_branch_phase_shift_injection`,
+`pio_dc_operators_bus_phase_shift_injection`,
+`pio_dc_operators_branch_flow_dc`, and `pio_dc_operators_bus_injection_dc`;
+release the handle with `pio_dc_operators_release`.

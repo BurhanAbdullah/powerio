@@ -15,7 +15,6 @@ use super::BmopfSchemaVersion;
 use crate::convert::TextEmission;
 use crate::diagnostics::codes as C;
 use crate::diagnostics::{Diagnostic, DiagnosticInfo};
-use crate::geo::CoordinateSpace;
 use crate::model::{
     ActivePowerReference, ActivePowerUnit, ConductorMatrix, Configuration, ControlVoltageReference,
     DistControlProfile, DistGenerator, DistIbr, DistLoadVoltageModel, DistTransformer, DistWinding,
@@ -170,10 +169,8 @@ pub struct BmopfEmitOptions {
     /// accepts, which moves the classes it has no table for under `extras`
     /// and reports each move.
     pub schema_version: BmopfSchemaVersion,
-    /// Emit the BMOPFTools coordinate sideload fields on buses.
-    ///
-    /// The default stays schema strict because the BMOPF schema rejects these
-    /// fields with `additionalProperties: false`.
+    /// Compatibility setting; coordinates always use schema-valid `extras.geojson`.
+    /// Both values retain supported bus locations and line paths.
     pub sideload_coordinates: bool,
 }
 
@@ -465,6 +462,9 @@ impl Writer {
             extras.insert("transformer".into(), Value::Object(overflow));
         }
         self.cost_version(&mut doc, &mut extras);
+        if let Some(geometry) = super::geo::collection(net) {
+            extras.insert("geojson".into(), geometry);
+        }
         if !extras.is_empty() {
             doc.insert("extras".into(), Value::Object(extras));
         }
@@ -562,7 +562,7 @@ impl Writer {
                     o.insert(key.into(), self.num(v, &format!("bus {key}")));
                 }
             }
-            self.bus_location(&mut o, b, net);
+            self.bus_location(b);
             // Other extras have no bus fields in the schema.
             self.extras_dropped(&b.extras, &format!("bus {}", b.id));
             buses.insert(b.id.clone(), Value::Object(o));
@@ -623,77 +623,23 @@ impl Writer {
         }
     }
 
-    fn bus_location(
-        &mut self,
-        o: &mut Map<String, Value>,
-        b: &crate::model::DistBus,
-        net: &MulticonductorNetwork,
-    ) {
-        let Some(location) = b.location else {
-            return;
-        };
-        if !self.options.sideload_coordinates {
+    fn bus_location(&mut self, b: &crate::model::DistBus) {
+        if let Some(location) = b.location
+            && (!location.x.is_finite() || !location.y.is_finite())
+        {
             self.diagnostic(
                 &C::EMIT_BMOPF_BUS_LOCATION_DROPPED,
                 format!("bus {}", b.id),
                 format!(
-                    "bus {}: location has no place in the BMOPF schema; dropped from the output",
+                    "bus {}: nonfinite location cannot be written to GeoJSON",
                     b.id
                 ),
-                json!({
-                    "bus": b.id,
-                    "x": location.x,
-                    "y": location.y,
-                })
-                .as_object()
-                .expect("object literal")
-                .clone(),
+                json!({ "bus": b.id, "x": location.x, "y": location.y })
+                    .as_object()
+                    .expect("object literal")
+                    .clone(),
             );
-            return;
         }
-        if !matches!(
-            net.geo().as_ref().map(|geo| &geo.space),
-            Some(CoordinateSpace::Geographic { .. })
-        ) {
-            self.diagnostic(
-                &C::EMIT_BMOPF_BUS_LOCATION_DROPPED,
-                format!("bus {}", b.id),
-                format!(
-                    "bus {}: non-geographic or undeclared location cannot be emitted as BMOPF longitude/latitude",
-                    b.id
-                ),
-                json!({
-                    "bus": b.id,
-                    "x": location.x,
-                    "y": location.y,
-                })
-                .as_object()
-                .expect("object literal")
-                .clone(),
-            );
-            return;
-        }
-        if !location.x.is_finite() || !location.y.is_finite() {
-            self.diagnostic(
-                &C::EMIT_BMOPF_BUS_LOCATION_DROPPED,
-                format!("bus {}", b.id),
-                format!(
-                    "bus {}: nonfinite location cannot be emitted as BMOPF longitude/latitude",
-                    b.id
-                ),
-                json!({
-                    "bus": b.id,
-                    "x": location.x,
-                    "y": location.y,
-                })
-                .as_object()
-                .expect("object literal")
-                .clone(),
-            );
-            return;
-        }
-        o.insert("longitude".into(), self.num(location.x, "bus longitude"));
-        o.insert("latitude".into(), self.num(location.y, "bus latitude"));
     }
 
     fn warn_unemitted_untyped(&mut self, net: &MulticonductorNetwork) {

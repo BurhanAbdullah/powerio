@@ -55,6 +55,7 @@ pub(crate) fn parse_bmopf_collecting(
     rd.document(&doc);
     let found = std::mem::take(&mut rd.diagnostics);
     diags.absorb(found);
+    super::geo::read(&doc, &mut net, diags);
     crate::model::warn_unresolved_references(&net, diags);
     Ok(net)
 }
