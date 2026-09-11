@@ -45,6 +45,8 @@ jobs:
       run: cargo install mdbook --version 0.5.2 --locked
     - name: Terminology gate
       run: bash scripts/terminology-gate.sh
+    - name: Test schema publishing
+      run: python3 scripts/test-schema-publishing.py
     # -D warnings turns a broken intra-doc link into a failed build, so the docs
     # can't rot silently. --all-features renders each feature gated surface.
     - name: Build docs
@@ -177,13 +179,15 @@ jobs:
         redirect_schema_page() {
           # A redirect to a missing anchor would land at the page top; fail
           # the build instead.
-          anchor="${1%/*}"
+          archive="$1"
+          destination="${2:-$1}"
+          anchor="${archive%%/*}"
           grep -q "id=\"$anchor\"" target/doc/guide/pio-json-schema.html
-          target="../../../guide/pio-json-schema.html#$anchor"
-          mkdir -p "target/doc/schema/$1"
-          test -f "docs/schema/$1/schema.json"
-          cp "docs/schema/$1/schema.json" "target/doc/schema/$1/schema.json"
-          cat > "target/doc/schema/$1/index.html" <<HTML
+          target="$(python3 -c 'import posixpath, sys; print(posixpath.relpath("target/doc/guide/pio-json-schema.html", sys.argv[1]))' "target/doc/schema/$destination")#$anchor"
+          mkdir -p "target/doc/schema/$destination"
+          test -f "docs/schema/$archive/schema.json"
+          cp "docs/schema/$archive/schema.json" "target/doc/schema/$destination/schema.json"
+          cat > "target/doc/schema/$destination/index.html" <<HTML
         <!doctype html>
         <meta charset="utf-8">
         <meta http-equiv="refresh" content="0; url=$target">
@@ -193,21 +197,20 @@ jobs:
         }
         # Every schema in the archive is served, so a release adds its
         # directory and nothing here.
-        for schema in docs/schema/pio-ir/*/schema.json; do
+        shopt -s globstar
+        for schema in docs/schema/pio-ir/**/schema.json; do
           redirect_schema_page "$(dirname "${schema#docs/schema/}")"
         done
         # A historical document keeps the `$id` its release published, which
         # names a path on this site. Serve that path too, so a document that
         # quotes the identifier still resolves.
-        for schema in docs/schema/pio-ir/*/schema.json; do
+        for schema in docs/schema/pio-ir/**/schema.json; do
           archive="$(dirname "${schema#docs/schema/}")"
           id="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("$id", ""))' "$schema")"
           served="${id#https://powerio.dev/schema/}"
           served="${served%/schema.json}"
           if [ -n "$served" ] && [ "$served" != "$id" ] && [ "$served" != "$archive" ]; then
-            mkdir -p "target/doc/schema/$served"
-            cp "$schema" "target/doc/schema/$served/schema.json"
-            cp "target/doc/schema/$archive/index.html" "target/doc/schema/$served/index.html"
+            redirect_schema_page "$archive" "$served"
           fi
         done
     - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
