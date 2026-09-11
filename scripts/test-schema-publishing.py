@@ -1,12 +1,11 @@
 """Check archived schema bytes and redirects at every published path depth."""
 
 import json
-from pathlib import Path
 import subprocess
 import tempfile
 import textwrap
+from pathlib import Path
 from urllib.parse import urljoin
-
 
 ROOT = Path(__file__).resolve().parents[1]
 workflow = (ROOT / ".github/workflows/docs.yml").read_text()
