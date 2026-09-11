@@ -174,3 +174,33 @@ Sparse conic preparation and solver adapters remain Rust APIs.
 PowerIO 0.11.1 writes these values in IR generation 2. LinDist3Flow adds new
 structural type names; readers without those types reject them, while existing
 network and calculation records keep their representation.
+
+
+## Solver adapters, including Tellegen
+
+A solver adapter can retain PowerIO's typed module throughout parsing,
+projection, calculation, and result storage:
+
+1. Parse a `MulticonductorNetwork` module and apply explicit neutral Kron
+   projection when needed. Keep the projection report and reject unsupported
+   equipment through the instance constructor's diagnostics.
+2. Construct `LinDist3FlowOpfInstance` and call
+   `powerio_matrix::build_lindist3flow_standard_form(instance.value())`.
+   The result supplies CSC matrices `p` and `a`, vectors `q` and `b`, and
+   ordered zero, nonnegative, and second-order cone blocks for
+   `min 1/2 x' P x + q' x` subject to `A x + s = b`, `s in K`.
+3. Map those blocks to the selected conic solver. Keep `row_origins`,
+   `canonical.variables`, and the instance's node and conductor identities
+   for diagnostics and result display. Default solver coordinates use a
+   1 MVA per-unit base; the explicit options also support SI coordinates.
+4. Decode the primal vector with `lindist3flow_values_from_standard_primal`,
+   then construct `LinDist3FlowOpfSolution` with the retained instance,
+   termination, decoded values, and objective. Store the result in a module
+   and call `powerio::serialize` for IR 2 output.
+
+Tellegen can reuse this Rust boundary for native and WebAssembly adapters.
+The remaining consumer work is solver dispatch, capability checks, and
+presentation of the supported distribution results. Parsing, neutral
+projection, electrical coefficients, physical axes, and primal scaling stay
+in PowerIO. New LinDist3Flow types require PowerIO 0.11.1; existing saved
+IR 2 networks require no format migration.

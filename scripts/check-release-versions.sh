@@ -99,19 +99,23 @@ while read -r pinned; do
 done < <(grep -E '^powerio[a-z-]* = \{ path = "[^"]+", version = "[0-9.]+"' Cargo.toml \
     | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 
-# The changelog's top section and the release notes draft state the workspace
-# version; the eventual tag is v<workspace version>.
+# The changelog and release notes state the workspace version.
+# Final release notes take precedence over a draft for the same version.
 changelog_version=$(grep -m1 -oE '^## [0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | grep -oE '[0-9.]+')
 if [ "$changelog_version" != "$workspace_version" ]; then
     echo "CHANGELOG.md leads with $changelog_version, the workspace says $workspace_version" >&2
     exit 1
 fi
-if [ ! -f "docs/release-notes/$workspace_version-draft.md" ]; then
-    echo "docs/release-notes/$workspace_version-draft.md is not checked in" >&2
+release_notes="docs/release-notes/$workspace_version.md"
+if [ ! -f "$release_notes" ]; then
+    release_notes="docs/release-notes/$workspace_version-draft.md"
+fi
+if [ ! -f "$release_notes" ]; then
+    echo "no final or draft release notes are checked in for $workspace_version" >&2
     exit 1
 fi
-grep -q "PowerIO $workspace_version release notes" "docs/release-notes/$workspace_version-draft.md" \
-    || { echo "the release notes draft title does not state $workspace_version" >&2; exit 1; }
+grep -q "PowerIO $workspace_version release notes" "$release_notes" \
+    || { echo "the release notes title does not state $workspace_version" >&2; exit 1; }
 
 echo "release identity OK: ABI $rust_abi, PowerIO IR $schema_name/$ir_version (reads $ir_min_version through $ir_version), workspace $workspace_version, tag v$workspace_version"
 

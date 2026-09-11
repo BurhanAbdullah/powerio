@@ -2,51 +2,50 @@
 
 ## 0.11.1
 
-- Add LinDist3Flow OPF instances and solutions over `MulticonductorNetwork`,
-  explicit neutral Kron projection, and sparse affine/conic compilation with
-  SI primal decoding. Typed C, Python, and Julia access includes physical
-  axes, reference voltages, and solution columns. Finite current limits on
-  eliminated neutrals are rejected because the reduced model cannot retain them.
-- Keep PowerIO IR generation 2 and existing record layouts. LinDist3Flow adds
-  two structural types that require a reader implementing them. The published
-  0.11.0 schema stays byte-exact; a separate 0.11.1 catalog snapshot lists the
-  additional types without changing the document generation.
+PowerIO 0.11.1 adds distribution calculations and improves geographic data,
+DC matrix indexing, and diagnostics. Existing APIs and IR records remain
+compatible with 0.11.0.
 
-- Read bus latitude and longitude from validated PowerWorld PWB records, and
-  retain bus positions and branch paths from supported PWD drawings. Empty
-  drawings report an error; drawing coordinates remain distinct from geography.
-- Read BMOPF bus Points and line LineStrings proposed by BMOPFTools, including
-  `bus_from` and `bus_to` identities. Keep coordinates, routes, and coordinate
-  systems through PowerIO IR and edits. Explicit BMOPF output stores geometry
-  under `extras.geojson`, which validates against the declared schema while
-  embedded geometry remains under Task Force review.
-- Name the axes of every DC calculation. `DcOperators::build_with` takes
-  `DcOperatorOptions`, and `branch_rows`, `branch_identities`, and
-  `skipped_branch_rows` state the branch axis beside `bus_ids`: every in
-  service, non self loop branch in table order, three winding transformer
-  windings after the branches. With `skip_zero_impedance` a zero impedance
-  branch leaves the axis and is listed instead of failing the build with
-  `BUILD.OPERATOR.ZERO_IMPEDANCE`, the same choice the admittance builders
-  offer. C ABI 7 gains the `PioDcOperators` handle
-  (`pio_calc_dc_operators`, the axis accessors, and the eight calculations
-  over one build); the existing `pio_calc_*` entry points are unchanged.
-  Python `calc_dc_index_map` returns `bus_ids`, `branch_rows`, `branch_ids`,
-  and `skipped_branch_rows`, and every DC `calc_*` method accepts
-  `skip_zero_impedance`. The MCP `calc_matrix` tool reports `row_ids` and
-  `col_ids` for every result, serves the eight DC calculations by name, and
-  takes `skip_zero_impedance`. Reported from the PowerIO.jl port of
-  PowerDiff.jl (eigenergy/PowerIO.jl#139, #140).
-- `powerio::network_with_operating_point` and Python `OperatingPoint.network`
-  return the balanced network an operating point states with the point's
-  values applied, so a consumer selects a collection entry without emitting
-  and reparsing it. The MCP `summarize` and `calc_matrix` tools accept an
-  operating point entry through that network.
-- MCP diagnostic records carry `suggested_action`, `related`, and `details`
-  beside the code, severity, message, target, id, and spans.
-- The OpenDSS geometry regression cases from Burhan Abdullah's draft (#480)
-  run as ordinary tests: a geometry defined line is reported by
-  `READ.DSS.GEOMETRY_UNRESOLVED` when it is read and never receives the
-  OpenDSS factory impedance or a fabricated conductor count (#479).
+### Compatibility
+
+- Keep C ABI 7 and PowerIO IR generation 2. Existing serialized types retain
+  their layouts, and the published 0.11.0 schema remains unchanged.
+- Add two LinDist3Flow structural types. Reading these new types requires
+  0.11.1; older readers continue to accept existing types. The additional
+  schema catalog does not introduce a new IR generation.
+
+### Added
+
+- Add LinDist3Flow OPF instances, solutions, and sparse affine/conic
+  compilation for supported radial distribution feeders. Explicit neutral
+  Kron projection reports its assumptions and rejects neutral current limits
+  that the reduced model cannot preserve. C, Python, and Julia expose typed
+  metadata and solution values in SI units (#151).
+- Read geographic bus coordinates from supported PowerWorld PWB records and
+  retain bus positions and branch paths from PWD drawings. Drawing coordinates
+  remain distinct from geographic coordinates.
+- Preserve BMOPF bus coordinates, line routes, and coordinate systems through
+  edits and IR. Explicit BMOPF output writes geometry under `extras.geojson`;
+  the proposed embedded geometry fields remain under Task Force review.
+- Expose the bus and branch identities behind DC matrices, including skipped
+  branch rows. C callers can build one `PioDcOperators` handle and reuse it;
+  Python adds `calc_dc_index_map`, and MCP matrix results include axis IDs.
+- Apply an operating point to its balanced network through
+  `network_with_operating_point` and Python `OperatingPoint.network`.
+  MCP summary and matrix tools also accept operating-point entries.
+- Include suggested actions, related diagnostics, and structured details in
+  MCP diagnostic records.
+
+### Fixed
+
+- Apply `skip_zero_impedance` consistently across DC calculations and report
+  skipped branches in the index map. Existing C calculation entry points
+  remain available.
+- Require nonnegative squared voltages in LinDist3Flow even when operating
+  voltage bounds are absent or disabled.
+- Cover unresolved OpenDSS line geometry with regression tests. Such lines
+  report `READ.DSS.GEOMETRY_UNRESOLVED` without fabricated impedances or
+  conductor counts (#479).
 
 ## 0.11.0
 
