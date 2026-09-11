@@ -724,6 +724,7 @@ fn multiconductor_calculation_network(
     match value {
         PioValue::McAcPfInstance(instance) => Some(instance.network()),
         PioValue::McAcOpfInstance(instance) => Some(instance.network()),
+        PioValue::LinDist3FlowOpfInstance(instance) => Some(instance.network()),
         _ => None,
     }
 }
@@ -856,6 +857,9 @@ fn emit_solution(
         PioValue::McAcOpfSolution(solution) => {
             emit_multiconductor_solution_network(module, solution.network(), format, destination)
         }
+        PioValue::LinDist3FlowOpfSolution(solution) => {
+            emit_multiconductor_solution_network(module, solution.network(), format, destination)
+        }
         PioValue::AcScucSolution(solution) if is_goc3(format) => {
             emit_goc3_solution(solution, destination)
         }
@@ -869,50 +873,76 @@ fn emit_solution(
     }
 }
 
+fn emit_versioned_bmopf(
+    module: &PioModule<PioValue>,
+    version: &str,
+    destination: Destination,
+) -> Result<EmitResult, Error> {
+    let format = format!("bmopf-json@{version}");
+    let profile = match version {
+        "0.1.0" => powerio_dist::BmopfSchemaVersion::Bmopf010,
+        "0.2.0" => powerio_dist::BmopfSchemaVersion::Bmopf020,
+        _ => return Err(unknown_format(&format)),
+    };
+    let (network, diagnostics) = match module.value() {
+        PioValue::MulticonductorNetwork(network) => (network.clone(), Vec::new()),
+        PioValue::McAcPfInstance(instance) => (
+            instance.network().clone(),
+            vec![calculation_data_omitted(
+                module.value().type_name(),
+                &format,
+            )],
+        ),
+        PioValue::McAcOpfInstance(instance) => (
+            instance.network().clone(),
+            vec![calculation_data_omitted(
+                module.value().type_name(),
+                &format,
+            )],
+        ),
+        PioValue::LinDist3FlowOpfInstance(instance) => (
+            instance.network().clone(),
+            vec![calculation_data_omitted(
+                module.value().type_name(),
+                &format,
+            )],
+        ),
+        PioValue::MulticonductorOperatingPoint(point) => {
+            network_with_multiconductor_operating_point(point, &format)
+        }
+        PioValue::McAcPfSolution(solution) => (
+            solution.instance().network().clone(),
+            vec![solution_data_omitted(module.value().type_name(), &format)],
+        ),
+        PioValue::McAcOpfSolution(solution) => (
+            solution.instance().network().clone(),
+            vec![solution_data_omitted(module.value().type_name(), &format)],
+        ),
+        PioValue::LinDist3FlowOpfSolution(solution) => (
+            solution.instance().network().clone(),
+            vec![solution_data_omitted(module.value().type_name(), &format)],
+        ),
+        _ => return Err(unsupported_type(module, &format)),
+    };
+    let typed = typed_sibling(module, network)?.sever_source();
+    let mut options = powerio_dist::EmitOptions::default();
+    options.bmopf.schema_version = profile;
+    powerio_dist::emit_with_options(
+        &typed,
+        powerio_dist::DistTargetFormat::BmopfJson,
+        &options,
+        destination,
+    )
+    .map(|result| result.__with_diagnostics(diagnostics))
+}
+
 fn emit_dynamic(
     module: &PioModule<PioValue>,
     format: &str,
     destination: Destination,
 ) -> Result<EmitResult, Error> {
     if let Some(version) = format.strip_prefix("bmopf-json@") {
-        let profile = match version {
-            "0.1.0" => powerio_dist::BmopfSchemaVersion::Bmopf010,
-            "0.2.0" => powerio_dist::BmopfSchemaVersion::Bmopf020,
-            _ => return Err(unknown_format(format)),
-        };
-        let (network, diagnostics) = match module.value() {
-            PioValue::MulticonductorNetwork(network) => (network.clone(), Vec::new()),
-            PioValue::McAcPfInstance(instance) => (
-                instance.network().clone(),
-                vec![calculation_data_omitted(module.value().type_name(), format)],
-            ),
-            PioValue::McAcOpfInstance(instance) => (
-                instance.network().clone(),
-                vec![calculation_data_omitted(module.value().type_name(), format)],
-            ),
-            PioValue::MulticonductorOperatingPoint(point) => {
-                network_with_multiconductor_operating_point(point, format)
-            }
-            PioValue::McAcPfSolution(solution) => (
-                solution.instance().network().clone(),
-                vec![solution_data_omitted(module.value().type_name(), format)],
-            ),
-            PioValue::McAcOpfSolution(solution) => (
-                solution.instance().network().clone(),
-                vec![solution_data_omitted(module.value().type_name(), format)],
-            ),
-            _ => return Err(unsupported_type(module, format)),
-        };
-        let typed = typed_sibling(module, network)?.sever_source();
-        let mut options = powerio_dist::EmitOptions::default();
-        options.bmopf.schema_version = profile;
-        return powerio_dist::emit_with_options(
-            &typed,
-            powerio_dist::DistTargetFormat::BmopfJson,
-            &options,
-            destination,
-        )
-        .map(|result| result.__with_diagnostics(diagnostics));
+        return emit_versioned_bmopf(module, version, destination);
     }
     if let Some(artifacts) = echo_retained_directory(module, format)? {
         return destination.__commit_artifacts(
@@ -958,6 +988,7 @@ fn emit_dynamic(
         | PioValue::AcOpfInstance(_)
         | PioValue::McAcPfInstance(_)
         | PioValue::McAcOpfInstance(_)
+        | PioValue::LinDist3FlowOpfInstance(_)
         | PioValue::AcScucInstance(_) => emit_network_or_calculation(module, format, destination),
         PioValue::DcPfSolution(_)
         | PioValue::AcPfSolution(_)
@@ -966,6 +997,7 @@ fn emit_dynamic(
         | PioValue::SocwrOpfSolution(_)
         | PioValue::McAcPfSolution(_)
         | PioValue::McAcOpfSolution(_)
+        | PioValue::LinDist3FlowOpfSolution(_)
         | PioValue::AcScucSolution(_) => emit_solution(module, format, destination),
         _ => {
             if known_format_name(format) {

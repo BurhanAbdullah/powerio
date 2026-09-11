@@ -29,6 +29,9 @@ pub enum Error {
 
     #[error("unknown distribution format `{0}` (expected dss, bmopf, or pmd)")]
     UnknownFormat(String),
+
+    #[error("neutral Kron reduction failed: {message}")]
+    KronReduction { message: String },
 }
 
 impl Error {
@@ -41,6 +44,7 @@ impl Error {
             Error::Json { .. } => &codes::PARSE_DIST_MALFORMED,
             Error::FormatRead { .. } => &codes::PARSE_DIST_SOURCE_MALFORMED,
             Error::UnknownFormat(_) => &codes::REQUEST_DIST_FORMAT_UNKNOWN,
+            Error::KronReduction { .. } => &codes::TRANSFORM_DIST_KRON_REDUCTION_FAILED,
         }
     }
 
@@ -51,6 +55,7 @@ impl Error {
             Error::Io { .. } => ErrorCategory::Io,
             Error::Json { .. } | Error::FormatRead { .. } => ErrorCategory::Parse,
             Error::UnknownFormat(_) => ErrorCategory::Request,
+            Error::KronReduction { .. } => ErrorCategory::Data,
         }
     }
 }
@@ -75,6 +80,9 @@ mod tests {
                 message: "not valid UTF-8".into(),
             },
             Error::UnknownFormat("xyz".into()),
+            Error::KronReduction {
+                message: "ambiguous neutral".into(),
+            },
         ];
         for error in &every {
             assert_eq!(

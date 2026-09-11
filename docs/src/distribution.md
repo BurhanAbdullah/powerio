@@ -2,8 +2,8 @@
 
 A multiconductor network is the conductor level distribution model, and
 OpenDSS, PowerModelsDistribution engineering JSON, and BMOPF JSON all parse to
-it. When you need a calculation, construct an `McAcPfInstance` or
-`McAcOpfInstance` from it explicitly (see
+it. When you need a calculation, construct an `McAcPfInstance`,
+`McAcOpfInstance`, or `LinDist3FlowOpfInstance` from it explicitly (see
 [Calculation instances and solutions](instances.md)).
 
 ```julia
@@ -53,6 +53,32 @@ PowerIO.jl does not bind it.
 Multiconductor admittance matrices build directly from the multiconductor
 network through `powerio_matrix::calc_multiconductor_admittance_matrix`,
 which is Rust only in 0.11.
+
+LinDist3Flow construction is likewise explicit. A module with an explicit
+neutral first passes through the facade's `neutral_kron`; the returned network
+records the projection provenance and the module records the transform and its
+diagnostics. Instance construction then checks the supported radial model
+slice, fixes the voltage reference, and creates the portable input:
+
+```rust,ignore
+use powerio::{neutral_kron, to_lindist3flow_opf_instance};
+
+let (reduced, report) = neutral_kron(&feeder)?;
+let instance = to_lindist3flow_opf_instance(&reduced)?;
+```
+
+`powerio_dist::neutral_kron_reduce` remains available when an application
+needs the independently owned network projection without module records.
+The projection rejects finite current limits on eliminated neutrals. Such limits
+need a constraint on the recovered neutral current, which this reduced network
+type cannot represent.
+
+`powerio-matrix` compiles that instance to sparse affine rows, bounds, and
+second-order cones. It does not select or invoke a solver, so the same bundle
+can be handed to a native or WebAssembly-compatible conic backend.
+The supported physical slice, rejected equipment and validation evidence are
+recorded in the
+[multiconductor LinDist3Flow design review](https://github.com/eigenergy/powerio/blob/main/docs/design/lindist3flow-multiconductor.md).
 
 ## BMOPF schema versions
 
@@ -118,3 +144,33 @@ The reader also accepts the deprecated per-phase `cost` spelling. Explicit
 `extras.voltage_source`, with a diagnostic. Only a consumer that reads that
 overlay can use the retained source prices. PowerIO stores the coefficients;
 the selected solver determines whether and how they enter its objective.
+
+## LinDist3Flow bindings
+
+Python and Julia expose `LinDist3FlowOpfInstance` and `LinDist3FlowOpfSolution`
+as typed module values. `to_lindist3flow_opf_instance` constructs an instance
+from a supported phase-only network or multiconductor AC OPF instance.
+`instance.metadata` supplies the node and conductor axes, roots, and fixed
+reference voltages. Line powers follow the reported parent-to-child direction.
+Python positions are zero based; Julia positions are one based.
+
+Solutions expose their instance, termination, objective, and named primal
+columns: `terminal_voltage_magnitude_squared`, `line_active_power`,
+`line_reactive_power`, `generator_active_power`, `generator_reactive_power`,
+`source_active_power`, and `source_reactive_power`. Voltage values use squared
+volts and power values use watts or vars. Node and line columns follow the
+metadata axes; generator and source columns follow network table order, then
+channel order. Each returned column is an independent copy.
+
+C ABI 7 adds `pio_value_lindist3flow_opf_instance`,
+`pio_value_lindist3flow_opf_solution`, and
+`pio_module_to_lindist3flow_opf_instance`. The generic calculation accessors
+read the instance, network, objective, constraints, termination, and solution
+columns. `pio_lindist3flow_opf_instance_node_at` and
+`pio_lindist3flow_opf_instance_conductor_at` return borrowed typed axis views.
+Their strings stay valid while the instance handle remains alive.
+Sparse conic preparation and solver adapters remain Rust APIs.
+
+PowerIO 0.11.1 writes these values in IR generation 2. LinDist3Flow adds new
+structural type names; readers without those types reject them, while existing
+network and calculation records keep their representation.

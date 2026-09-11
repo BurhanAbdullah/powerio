@@ -61,6 +61,10 @@ mod acopf;
 mod dc_operators;
 mod dcopf;
 pub mod io;
+mod lindist3flow;
+mod lindist3flow_conic;
+mod lindist3flow_devices;
+mod lindist3flow_standard;
 pub mod matrix;
 mod opf;
 pub mod pipeline;
@@ -78,6 +82,32 @@ pub use dcopf::{
     DcBranchParameters, DcGeneratorParameters, DcOpfAssemblyOptions, DcOpfBundleMetadata,
     DcOpfBundleOptions, DcOpfMatrices, DcOpfOutputs, DcOpfPreparation, NodalGeneratorParameters,
     Units, build_dc_opf_preparation, calc_dc_opf_matrices, emit_dcopf_bundle,
+};
+pub use lindist3flow::{
+    AffineScalarCoefficients, ConnectionPowerMap, CrossVoltageCoefficients, LinDist3FlowLineData,
+    LinDist3FlowNetworkData, LinDist3FlowNodeData, LineDropCoefficients,
+    build_lindist3flow_network_data, connection_power_map, cross_voltage_coefficients,
+    evaluate_affine, evaluate_cross_voltage, line_drop_coefficients, winding_voltage_coefficients,
+};
+pub use lindist3flow_conic::{
+    LinDist3FlowCone, LinDist3FlowConeOrigin, LinDist3FlowConicProblem,
+    LinDist3FlowDecisionVariable, LinDist3FlowEquality, LinDist3FlowEqualityOrigin,
+    LinDist3FlowLinearExpression, LinDist3FlowLinearTerm, LinDist3FlowVariableData,
+    build_lindist3flow_conic_problem, lindist3flow_values_from_primal,
+};
+pub use lindist3flow_devices::{
+    LinDist3FlowAffineExpression, LinDist3FlowBalanceEquation, LinDist3FlowBalanceRow,
+    LinDist3FlowBalanceTerm, LinDist3FlowComplexAffinePower, LinDist3FlowDeviceData,
+    LinDist3FlowDispatchChannel, LinDist3FlowGeneratorData, LinDist3FlowLoadData,
+    LinDist3FlowPreparation, LinDist3FlowShuntData, LinDist3FlowSourceData, LinDist3FlowVariable,
+    LinDist3FlowVoltageTerm, build_lindist3flow_device_data, build_lindist3flow_preparation,
+    lindist3flow_connection_incidence,
+};
+pub use lindist3flow_standard::{
+    LinDist3FlowScaling, LinDist3FlowStandardCone, LinDist3FlowStandardForm,
+    LinDist3FlowStandardFormOptions, LinDist3FlowStandardRowOrigin,
+    build_lindist3flow_standard_form, build_lindist3flow_standard_form_with_options,
+    lindist3flow_values_from_standard_primal,
 };
 pub use opf::{AnalysisBranchSource, PiecewiseLinearCost, PreparedObjective};
 

@@ -2,6 +2,16 @@
 
 ## 0.11.1
 
+- Add LinDist3Flow OPF instances and solutions over `MulticonductorNetwork`,
+  explicit neutral Kron projection, and sparse affine/conic compilation with
+  SI primal decoding. Typed C, Python, and Julia access includes physical
+  axes, reference voltages, and solution columns. Finite current limits on
+  eliminated neutrals are rejected because the reduced model cannot retain them.
+- Keep PowerIO IR generation 2 and existing record layouts. LinDist3Flow adds
+  two structural types that require a reader implementing them. The published
+  0.11.0 schema stays byte-exact; a separate 0.11.1 catalog snapshot lists the
+  additional types without changing the document generation.
+
 - Read bus latitude and longitude from validated PowerWorld PWB records, and
   retain bus positions and branch paths from supported PWD drawings. Empty
   drawings report an error; drawing coordinates remain distinct from geography.

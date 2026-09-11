@@ -151,11 +151,16 @@ echo "=== PyPSA CSV converter ==="
 echo "=== OpenDSS distribution solve oracle ==="
 "$PY" evals/validation/validate_opendss.py || true
 
-# 4e. External schema validation of emitted BMOPF JSON.
+# 4e. OpenDSS independently regenerates the exact nonlinear voltage used to
+#     bound the LinDist3Flow approximation error in the Rust regression.
+echo "=== LinDist3Flow vs OpenDSS voltage oracle ==="
+"$PY" evals/validation/validate_lindist3flow_opendss.py || true
+
+# 4f. External schema validation of emitted BMOPF JSON.
 echo "=== BMOPF schema validation ==="
 "$PY" evals/validation/validate_bmopf_schema.py || true
 
-# 4f. powerio's native multiconductor admittance vs an assembly of OpenDSS's
+# 4g. powerio's native multiconductor admittance vs an assembly of OpenDSS's
 #     own per element YPrim. Builds its own small helper crate first: the
 #     admittance builder has no Python binding, so the helper is the only way
 #     an external oracle can reach it.
@@ -168,7 +173,7 @@ export MCCHECK="$PWD/evals/validation/mccheck/target/release/powerio-eval-mcchec
 echo "=== multiconductor admittance vs OpenDSS YPrim ==="
 "$PY" evals/validation/validate_opendss_admittance.py || true
 
-# 4g. powerio's DC surface vs independent MATPOWER makeBdc/makePTDF oracles.
+# 4h. powerio's DC surface vs independent MATPOWER makeBdc/makePTDF oracles.
 dc_args=("${DCCASES[@]}")
 if [ -f "$DC_SHIFT_CASE" ]; then
     dc_args+=("$DC_SHIFT_CASE")
@@ -179,7 +184,7 @@ fi
 echo "=== DC MATPOWER oracle (makeBdc, DC operations, one PTDF check) ==="
 "$PY" evals/validation/validate_dc_matpower.py "${dc_args[@]}" || true
 
-# 4h. PTDF/LODF across all three susceptance formulas, with bridge handling.
+# 4i. PTDF/LODF across all three susceptance formulas, with bridge handling.
 #     Small cases only: PTDF and LODF are dense here.
 echo "=== DC MATPOWER oracle (PTDF/LODF, three formulas) ==="
 "$PY" evals/validation/validate_dc_ptdf_lodf.py "${DCCASES[@]}" || true
@@ -210,10 +215,12 @@ mark_fails=$(awk -F'\t' '$3 == "FAIL" { c++ } END { print c + 0 }' "$PIO_RESULTS
 # + 1 DC makeBdc case per dc_args entry + 1 DC PTDF/LODF case per DCCASES entry
 # + 1 matrix.
 opendss_expected=$("$PY" evals/validation/validate_opendss.py --count)
+lindist3flow_expected=$("$PY" evals/validation/validate_lindist3flow_opendss.py --count)
 bmopf_schema_expected=$("$PY" evals/validation/validate_bmopf_schema.py --count)
 mc_yprim_expected=$("$PY" evals/validation/validate_opendss_admittance.py --count)
 expected=$((${#MCASES[@]} * 7 + ${#RAWCASES[@]} + ${#EGCASES[@]} + opendss_expected \
-    + bmopf_schema_expected + mc_yprim_expected + 1 + ${#dc_args[@]} + ${#DCCASES[@]} + 1))
+    + lindist3flow_expected + bmopf_schema_expected + mc_yprim_expected + 1 \
+    + ${#dc_args[@]} + ${#DCCASES[@]} + 1))
 got=$(wc -l <"$PIO_RESULTS_TSV")
 short=0
 [ "$got" -lt "$expected" ] && short=1

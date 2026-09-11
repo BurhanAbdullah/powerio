@@ -1,0 +1,13 @@
+{
+  "engine": "OpenDSSDirect.py",
+  "engine_version": "0.9.4",
+  "case": "lindist3flow_oracle.dss",
+  "source_voltage_magnitude_v": 229.9999948925501,
+  "load_voltage_re_v": 220.17824402371582,
+  "load_voltage_im_v": -2.5565446601069097,
+  "load_voltage_magnitude_v": 220.19308586321702,
+  "line_sending_active_power_w": 10420.418729008848,
+  "line_sending_reactive_power_var": 2210.2093645047103,
+  "load_active_power_w": 9999.999999999554,
+  "load_reactive_power_var": 1999.9999999997888
+}

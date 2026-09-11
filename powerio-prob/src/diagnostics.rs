@@ -44,6 +44,27 @@ pub mod codes {
         BUILD_INSTANCE_SHAPE_MISMATCH = "BUILD.INSTANCE.SHAPE_MISMATCH", Error,
             "a calculation input disagrees with the network's element tables",
             category = Data;
+        BUILD_LINDIST3FLOW_EXPLICIT_NEUTRAL = "BUILD.LINDIST3FLOW.EXPLICIT_NEUTRAL", Error,
+            "LinDist3Flow requires a neutral-reduced conductor model", category = Data;
+        BUILD_LINDIST3FLOW_UNSUPPORTED_COMPONENT =
+            "BUILD.LINDIST3FLOW.UNSUPPORTED_COMPONENT", Error,
+            "a network component is outside the implemented LinDist3Flow slice",
+            category = Data;
+        BUILD_LINDIST3FLOW_TOPOLOGY_INVALID = "BUILD.LINDIST3FLOW.TOPOLOGY_INVALID", Error,
+            "the conductor-resolved network is not a source-rooted forest", category = Data;
+        BUILD_LINDIST3FLOW_REFERENCE_INVALID = "BUILD.LINDIST3FLOW.REFERENCE_INVALID", Error,
+            "the LinDist3Flow coefficient reference is missing or invalid", category = Data;
+        BUILD_LINDIST3FLOW_POLICY_UNAVAILABLE = "BUILD.LINDIST3FLOW.POLICY_UNAVAILABLE", Error,
+            "the requested LinDist3Flow projection policy is not implemented", category = Data;
+        BUILD_LINDIST3FLOW_OBJECTIVE_UNSUPPORTED =
+            "BUILD.LINDIST3FLOW.OBJECTIVE_UNSUPPORTED", Error,
+            "the LinDist3Flow objective is outside the implemented formulation",
+            category = Data;
+        BUILD_LINDIST3FLOW_COST_MISSING = "BUILD.LINDIST3FLOW.COST_MISSING", Warning,
+            "a dispatched resource has no active-power cost and contributes zero to the objective";
+        BUILD_LINDIST3FLOW_DEVICE_INVALID = "BUILD.LINDIST3FLOW.DEVICE_INVALID", Error,
+            "a LinDist3Flow device has inconsistent connection, channel, bound, or rating data",
+            category = Data;
         BUILD_OPERATOR_ZERO_IMPEDANCE = "BUILD.OPERATOR.ZERO_IMPEDANCE", Error,
             "a zero impedance branch has no finite DC operator row", category = Data;
         BUILD_OPERATOR_NOT_A_NUMBER = "BUILD.OPERATOR.NOT_A_NUMBER", Error,

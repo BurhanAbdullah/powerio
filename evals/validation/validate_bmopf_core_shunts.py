@@ -93,7 +93,7 @@ def run(powerio):
             if error > tolerance:
                 raise AssertionError(f"{name}: admittance error {error} exceeds {tolerance}")
             results.append({"case": name, "source_sha256": hashlib.sha256(source.encode()).hexdigest(), "matrix_dimension": len(nodes), "max_absolute_error_siemens": error, "absolute_tolerance_siemens": tolerance})
-    return {"comparison": "OpenDSS Yprim(no-load on) minus Yprim(no-load off) versus BMOPF explicit coil stamps", "conversion": "OpenDSS -> PowerIO generation-2 IR -> explicit BMOPF proposal", "opendss": dss.Basic.Version(), "cases": results}
+    return {"comparison": "OpenDSS Yprim(no-load on) minus Yprim(no-load off) versus BMOPF explicit coil stamps", "conversion": "OpenDSS -> PowerIO IR -> explicit BMOPF proposal", "opendss": dss.Basic.Version(), "cases": results}
 
 
 if __name__ == "__main__":

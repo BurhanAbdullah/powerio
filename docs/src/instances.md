@@ -2,8 +2,9 @@
 
 An instance is the complete input for one named calculation, and a solution
 is the result of one; the solution shares the instance it solves. PowerIO has
-seven instance types, from DC power flow through multiconductor AC OPF to AC
-security constrained unit commitment, and eight solution types, because
+eight instance types, from DC power flow through LinDist3Flow and
+multiconductor AC OPF to AC security constrained unit commitment, and nine
+solution types, because
 `SocwrOpfSolution` is an SOCWR relaxation of an `AcOpfInstance` and is not
 labeled an AC OPF solution.
 
@@ -14,6 +15,7 @@ DcOpfInstance      DcOpfSolution
 AcOpfInstance      AcOpfSolution
 McAcPfInstance     McAcPfSolution
 McAcOpfInstance    McAcOpfSolution
+LinDist3FlowOpfInstance  LinDist3FlowOpfSolution
 AcScucInstance     AcScucSolution
 ```
 
@@ -67,7 +69,9 @@ serialize(scuc, "scenario_002.pio.json")
 Solvers consume instances; PowerIO never solves. The instance is the
 mathematical input only. The choice of equations, B-theta or PTDF for DC OPF
 and polar or SOC for AC OPF, belongs to the solver and does not create
-another instance type.
+another instance type. LinDist3Flow is an explicit exception to that general
+AC choice because its fixed-reference linear approximation, radial topology,
+and applicability decisions define the mathematical problem.
 
 A solution lists its values by stable element identifier, along with the
 termination claim and residuals that PowerIO computes itself rather than

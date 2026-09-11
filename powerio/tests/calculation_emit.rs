@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use powerio::{
-    AcOpfInstance, AcOpfSolution, DcOpfInstance, PioModule, PioValue, Source, Termination, emit,
+    AcOpfInstance, AcOpfSolution, DcOpfInstance, LinDist3FlowBuildOptions, LinDist3FlowOpfInstance,
+    LinDist3FlowOpfSolution, LinDist3FlowOpfValues, PioModule, PioValue, Source, Termination, emit,
 };
 use powerio_core::{Destination, EmittedOutput};
 
@@ -24,6 +25,23 @@ fn memory_bytes(result: &powerio_core::EmitResult) -> Vec<u8> {
     };
     assert_eq!(artifacts.len(), 1);
     artifacts[0].bytes().to_vec()
+}
+
+fn multiconductor_network() -> powerio::MulticonductorNetwork {
+    let mut network = powerio::MulticonductorNetwork::named("lindist3flow-emit");
+    network
+        .buses_mut()
+        .push(powerio::dist::DistBus::new("source", vec!["a".to_owned()]));
+    network
+        .sources_mut()
+        .push(powerio::dist::VoltageSource::new(
+            "grid",
+            "source",
+            vec!["a".to_owned()],
+            vec![230.0],
+            vec![0.0],
+        ));
+    network
 }
 
 #[test]
@@ -143,4 +161,51 @@ fn fresh_goc3_problem_emission_is_not_claimed() {
     .unwrap_err();
     assert!(error.to_string().contains("powerio.AcScucInstance"));
     assert!(error.to_string().contains("goc3-json"));
+}
+
+#[test]
+fn lindist3flow_instance_and_solution_emit_their_network_with_diagnostics() {
+    let instance = Arc::new(
+        LinDist3FlowOpfInstance::from_network(
+            multiconductor_network(),
+            LinDist3FlowBuildOptions::default(),
+        )
+        .unwrap(),
+    );
+    let result = emit(
+        &PioModule::new(instance.as_ref().clone()),
+        "bmopf-json@0.2.0",
+        Destination::memory("instance.json").unwrap(),
+    )
+    .unwrap();
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code() == "EMIT.CALCULATION.DATA_OMITTED")
+    );
+    assert!(
+        std::str::from_utf8(&memory_bytes(&result))
+            .unwrap()
+            .contains("lindist3flow-emit")
+    );
+
+    let mut values = LinDist3FlowOpfValues::default();
+    values.terminal_voltage_magnitude_squared = vec![52_900.0];
+    values.source_active_power = vec![0.0];
+    values.source_reactive_power = vec![0.0];
+    let solution =
+        LinDist3FlowOpfSolution::new(instance, Termination::Converged, values, 0.0).unwrap();
+    let result = emit(
+        &PioModule::new(solution),
+        "bmopf-json@0.2.0",
+        Destination::memory("solution.json").unwrap(),
+    )
+    .unwrap();
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code() == "EMIT.SOLUTION.DATA_OMITTED")
+    );
 }

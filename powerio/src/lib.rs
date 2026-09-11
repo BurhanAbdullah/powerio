@@ -79,29 +79,29 @@ pub const IR_SCHEMA_NAME: &str = "pio-ir";
 /// The PowerIO IR generation this build writes.
 ///
 /// The generation is an integer that advances only when the serialized
-/// representation changes. It is independent of the PowerIO release, which
-/// the `producer` record of a document names, and of the C ABI version.
+/// representation changes incompatibly for an existing value type. It is
+/// independent of the PowerIO release, which the `producer` record of a
+/// document names, and of the C ABI version.
 ///
 /// | Generation | First release | Change |
 /// |---|---|---|
 /// | 1 | v0.10.0 | the `PioModule` serialization, under the identity `powerio.module` |
 /// | 2 | v0.11.0 | the identity `pio-ir`; the producer release recorded apart from the generation; retained source bytes left out |
 ///
-/// A bump within one minor release line ships with a reader for the
-/// generation it replaces, so every release of the line reads every
-/// generation the line wrote. [`IR_MIN_VERSION`] is the oldest generation
-/// this build reads.
+/// Additive structural types keep the generation unchanged. A reader accepts
+/// the types it implements; an unknown type requires a newer reader.
+/// [`IR_MIN_VERSION`] is the oldest generation this build reads.
 pub const IR_VERSION: u64 = 2;
 
 /// The oldest PowerIO IR generation this build reads.
 ///
-/// The floor rises only at a minor release boundary. In 0.11 it equals
-/// [`IR_VERSION`].
+/// The floor rises only at a minor release boundary. PowerIO 0.11 writes and
+/// reads generation 2.
 pub const IR_MIN_VERSION: u64 = 2;
 
-/// The `$id` of the JSON Schema for the documents this build writes, which is
-/// also the address the schema is served from.
-pub const IR_SCHEMA_ID: &str = "https://powerio.dev/schema/pio-ir/2/schema.json";
+/// The `$id` of the schema snapshot describing this build's structural types.
+/// The release in the path identifies the catalog, not a new IR generation.
+pub const IR_SCHEMA_ID: &str = "https://powerio.dev/schema/pio-ir/2/0.11.1/schema.json";
 
 use powerio_tx::format;
 pub use powerio_tx::{
@@ -145,20 +145,24 @@ pub type Result<T> = std::result::Result<T, powerio_core::Error>;
 pub use powerio_dist as dist;
 pub use powerio_dist::{
     BmopfEmitOptions, BmopfSchemaVersion, ConductorMatrix, DistGeoMeta, DistGraphEdgeKind,
-    MulticonductorNetwork,
+    MulticonductorNetwork, NeutralKronOptions, NeutralKronReport,
 };
 
 pub use powerio_prob::solution::{SocwrOpfDuals, SocwrOpfSolution, SocwrOpfValues};
-/// The balanced calculation types used by solver consumers. The full problem
+/// The calculation types used by solver consumers. The full problem
 /// vocabulary lives in [`powerio_prob`]; these types sit at the facade root so
 /// a consumer does not need a second PowerIO dependency to name its boundary.
 pub use powerio_prob::{
     AcBusSpecification, AcOpfInstance, AcOpfSolution, AcPfInstance, AcPfSolution, AcScucInstance,
     AcScucSolution, ActivePower, ActivePowerUnit, ApparentPower, ApparentPowerUnit,
     BalancedCalculationInstance, CalculationUpdate, DcBusSpecification, DcOpfInstance,
-    DcOpfSolution, DcPfInstance, DcPfSolution, LoadAllocation, McAcOpfInstance, McAcOpfSolution,
-    McAcPfInstance, McAcPfSolution, NetworkUpdate, OperatingPointUpdate, ReactivePower,
-    ReactivePowerUnit, Termination, ThreeWindingTransformerTerminalActivePower,
+    DcOpfSolution, DcPfInstance, DcPfSolution, LinDist3FlowApplicability,
+    LinDist3FlowApplicabilityStatus, LinDist3FlowBuildOptions, LinDist3FlowNode,
+    LinDist3FlowOpfInstance, LinDist3FlowOpfSolution, LinDist3FlowOpfValues,
+    LinDist3FlowReferencePolicy, LinDist3FlowReferenceProvenance, LinDist3FlowReferenceState,
+    LinDist3FlowTopology, LinDist3FlowUnsupported, LoadAllocation, McAcOpfInstance,
+    McAcOpfSolution, McAcPfInstance, McAcPfSolution, NetworkUpdate, OperatingPointUpdate,
+    ReactivePower, ReactivePowerUnit, Termination, ThreeWindingTransformerTerminalActivePower,
     ThreeWindingTransformerTerminalPower, UpdateChange, UpdateReport, UpdatedField,
     apply_bus_load_active_power, apply_updates,
 };
@@ -191,8 +195,10 @@ pub use ir::generate_ir_schema;
 pub use ir::{deserialize, serialize, serialize_diagnostics};
 pub mod transform;
 pub use transform::{
-    apply_geo_layer, network_with_operating_point, to_ac_opf_instance, to_ac_pf_instance,
-    to_dc_opf_instance, to_dc_pf_instance, to_mc_ac_opf_instance, to_mc_ac_pf_instance,
+    apply_geo_layer, network_with_operating_point, neutral_kron, neutral_kron_with_options,
+    to_ac_opf_instance, to_ac_pf_instance, to_dc_opf_instance, to_dc_pf_instance,
+    to_lindist3flow_opf_instance, to_lindist3flow_opf_instance_with_options, to_mc_ac_opf_instance,
+    to_mc_ac_pf_instance,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

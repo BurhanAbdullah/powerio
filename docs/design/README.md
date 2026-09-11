@@ -19,3 +19,9 @@ The record was written against the 0.10 beta. Where it names a beta operation
 or type that 0.11 removed, the migration guide lists the replacement. The
 compiling prototype crates and the issue audit that accompanied the record were
 working evidence for that period and are kept only in the repository history.
+
+Later focused design reviews live beside that 1.0 record:
+
+- [Multiconductor LinDist3Flow](lindist3flow-multiconductor.md) records the
+  pre-merge acceptance review, supported physical slice, crate boundaries and
+  external OpenDSS validation for issue #151.

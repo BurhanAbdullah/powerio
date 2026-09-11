@@ -19,6 +19,7 @@ use crate::{
 use powerio_core::{Diagnostic, DiagnosticSeverity, HistoryEntry, HistoryId, HistoryKind};
 use powerio_dist::{
     ConductorMatrix, DistBus, DistLine, DistLineCode, DistLoadVoltageModel, MulticonductorNetwork,
+    NeutralKronOptions, NeutralKronReport,
 };
 
 use crate::codes;
@@ -475,6 +476,93 @@ pub fn apply_geo_layer(
     Ok((derived, report))
 }
 
+/// Eliminate explicitly grounded neutral conductors with the default Kron
+/// projection options.
+///
+/// The source module is left unchanged. The returned module retains its
+/// records, clears locators into the pre-projection value, appends the
+/// projection findings, and records one same-family transform history entry.
+pub fn neutral_kron(
+    module: &powerio_core::PioModule<crate::PioValue>,
+) -> Result<(powerio_core::PioModule<crate::PioValue>, NeutralKronReport), powerio_core::Error> {
+    neutral_kron_with_options(module, &NeutralKronOptions::default())
+}
+
+/// Eliminate explicitly grounded neutral conductors with explicit projection
+/// options.
+///
+/// The returned report keeps its input-network targets. Copies appended to the
+/// output module have those targets cleared because terminal arrays changed.
+///
+/// # Errors
+/// The module does not contain a multiconductor network, the neutral
+/// projection cannot preserve its semantics, or the derived module cannot
+/// accept the new history and diagnostic records.
+pub fn neutral_kron_with_options(
+    module: &powerio_core::PioModule<crate::PioValue>,
+    options: &NeutralKronOptions,
+) -> Result<(powerio_core::PioModule<crate::PioValue>, NeutralKronReport), powerio_core::Error> {
+    let crate::PioValue::MulticonductorNetwork(network) = module.value() else {
+        return Err(powerio_core::Error::new(
+            &codes::REQUEST_MODULE_WRONG_MODEL_KIND,
+            format!(
+                "neutral_kron requires powerio.MulticonductorNetwork; the module contains {}",
+                module.value().type_name()
+            ),
+        ));
+    };
+    let reduction = powerio_dist::neutral_kron_reduce(network, options).map_err(|cause| {
+        powerio_core::Error::new(cause.code(), cause.to_string()).with_cause(cause)
+    })?;
+    let (network, report) = reduction.into_parts();
+    let neutral_terminals = options
+        .neutral_terminals
+        .iter()
+        .map(|(bus, terminal)| (bus.clone(), serde_json::Value::String(terminal.clone())))
+        .collect();
+    let parameters = BTreeMap::from([
+        (
+            "allow_forced_ideal_ground".to_owned(),
+            serde_json::Value::Bool(options.allow_forced_ideal_ground),
+        ),
+        (
+            "neutral_terminals".to_owned(),
+            serde_json::Value::Object(neutral_terminals),
+        ),
+    ]);
+    let history = HistoryEntry::new(
+        unused_history_id(module, "neutral_kron"),
+        HistoryKind::Transform,
+        "neutral_kron",
+    )?
+    .with_input_type("powerio.MulticonductorNetwork")?
+    .with_output_type("powerio.MulticonductorNetwork")?
+    .with_parameters(parameters)?;
+    let producer = powerio_core::Producer::new("powerio", crate::VERSION)?;
+    let mut derived = module.clone().try_derive_value(
+        producer,
+        history,
+        move |value| match value {
+            crate::PioValue::MulticonductorNetwork(_) => {
+                Ok(crate::PioValue::MulticonductorNetwork(network))
+            }
+            value => Err(powerio_core::Error::new(
+                &codes::REQUEST_MODULE_WRONG_MODEL_KIND,
+                format!(
+                    "neutral_kron requires powerio.MulticonductorNetwork; the module contains {}",
+                    value.type_name()
+                ),
+            )),
+        },
+    )?;
+    for diagnostic in &report.diagnostics {
+        let mut diagnostic = diagnostic.clone();
+        diagnostic.clear_target();
+        derived.add_diagnostic(diagnostic)?;
+    }
+    Ok((derived, report))
+}
+
 /// The balanced network an operating point states: the point's network with
 /// the point's bus voltages, generator dispatch and setpoints, load powers,
 /// service flags, taps, phase shifts, and switch positions applied. The
@@ -600,6 +688,75 @@ pub fn to_mc_ac_opf_instance(
         "powerio.McAcOpfInstance",
         powerio_prob::McAcOpfInstance::from_network,
     )
+}
+
+/// Construct a LinDist3Flow optimal power flow calculation from a
+/// multiconductor network module using the default formulation options.
+///
+/// An already typed LinDist3Flow instance is extracted without reconstruction
+/// or another history entry.
+pub fn to_lindist3flow_opf_instance(
+    module: &powerio_core::PioModule<crate::PioValue>,
+) -> Result<powerio_core::PioModule<powerio_prob::LinDist3FlowOpfInstance>, powerio_core::Error> {
+    to_lindist3flow_opf_instance_with_options(
+        module,
+        powerio_prob::LinDist3FlowBuildOptions::default(),
+    )
+}
+
+/// Construct a LinDist3Flow optimal power flow calculation with explicit
+/// formulation options.
+///
+/// The options are recorded on the transform history entry. An already typed
+/// LinDist3Flow instance is extracted as-is; its own stored options remain
+/// authoritative.
+pub fn to_lindist3flow_opf_instance_with_options(
+    module: &powerio_core::PioModule<crate::PioValue>,
+    options: powerio_prob::LinDist3FlowBuildOptions,
+) -> Result<powerio_core::PioModule<powerio_prob::LinDist3FlowOpfInstance>, powerio_core::Error> {
+    if matches!(module.value(), crate::PioValue::LinDist3FlowOpfInstance(_)) {
+        return Ok(module.clone().map_value(|value| match value {
+            crate::PioValue::LinDist3FlowOpfInstance(instance) => instance,
+            _ => unreachable!("the value type was checked before extraction"),
+        }));
+    }
+    if !matches!(module.value(), crate::PioValue::MulticonductorNetwork(_)) {
+        return Err(powerio_core::Error::new(
+            &codes::REQUEST_MODULE_WRONG_MODEL_KIND,
+            format!(
+                "to_lindist3flow_opf_instance requires powerio.MulticonductorNetwork; the module contains {}",
+                module.value().type_name()
+            ),
+        ));
+    }
+    let options_value = serde_json::to_value(options).map_err(|cause| {
+        powerio_core::Error::new(
+            &codes::TRANSFORM_LINDIST3FLOW_OPTIONS_SERIALIZE_FAILED,
+            "could not record LinDist3Flow build options in transform history",
+        )
+        .with_cause(cause)
+    })?;
+    let serde_json::Value::Object(parameters) = options_value else {
+        return Err(powerio_core::Error::new(
+            &codes::TRANSFORM_LINDIST3FLOW_OPTIONS_SERIALIZE_FAILED,
+            "LinDist3Flow build options did not serialize as an object",
+        ));
+    };
+    let history = HistoryEntry::new(
+        unused_history_id(module, "to_lindist3flow_opf_instance"),
+        HistoryKind::Transform,
+        "to_lindist3flow_opf_instance",
+    )?
+    .with_input_type("powerio.MulticonductorNetwork")?
+    .with_output_type("powerio.LinDist3FlowOpfInstance")?
+    .with_parameters(parameters.into_iter().collect())?;
+    let producer = powerio_core::Producer::new("powerio", crate::VERSION)?;
+    module.clone().try_derive_value(producer, history, |value| {
+        let crate::PioValue::MulticonductorNetwork(network) = value else {
+            unreachable!("the value type was checked before derivation")
+        };
+        powerio_prob::LinDist3FlowOpfInstance::from_network(network, options)
+    })
 }
 
 /// Cap a history note list at the record limit, replacing the overflow with

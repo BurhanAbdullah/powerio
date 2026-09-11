@@ -1,0 +1,17 @@
+! One-phase radial constant-power feeder used by the LinDist3Flow/OpenDSS oracle.
+! The line impedance equals the phase-neutral Schur complement in the matching
+! explicit-neutral BMOPF regression: 0.196 + j0.098 ohm.
+Clear
+Set DefaultBaseFrequency=60
+
+New Circuit.lindist3flow_oracle basekv=0.230 pu=1 phases=1 bus1=source.1.0 model=ideal
+
+New Line.l1 bus1=source.1 bus2=loadbus.1 phases=1 length=1 units=none r1=0.196 x1=0.098 c1=0
+
+New Load.ld1 bus1=loadbus.1.0 phases=1 conn=wye kv=0.230 kw=10 kvar=2 model=1 vminpu=0 vmaxpu=2
+
+Set VoltageBases=[0.230]
+CalcVoltageBases
+Set Tolerance=1e-10
+Set MaxIterations=100
+Solve

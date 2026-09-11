@@ -3,7 +3,7 @@
 This page lists every structural value type in the PowerIO IR, field by
 field: each field's type, unit, and sign convention, the invariant the
 deserializer or the constructors enforce, and what a reader uses when the
-field is absent. The generated schema at `docs/schema/pio-ir/2/schema.json`
+field is absent. The generated schema at `docs/schema/pio-ir/2/0.11.1/schema.json`
 is the machine form of the same definitions. To keep the two from drifting
 apart, `powerio/tests/ir_reference.rs` reads this page and checks in both
 directions that each table lists the same fields the schema defines for its
@@ -70,6 +70,7 @@ schema definition beside it.
 | `powerio.AcOpfInstance` | `AcOpfInstance` |
 | `powerio.McAcPfInstance` | `McAcPfInstance` |
 | `powerio.McAcOpfInstance` | `McAcOpfInstance` |
+| `powerio.LinDist3FlowOpfInstance` | `LinDist3FlowOpfInstance` |
 | `powerio.AcScucInstance` | `AcScucInstance` |
 | `powerio.DcPfSolution` | `DcPfSolution` |
 | `powerio.AcPfSolution` | `AcPfSolution` |
@@ -78,6 +79,7 @@ schema definition beside it.
 | `powerio.SocwrOpfSolution` | `SocwrOpfSolution` |
 | `powerio.McAcPfSolution` | `McAcPfSolution` |
 | `powerio.McAcOpfSolution` | `McAcOpfSolution` |
+| `powerio.LinDist3FlowOpfSolution` | `LinDist3FlowOpfSolution` |
 | `powerio.AcScucSolution` | `AcScucSolution` |
 
 ## powerio.BalancedNetwork
@@ -1211,6 +1213,23 @@ Schema definition: `McAcOpfInstance`.
 | `constraints` | `MulticonductorActiveConstraints` | | | | required |
 | `initial_point` | `StoredOperatingPointAssignment` or null | | | | null |
 
+### powerio.LinDist3FlowOpfInstance
+
+Schema definition: `LinDist3FlowOpfInstance`.
+
+| field | type | unit | sign | invariant | if absent |
+|---|---|---|---|---|---|
+| `base` | `McAcOpfInstance` | | | complete multiconductor AC OPF instance | required |
+| `options` | `LinDist3FlowBuildOptions` | | | fixed reference, unsupported-data, and neutral-provenance policies used to construct the formulation | required |
+
+Schema definition: `LinDist3FlowBuildOptions`.
+
+| field | type | unit | sign | invariant | if absent |
+|---|---|---|---|---|---|
+| `reference_policy` | `auto`, `explicit`, or `source_propagated` | | | selects the fixed coefficient phasors | required |
+| `unsupported` | `reject`, `lower`, `approximate`, or `permissive` | | | only `reject` is implemented; other values fail construction | required |
+| `require_neutral_provenance` | bool | | | requires a recorded neutral-Kron projection when true | required |
+
 Schema definition: `MulticonductorActiveConstraints`.
 
 | field | type | unit | sign | invariant | if absent |
@@ -1646,6 +1665,34 @@ Schema definition: `McAcOpfSolution`.
 | `source_active_injection` | array of float | watts | positive into the network | one per source terminal | required |
 | `generator_active_power` | array of float | watts | positive is generation | generator table order, each generator's `terminal_map` order | required |
 | `objective` | float | objective units | | | required |
+
+### powerio.LinDist3FlowOpfSolution
+
+The value arrays follow the topology and device channel orders fixed by the
+embedded instance, independently of a solver's column ordering.
+
+Schema definition: `LinDist3FlowOpfSolution`.
+
+| field | type | unit | sign | invariant | if absent |
+|---|---|---|---|---|---|
+| `instance` | `LinDist3FlowOpfInstance` | | | | required |
+| `termination` | `Termination` | | | | required |
+| `residuals` | `Residuals` | | | | required |
+| `producer` | string or null | | | | null |
+| `values` | `LinDist3FlowOpfValues` | | | physical primal values | required |
+| `objective` | float | objective units | | | required |
+
+Schema definition: `LinDist3FlowOpfValues`.
+
+| field | type | unit | sign | invariant | if absent |
+|---|---|---|---|---|---|
+| `terminal_voltage_magnitude_squared` | array of float | volts squared | nonnegative | topology node order | required |
+| `line_active_power` | array of float | watts | positive from parent to child | topology conductor order | required |
+| `line_reactive_power` | array of float | vars | positive from parent to child | topology conductor order | required |
+| `generator_active_power` | array of float | watts | positive is generation | generator table and channel order | required |
+| `generator_reactive_power` | array of float | vars | positive is generation | generator table and channel order | required |
+| `source_active_power` | array of float | watts | positive into the network | source table and terminal-map order | required |
+| `source_reactive_power` | array of float | vars | positive into the network | source table and terminal-map order | required |
 
 ### powerio.AcScucSolution
 

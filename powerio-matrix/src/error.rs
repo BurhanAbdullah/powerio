@@ -48,6 +48,9 @@ pub enum Error {
     #[error("unsupported AC power flow bus specification")]
     UnsupportedAcPfSpecification,
 
+    #[error("invalid LinDist3Flow coefficient input: {reason}")]
+    InvalidLinDist3FlowCoefficients { reason: String },
+
     #[error("{family} constraint selection names unknown identity `{identity}`")]
     UnknownConstraintIdentity {
         family: &'static str,
@@ -162,6 +165,9 @@ impl Error {
             }
             Error::UnsupportedOpfObjective { .. } => &codes::BUILD_OPF_OBJECTIVE_UNSUPPORTED,
             Error::UnsupportedAcPfSpecification => &codes::BUILD_AC_PF_SPECIFICATION_UNSUPPORTED,
+            Error::InvalidLinDist3FlowCoefficients { .. } => {
+                &codes::BUILD_LINDIST3FLOW_COEFFICIENT_INVALID
+            }
             Error::UnknownConstraintIdentity { .. } => {
                 &codes::BUILD_OPF_CONSTRAINT_IDENTITY_UNKNOWN
             }
@@ -208,6 +214,7 @@ impl Error {
             | Error::ShapeMismatch { .. }
             | Error::UnsupportedOpfObjective { .. }
             | Error::UnsupportedAcPfSpecification
+            | Error::InvalidLinDist3FlowCoefficients { .. }
             | Error::UnknownConstraintIdentity { .. }
             | Error::DuplicateElementIdentity { .. }
             | Error::SingularNetwork

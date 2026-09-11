@@ -3364,8 +3364,10 @@ impl PyPioModule {
         match value {
             powerio::PioValue::McAcPfInstance(instance) => Ok(instance.network()),
             powerio::PioValue::McAcOpfInstance(instance) => Ok(instance.network()),
+            powerio::PioValue::LinDist3FlowOpfInstance(instance) => Ok(instance.network()),
             powerio::PioValue::McAcPfSolution(solution) => Ok(solution.network()),
             powerio::PioValue::McAcOpfSolution(solution) => Ok(solution.network()),
+            powerio::PioValue::LinDist3FlowOpfSolution(solution) => Ok(solution.network()),
             other => Err(PyTypeError::new_err(format!(
                 "{} does not contain a multiconductor calculation",
                 other.type_name()
@@ -3927,6 +3929,15 @@ impl PyPioModule {
         })
     }
 
+    fn _to_lindist3flow_opf_instance(&self) -> PyResult<Self> {
+        let module = powerio::transform::to_lindist3flow_opf_instance(self.module()?)
+            .map_err(|error| core_error_pyerr(&error))?
+            .map_value(powerio::PioValue::LinDist3FlowOpfInstance);
+        Ok(Self {
+            module: Some(module),
+        })
+    }
+
     /// The balanced network shared by a balanced calculation instance or
     /// solution. `BalancedNetwork::clone` only retains its copy on write
     /// tables; it does not copy them.
@@ -3962,6 +3973,104 @@ impl PyPioModule {
         )?))
     }
 
+    fn _lindist3flow_solution_values(&self, quantity: &str) -> PyResult<Vec<f64>> {
+        let powerio::PioValue::LinDist3FlowOpfSolution(solution) = self.module()?.value() else {
+            return Err(PyTypeError::new_err("expected a LinDist3Flow OPF solution"));
+        };
+        Ok(match quantity {
+            "terminal_voltage_magnitude_squared" => {
+                solution.values().terminal_voltage_magnitude_squared.clone()
+            }
+            "line_active_power" => solution.values().line_active_power.clone(),
+            "line_reactive_power" => solution.values().line_reactive_power.clone(),
+            "generator_active_power" => solution.values().generator_active_power.clone(),
+            "generator_reactive_power" => solution.values().generator_reactive_power.clone(),
+            "source_active_power" => solution.values().source_active_power.clone(),
+            "source_reactive_power" => solution.values().source_reactive_power.clone(),
+            _ => return Err(pyo3::exceptions::PyKeyError::new_err(quantity.to_owned())),
+        })
+    }
+
+    fn _lindist3flow_solution_objective(&self) -> PyResult<f64> {
+        let powerio::PioValue::LinDist3FlowOpfSolution(solution) = self.module()?.value() else {
+            return Err(PyTypeError::new_err("expected a LinDist3Flow OPF solution"));
+        };
+        Ok(solution.objective())
+    }
+
+    fn _lindist3flow_solution_termination(&self) -> PyResult<&'static str> {
+        let powerio::PioValue::LinDist3FlowOpfSolution(solution) = self.module()?.value() else {
+            return Err(PyTypeError::new_err("expected a LinDist3Flow OPF solution"));
+        };
+        Ok(match solution.termination() {
+            powerio_prob::Termination::Converged => "converged",
+            powerio_prob::Termination::IterationLimit => "iteration_limit",
+            powerio_prob::Termination::Infeasible => "infeasible",
+            powerio_prob::Termination::Unbounded => "unbounded",
+            powerio_prob::Termination::Failed => "failed",
+            _ => "not_reported",
+        })
+    }
+
+    fn _lindist3flow_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let instance = match self.module()?.value() {
+            powerio::PioValue::LinDist3FlowOpfInstance(instance) => instance,
+            powerio::PioValue::LinDist3FlowOpfSolution(solution) => solution.instance(),
+            _ => return Err(PyTypeError::new_err("expected a LinDist3Flow calculation")),
+        };
+        let result = PyDict::new(py);
+        result.set_item(
+            "nodes",
+            instance
+                .topology()
+                .nodes
+                .iter()
+                .map(|node| (&node.bus, &node.terminal))
+                .collect::<Vec<_>>(),
+        )?;
+        let conductors = PyList::empty(py);
+        for conductor in &instance.topology().conductors {
+            let entry = PyDict::new(py);
+            entry.set_item("line", &conductor.line)?;
+            entry.set_item("source_line_row", conductor.source_line_row)?;
+            entry.set_item("conductor_position", conductor.conductor_position)?;
+            entry.set_item(
+                "parent",
+                (&conductor.parent.bus, &conductor.parent.terminal),
+            )?;
+            entry.set_item("child", (&conductor.child.bus, &conductor.child.terminal))?;
+            entry.set_item("reversed", conductor.reversed)?;
+            conductors.append(entry)?;
+        }
+        result.set_item("conductors", conductors)?;
+        result.set_item(
+            "roots",
+            instance
+                .topology()
+                .roots
+                .iter()
+                .map(|node| (&node.bus, &node.terminal))
+                .collect::<Vec<_>>(),
+        )?;
+        result.set_item(
+            "reference_voltages",
+            instance
+                .reference()
+                .voltages
+                .iter()
+                .map(|voltage| (voltage.magnitude, voltage.angle))
+                .collect::<Vec<_>>(),
+        )?;
+        result.set_item(
+            "reference_provenance",
+            match instance.reference().provenance {
+                powerio_prob::LinDist3FlowReferenceProvenance::InitialPoint => "initial_point",
+                _ => "source_propagated",
+            },
+        )?;
+        Ok(result)
+    }
+
     /// The exact typed instance solved by a calculation solution.
     fn _calculation_solution_instance(&self) -> PyResult<Self> {
         let value = match &self.module()?.value() {
@@ -3985,6 +4094,9 @@ impl PyPioModule {
             }
             powerio::PioValue::McAcOpfSolution(solution) => {
                 powerio::PioValue::McAcOpfInstance(solution.instance().clone())
+            }
+            powerio::PioValue::LinDist3FlowOpfSolution(solution) => {
+                powerio::PioValue::LinDist3FlowOpfInstance(solution.instance().clone())
             }
             powerio::PioValue::AcScucSolution(solution) => {
                 powerio::PioValue::AcScucInstance(solution.instance().clone())

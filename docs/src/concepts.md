@@ -47,9 +47,9 @@ OperatingPoint<MulticonductorNetwork>
 TimeSeries<T>
 ScenarioSet<T>
 DcPfInstance, AcPfInstance, DcOpfInstance, AcOpfInstance,
-McAcPfInstance, McAcOpfInstance, AcScucInstance
+McAcPfInstance, McAcOpfInstance, LinDist3FlowOpfInstance, AcScucInstance
 DcPfSolution, AcPfSolution, DcOpfSolution, AcOpfSolution, SocwrOpfSolution,
-McAcPfSolution, McAcOpfSolution, AcScucSolution
+McAcPfSolution, McAcOpfSolution, LinDist3FlowOpfSolution, AcScucSolution
 GeoLayer
 ```
 
@@ -165,8 +165,9 @@ fresh writer exists. It describes formats only; values are named by
 
 `serialize` writes a module as PowerIO IR and `deserialize` reads it back
 with its types, diagnostics, sources, history, and extensions intact. The
-document has an integer generation that changes only when the serialized
-representation changes. PowerIO IR is absent from grid exchange format
+document has an integer generation that changes only when an existing serialized
+representation changes incompatibly. Additive structural types keep the same
+generation and require a reader implementing those types. PowerIO IR is absent from grid exchange format
 discovery, so `parse` does not accept it. [PowerIO IR](pio-json-schema.md)
 defines the document and its generation rule.
 

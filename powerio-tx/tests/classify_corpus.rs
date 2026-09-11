@@ -23,6 +23,9 @@ const EXPECTED: &[(&str, &str, Option<&str>)] = &[
     // A BMOPF schema document describes cases; it is not one.
     ("dist/bmopf/bmopf-0.2.0.schema.json", "unknown", None),
     ("dist/bmopf/draft_bmopf_schema.json", "unknown", None),
+    ("dist/micro/lindist3flow-solution.pio.json", "module", None),
+    // Oracle coefficients and solved voltages have no grid exchange marker.
+    ("dist/micro/lindist3flow_oracle.json", "unknown", None),
     (
         "dist/bmopf/example_enwl_n1_f2.json",
         "distribution",
