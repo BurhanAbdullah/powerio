@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.2
+
+- Maintenance updates and regression coverage.
+- Bundle the supported BMOPF schema snapshots, license, and provenance with
+  the Rust, Python, and native-library distributions. Fresh output references
+  PowerIO's archived schema bytes independently of upstream review branches.
+- Preserve the historical v0.1.0 baseline and mark v0.2.0 as a proposal.
+  Supporting a profile does not establish Task Force acceptance.
+
+C ABI 7 and PowerIO IR generation 2 remain unchanged.
+
 ## 0.11.1
 
 PowerIO 0.11.1 adds distribution calculations and improves geographic data,
