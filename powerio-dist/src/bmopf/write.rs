@@ -2996,7 +2996,8 @@ fn proposal_provenance(meta: &mut Map<String, Value>) {
         "schema_commit": super::BMOPF_PROPOSAL_COMMIT,
         "schema_sha256": super::BMOPF_PROPOSAL_SHA256,
         "schema_id": BmopfSchemaVersion::Bmopf020.schema_id(),
-        "schema_retrieval_url": super::BMOPF_PROPOSAL_URL
+        "schema_retrieval_url": BmopfSchemaVersion::Bmopf020.retrieval_url(),
+        "schema_upstream_url": super::BMOPF_PROPOSAL_URL
     });
     let provenance = meta.entry("provenance").or_insert_with(|| json!({}));
     let Some(provenance) = provenance.as_object_mut() else {

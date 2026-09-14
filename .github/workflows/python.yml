@@ -176,6 +176,8 @@ jobs:
       # (test_mcp skips). Quote the extras so the shell doesn't glob `[all,mcp]`.
       - name: Install powerio + test deps
         run: pip install '.[all,mcp]' pytest
+      - name: Check installed schema archive
+        run: python -c 'from importlib.resources import files; import json; p = files("powerio").joinpath("schemas/bmopf/manifest.json"); assert len(json.loads(p.read_text())["schemas"]) == 2'
       - name: Run tests
         run: pytest python/tests -q
       # The core import path: parse/emit import nothing but the
@@ -351,6 +353,9 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: --release --out dist
           manylinux: auto
+      - name: Check packaged schemas
+        shell: bash
+        run: for file in dist/*.whl; do python3 scripts/check-bmopf-archive.py --archive "$file"; done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: wheels-${{ matrix.platform.runner }}-${{ matrix.platform.target }}
@@ -442,6 +447,8 @@ jobs:
         with:
           command: sdist
           args: --out dist
+      - name: Check packaged schemas
+        run: for file in dist/*.tar.gz; do python3 scripts/check-bmopf-archive.py --archive "$file"; done
       - name: Audit licenses and excluded fixtures
         run: python3 scripts/audit-release-archives.py dist/*.tar.gz
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
