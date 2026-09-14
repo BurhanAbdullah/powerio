@@ -126,7 +126,7 @@ neutrals, core shunts or tap decisions that need a different formulation.
 The BMOPF proposal schema is pinned to
 [`664b494`](https://github.com/distribution-system-opt/dsopt-schema/commit/664b494f2ee31ee76f8f78e7852cdb1f1c9a8e7d),
 with SHA-256 `74d6c6de3637d52e42a26c4cb0584f51df70d69f360b236cf5e23afaf7669462`.
-Fresh 0.2.0 output places the immutable retrieval URL in `meta.$schema` and
+Fresh output places a PowerIO archive commit URL in `meta.$schema`. Proposal output
 records the canonical identity, proposal status, digest and revision under
 `meta.provenance.powerio_bmopf`. Existing provenance is preserved; a name
 collision uses a numbered producer entry. Reading the former canonical or
@@ -204,3 +204,11 @@ presentation of the supported distribution results. Parsing, neutral
 projection, electrical coefficients, physical axes, and primal scaling stay
 in PowerIO. New LinDist3Flow types require PowerIO 0.11.1; existing saved
 IR 2 networks require no format migration.
+
+The supported schemas ship in the Rust crate at `schemas/bmopf/`, in the
+Python package at `powerio/schemas/bmopf/`, and in each C/Julia library archive
+at `schemas/bmopf/`. Their manifests record the exact bytes and upstream
+review references. Python can read them with `importlib.resources.files("powerio")`.
+Upstream review changes do not alter an installed release's schema. A new
+schema interpretation requires a reviewed PowerIO release; a PowerIO release
+does not establish Task Force acceptance.

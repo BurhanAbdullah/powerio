@@ -3919,7 +3919,7 @@ fn n_winding_ratings_taps_neutrals_and_limits_survive_serialization() {
 
 #[test]
 fn proposal_provenance_is_pinned_and_preserves_existing_keys() {
-    use powerio_dist::bmopf::{BMOPF_PROPOSAL_COMMIT, BMOPF_PROPOSAL_SHA256, BMOPF_PROPOSAL_URL};
+    use powerio_dist::bmopf::{BMOPF_PROPOSAL_COMMIT, BMOPF_PROPOSAL_SHA256};
     let mut net = parse_bmopf_file(fixture("bmopf/example_ieee13.json")).unwrap();
     net.extras_mut().insert(
         "bmopf_meta".into(),
@@ -3927,7 +3927,10 @@ fn proposal_provenance_is_pinned_and_preserves_existing_keys() {
     );
     let out = emit_bmopf_json(&net);
     let doc: serde_json::Value = serde_json::from_str(&out.text).unwrap();
-    assert_eq!(doc["meta"]["$schema"], BMOPF_PROPOSAL_URL);
+    assert_eq!(
+        doc["meta"]["$schema"],
+        BmopfSchemaVersion::Bmopf020.retrieval_url()
+    );
     let provenance = &doc["meta"]["provenance"];
     assert_eq!(provenance["powerio_bmopf"]["note"], "keep");
     assert_eq!(provenance["powerio_bmopf_1"]["schema_status"], "proposal");

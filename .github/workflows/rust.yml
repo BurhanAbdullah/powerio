@@ -132,6 +132,8 @@ jobs:
       run: cargo package --workspace --exclude powerio-capi --exclude powerio-py --locked --no-verify
     - name: Audit licenses and excluded fixtures
       run: python3 scripts/audit-release-archives.py target/package/*.crate
+    - name: Check packaged BMOPF schemas
+      run: python3 scripts/check-bmopf-archive.py --archive target/package/powerio-dist-*.crate
 
   build:
     runs-on: ubuntu-latest

@@ -33,3 +33,4 @@ tests/data/ieee-cdf/*.txt -whitespace
 
 # Archived schemas retain their exact upstream bytes on every platform.
 powerio-dist/schemas/bmopf/**/*.json -text linguist-vendored
+python/powerio/schemas/bmopf/**/*.json -text linguist-vendored
