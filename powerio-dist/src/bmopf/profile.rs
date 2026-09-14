@@ -39,8 +39,8 @@ pub const BMOPF_PROPOSAL_SHA256: &str =
 /// Immutable retrieval location, distinct from the schema's canonical `$id`.
 pub const BMOPF_PROPOSAL_URL: &str = "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/664b494f2ee31ee76f8f78e7852cdb1f1c9a8e7d/schema/bmopf/0.2.0/bmopf.schema.json";
 
-const ARCHIVE_URL_010: &str = "https://raw.githubusercontent.com/eigenergy/powerio/1982b2bd4eed54e04bbc35a579b1d206e5c973fd/powerio-dist/schemas/bmopf/0.1.0/bmopf.schema.json";
-const ARCHIVE_URL_020: &str = "https://raw.githubusercontent.com/eigenergy/powerio/1982b2bd4eed54e04bbc35a579b1d206e5c973fd/powerio-dist/schemas/bmopf/0.2.0/bmopf.schema.json";
+const ARCHIVE_URL_010: &str = "https://raw.githubusercontent.com/eigenergy/powerio/5234df55cd13ad31455697cffbdc16ca50662667/powerio-dist/schemas/bmopf/0.1.0/bmopf.schema.json";
+const ARCHIVE_URL_020: &str = "https://raw.githubusercontent.com/eigenergy/powerio/5234df55cd13ad31455697cffbdc16ca50662667/powerio-dist/schemas/bmopf/0.2.0/bmopf.schema.json";
 
 impl BmopfSchemaVersion {
     /// The schema version string, as `meta.schema_version` states it.
