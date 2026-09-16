@@ -25,6 +25,11 @@
   lower neutral, switch, line-shunt and capacitor data; approximate supported
   loads and static IBRs; and preserve the source network through IR round trips.
 
+- Add distinct fixed-dispatch LinDist3Flow instance and solution types with a
+  zero objective, monitored rather than enforced line thermal ratings, SI
+  loading reports, and Rust/Python APIs. IR version 2 is kept and the additive
+  catalog `pio-ir/2/0.11.4/schema.json` states the two new structural types.
+
 ## 0.11.3
 
 - Read and write PSS/E contingency description files (`.con`) through

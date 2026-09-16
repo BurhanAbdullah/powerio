@@ -806,6 +806,7 @@ fn multiconductor_calculation_network(
     match value {
         PioValue::McAcPfInstance(instance) => Some(instance.network()),
         PioValue::McAcOpfInstance(instance) => Some(instance.network()),
+        PioValue::LinDist3FlowPfInstance(instance) => Some(instance.network()),
         PioValue::LinDist3FlowOpfInstance(instance) => Some(instance.network()),
         _ => None,
     }
@@ -939,6 +940,9 @@ fn emit_solution(
         PioValue::McAcOpfSolution(solution) => {
             emit_multiconductor_solution_network(module, solution.network(), format, destination)
         }
+        PioValue::LinDist3FlowPfSolution(solution) => {
+            emit_multiconductor_solution_network(module, solution.network(), format, destination)
+        }
         PioValue::LinDist3FlowOpfSolution(solution) => {
             emit_multiconductor_solution_network(module, solution.network(), format, destination)
         }
@@ -982,6 +986,13 @@ fn emit_versioned_bmopf(
                 &format,
             )],
         ),
+        PioValue::LinDist3FlowPfInstance(instance) => (
+            instance.network().clone(),
+            vec![calculation_data_omitted(
+                module.value().type_name(),
+                &format,
+            )],
+        ),
         PioValue::LinDist3FlowOpfInstance(instance) => (
             instance.network().clone(),
             vec![calculation_data_omitted(
@@ -997,6 +1008,10 @@ fn emit_versioned_bmopf(
             vec![solution_data_omitted(module.value().type_name(), &format)],
         ),
         PioValue::McAcOpfSolution(solution) => (
+            solution.instance().network().clone(),
+            vec![solution_data_omitted(module.value().type_name(), &format)],
+        ),
+        PioValue::LinDist3FlowPfSolution(solution) => (
             solution.instance().network().clone(),
             vec![solution_data_omitted(module.value().type_name(), &format)],
         ),
@@ -1087,6 +1102,7 @@ fn emit_dynamic(
         | PioValue::AcOpfInstance(_)
         | PioValue::McAcPfInstance(_)
         | PioValue::McAcOpfInstance(_)
+        | PioValue::LinDist3FlowPfInstance(_)
         | PioValue::LinDist3FlowOpfInstance(_)
         | PioValue::AcScucInstance(_) => emit_network_or_calculation(module, format, destination),
         PioValue::DcPfSolution(_)
@@ -1096,6 +1112,7 @@ fn emit_dynamic(
         | PioValue::SocwrOpfSolution(_)
         | PioValue::McAcPfSolution(_)
         | PioValue::McAcOpfSolution(_)
+        | PioValue::LinDist3FlowPfSolution(_)
         | PioValue::LinDist3FlowOpfSolution(_)
         | PioValue::AcScucSolution(_) => emit_solution(module, format, destination),
         _ => {
