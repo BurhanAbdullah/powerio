@@ -21,6 +21,10 @@
   line's nodal-balance and squared-voltage-drop equations. Meshed instances
   report that angle and loop-consistency equations are intentionally absent.
 
+- Implement the LinDist3Flow preparation-policy ladder with typed provenance:
+  lower neutral, switch, line-shunt and capacitor data; approximate supported
+  loads and static IBRs; and preserve the source network through IR round trips.
+
 ## 0.11.3
 
 - Read and write PSS/E contingency description files (`.con`) through
