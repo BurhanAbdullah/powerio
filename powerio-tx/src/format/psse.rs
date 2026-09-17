@@ -883,20 +883,8 @@ fn write_psse_rev_inner(
     // the star-point voltage, lines 3-5 the per-winding tap/angle/ratings.
     let mut transformer_3w_ids: BTreeMap<(BusId, BusId, BusId), u32> = BTreeMap::new();
     for t in net.transformers_3w() {
-        let buses = (t.windings[0].bus, t.windings[1].bus, t.windings[2].bus);
-        let next_id = transformer_3w_ids.entry(buses).or_default();
-        *next_id += 1;
-        let positional = next_id.to_string();
-        let raw_id = t
-            .extras
-            .get("id")
-            .and_then(Value::as_str)
-            .or_else(|| detailed_source_id(net, "transformer", t.uid.as_deref()))
-            .unwrap_or(positional.as_str());
-        let transformer_id = sanitize_quoted(raw_id, NAME_FORBIDDEN, ' ');
-        if matches!(transformer_id, std::borrow::Cow::Owned(_)) {
-            sanitized_quoted += 1;
-        }
+        let transformer_id =
+            transformer_3w_id(net, t, &mut transformer_3w_ids, &mut sanitized_quoted);
         let raw_name = t.name.as_deref().unwrap_or("");
         let name = sanitize_quoted(raw_name, NAME_FORBIDDEN, ' ');
         if matches!(name, std::borrow::Cow::Owned(_)) {
@@ -1445,7 +1433,7 @@ fn ide(kind: BusType) -> u8 {
 /// devices stay distinct and the PSS/E `(bus, id)` uniqueness rule holds even
 /// when source ids collide before or after sanitation. `used` tracks the ids
 /// already emitted per bus.
-fn quoted_device_id(
+pub(crate) fn quoted_device_id(
     extras: &Extras,
     bus: BusId,
     used: &mut BTreeMap<BusId, BTreeSet<String>>,
@@ -1459,7 +1447,17 @@ fn quoted_device_id(
     )
 }
 
-fn quoted_circuit_id<K: Ord + Clone>(
+/// The id one record states: `preferred`, sanitized for the quoted field, when
+/// no record on `key` states it already, else the lowest positional id still
+/// free there.
+///
+/// PSS/E reads a quoted id by its trimmed text, so the ids already taken are
+/// tracked trimmed. Sanitation replaces an apostrophe with a space, and an id
+/// whose sanitized form trims onto an id already stated on this key takes a
+/// positional id instead: `a'` and `a` on one bus are written `a ` and `1`.
+/// Two records on one key therefore never state one id, and a name that reads
+/// one of them reads exactly one record.
+pub(crate) fn quoted_circuit_id<K: Ord + Clone>(
     preferred: Option<&str>,
     key: K,
     used: &mut BTreeMap<K, BTreeSet<String>>,
@@ -1472,7 +1470,13 @@ fn quoted_circuit_id<K: Ord + Clone>(
         }
         cleaned.into_owned()
     });
-    super::allocate_circuit_id(sanitized.as_deref(), key, used)
+    let allocated = super::allocate_circuit_id(sanitized.as_deref().map(str::trim), key, used);
+    match sanitized {
+        // The preferred id was free: the record states it with the padding
+        // sanitation left behind, which PSS/E reads as the id it trims to.
+        Some(id) if id.trim() == allocated => id,
+        _ => allocated,
+    }
 }
 
 /// Whether an HVDC line states DC-side data the two-terminal record cannot
@@ -1530,7 +1534,35 @@ fn dc_states_beyond_record(d: &Hvdc) -> bool {
         || d.loss1 != 0.0
 }
 
-fn detailed_source_id<'a>(
+/// The circuit id the three winding transformer record states: the element's
+/// own `id` extra, else the `psse_eqid` retained for it, else the position of
+/// this transformer among those on the same ordered bus triple. `used` counts
+/// the records already written per triple. The id is sanitized for the quoted
+/// field, and `sanitized_quoted` counts the ids that sanitation changed.
+pub(crate) fn transformer_3w_id(
+    net: &BalancedNetwork,
+    t: &Transformer3W,
+    used: &mut BTreeMap<(BusId, BusId, BusId), u32>,
+    sanitized_quoted: &mut usize,
+) -> String {
+    let buses = (t.windings[0].bus, t.windings[1].bus, t.windings[2].bus);
+    let next_id = used.entry(buses).or_default();
+    *next_id += 1;
+    let positional = next_id.to_string();
+    let raw_id = t
+        .extras
+        .get("id")
+        .and_then(Value::as_str)
+        .or_else(|| detailed_source_id(net, "transformer", t.uid.as_deref()))
+        .unwrap_or(positional.as_str());
+    let sanitized = sanitize_quoted(raw_id, NAME_FORBIDDEN, ' ');
+    if matches!(sanitized, std::borrow::Cow::Owned(_)) {
+        *sanitized_quoted += 1;
+    }
+    sanitized.into_owned()
+}
+
+pub(crate) fn detailed_source_id<'a>(
     net: &'a BalancedNetwork,
     component_type: &str,
     uid: Option<&str>,
@@ -1538,7 +1570,7 @@ fn detailed_source_id<'a>(
     detailed_source_property(net, component_type, uid, "psse_eqid")
 }
 
-fn detailed_source_property<'a>(
+pub(crate) fn detailed_source_property<'a>(
     net: &'a BalancedNetwork,
     component_type: &str,
     uid: Option<&str>,
@@ -6086,6 +6118,56 @@ Q
             "missing sanitation warning: {:?}",
             conv.render_diagnostics()
         );
+    }
+
+    /// PSS/E reads a quoted id by its trimmed text, so an id whose sanitized
+    /// form trims onto an id already stated at the bus takes a free positional
+    /// id. Two records on one bus never state one id.
+    #[test]
+    fn a_sanitized_id_that_trims_onto_another_id_is_allocated_apart() {
+        let raw = r"0, 100.00, 33, 0, 0, 60.00 / x
+CASE
+COMMENT
+1,'B1          ', 230.0,3,1,1,1,1.0,0.0,1.1,0.9,1.1,0.9
+2,'B2          ', 230.0,1,1,1,1,1.0,0.0,1.1,0.9,1.1,0.9
+0 / END OF BUS DATA, BEGIN LOAD DATA
+2,'A',1,1,1,10.0,5.0,0,0,0,0,1,1,0
+2,'B',1,1,1,20.0,8.0,0,0,0,0,1,1,0
+0 / END OF LOAD DATA, BEGIN FIXED SHUNT DATA
+0 / END OF FIXED SHUNT DATA, BEGIN GENERATOR DATA
+0 / END OF GENERATOR DATA, BEGIN BRANCH DATA
+0 / END OF BRANCH DATA, BEGIN TRANSFORMER DATA
+0 / END OF TRANSFORMER DATA, BEGIN AREA DATA
+Q
+";
+        let mut net = parse_psse(raw).unwrap();
+        net.loads_mut()[0]
+            .extras
+            .insert("id".into(), Value::String("a'".into()));
+        net.loads_mut()[1]
+            .extras
+            .insert("id".into(), Value::String("a".into()));
+
+        let conv = write_psse(&net);
+        // The first record states the sanitized id; the second would trim onto
+        // it and states the lowest free positional id instead.
+        assert!(conv.text.contains("2, 'a ',"), "{}", conv.text);
+        assert!(conv.text.contains("2, '1',"), "{}", conv.text);
+
+        let reparsed = parse_psse(&conv.text).unwrap();
+        let ids: Vec<_> = reparsed
+            .loads()
+            .iter()
+            .map(|l| {
+                l.extras
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+            })
+            .collect();
+        // The reader states the first id trimmed and drops the second, which
+        // is the positional default it re-allocates on its own.
+        assert_eq!(ids, vec!["a", ""]);
     }
 
     #[test]

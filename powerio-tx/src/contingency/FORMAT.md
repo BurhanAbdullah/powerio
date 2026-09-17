@@ -194,6 +194,106 @@ their lines, with the surrounding whitespace dropped:
 - Bus-name mode, where a statement names `'02CHAMBR 345'` in place of a bus
   number. Reading these needs the case, which this module does not take.
 
+## Resolution against a network
+
+`ContingencySet::resolve` binds a set to a `BalancedNetwork`. It is separate
+from reading, because a `.con` file names elements the way a RAW file does and
+a network does not carry those names.
+
+### Why the ids are recomputed
+
+A network row's `uid` is either the identity its source stated or one PowerIO
+generated from bus numbers: `bus-4` for a load, `3-1` for a branch. Neither
+form carries a machine or a circuit id, so a `.con` statement cannot be matched
+against it. The PSS/E ids are not stored either: the reader drops an id of `1`
+because it is what the writer allocates positionally, and it keeps a machine id
+only when the writer would have allocated a different one.
+
+`PsseEquipmentIndex` therefore recomputes, for every element, the id a RAW file
+written from this network would state, using the writer's own allocation: the
+element's retained id when it has one and that id is still free on its key,
+else the lowest positive integer still free there. An element thus answers to
+the words PSS/E itself would address it by.
+
+| Family | Preferred id | Allocation key |
+| --- | --- | --- |
+| machine | the `psse_eqid` property of the generator's `ComponentId` in `detailed_connectivity` | the bus |
+| branch | the branch's `extras["id"]` | the stored terminal pair `(from, to)` |
+| two winding transformer | `extras["id"]`, else the retained `psse_eqid` | the stored terminal pair, allocated apart from the lines |
+| load, fixed shunt, switched shunt | `extras["id"]` | the bus, each family allocated apart |
+| three winding transformer | `extras["id"]`, else the retained `psse_eqid` | the position among the transformers on the same ordered bus triple |
+
+Every family is keyed on the trimmed id the writer allocates, because PSS/E
+reads a quoted id by its trimmed text, as the `.con` reader and the RAW reader
+both do. The writer's allocation keeps two rows on one key apart under that
+reading: PSS/E forbids an apostrophe inside a quoted field and the writer
+replaces one with a space, so an id whose sanitized form trims onto an id
+already stated there takes a free positional id instead. A bus carrying `a'`
+and `a` states `a ` and `1`, and a statement naming either binds to the row the
+RAW file states it for.
+
+A branch lookup reads both orientations, so a statement naming `1 TO 3` finds a
+branch stored `3 1`. A self-loop is counted once. The lines are keyed apart
+from the two winding transformers, because the writer allocates the two
+families in separate namespaces and a line and a transformer on one terminal
+pair therefore both carry circuit `1`. A lookup reads the lines first and the
+transformers only when no line carries the circuit id, so that pair of rows
+states one branch rather than an ambiguity.
+
+Zero rows is not found. More than one is ambiguous and binds to nothing, which
+happens when two parallel branches of one family are stored in opposite
+terminal orders and take the same circuit id. A three winding transformer
+matches on its three buses in any order, and two transformers on one bus triple
+stored in different winding orders are ambiguous the same way.
+
+### What each statement binds to
+
+| Action | Binds to | Not found |
+| --- | --- | --- |
+| `OpenBranch` | the one `branch` row | `NoSuchBranch`, or `AmbiguousBranch` past one row |
+| `OpenThreeWinding` | the one `transformer_3w` row | `NoSuchTransformer3w`, or `AmbiguousTransformer3w` past one row |
+| `RemoveMachine`, `AddMachine` | the `generator` row | `NoSuchMachine` |
+| `RemoveShunt` | the fixed `shunt` with that id, or every fixed shunt at the bus | `NoSuchShunt` |
+| `RemoveSwitchedShunt` | every switched `shunt` at the bus | `NoSuchShunt` |
+| `RemoveLoad` | the `load` with that id, or every load at the bus | `NoSuchLoad` |
+| `DisconnectBus` | the `bus` row alone | `NoSuchBus` |
+| `ChangeLoad`, `ChangeGeneration` | the `bus` row alone | `NoSuchBus` |
+| `Unrecognized` | nothing | `Unrecognized` |
+
+`DisconnectBus` binds to the bus and to nothing else: which elements at that
+bus leave service depends on what the consumer models, so expanding the bus is
+the consumer's work. `ChangeLoad` and `ChangeGeneration` bind to the bus for
+the same reason, and the amount to move rides on the action rather than being
+applied here.
+
+A `ResolvedComponent` states the component type naming the table its `row`
+indexes, the row's own identity, and the element's own in service flag as the
+network states it now. A row carrying no `uid`, or one `ComponentId` does not
+accept, states no identity, and still states its type and row: a caller that
+needs persistent identities calls `assign_missing_component_ids` on the network
+before building the index, which gives every row a `uid`. A bus is in service
+when its type is anything other than isolated. An element already out of
+service still binds, because outaging it changes nothing. A case with no
+actions resolves to no components.
+
+The `.con` grammar states `REMOVE SWSHUNT FROM BUS i` and carries no id, as the
+RAW switched shunt record itself does not, so the statement addresses every
+switched shunt at the bus.
+
+Every reason states a snake_case `name`, for reports and bindings:
+`no_such_bus`, `no_such_branch`, `ambiguous_branch`,
+`ambiguous_transformer_3w`, `no_such_machine`, `no_such_shunt`, `no_such_load`,
+`no_such_transformer_3w`, `unrecognized`.
+
+Resolution reports rather than refuses. A case holding any unresolved action is
+counted unresolved and earns one `BUILD.CON.CASE_UNRESOLVED` note naming the
+case and its first unresolved action; the actions of that case that did bind
+stay listed, so a caller can see how far the case got. The notes stop at the
+reader's budget of 16: the first case past it records one
+`BUILD.CON.NOTES_TRUNCATED` in place of its note and the cases after that
+record nothing, so a set resolved against the wrong network cannot grow the
+note list without limit. Every case is still counted.
+
 ## A later convergence point
 
 PowerWorld states contingencies in its own `.aux` grammar, read by the
