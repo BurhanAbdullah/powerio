@@ -16,19 +16,22 @@ A PSS/E contingency analysis reads three text files next to a case:
 - `.mon`, the monitored element file: which branches, interfaces, and bus
   voltages the analysis reports on.
 
-This module reads `.con`. The `.sub` and `.mon` sections of these notes are
-added with those readers.
+This module reads all three, one reader per file, and expands a `.con` file's
+automatic specifications against a network and a `.sub` file's subsystems. The
+`.con` grammar comes first below, then `.sub`, then `.mon`, then the expansion
+rules.
 
 ## Why the grammar below is stated from files
 
 Siemens documents these files in the PSS/E Program Operation Manual, which
-is licensed and not public. Every statement this reader accepts was therefore
-established from public contingency files, from the example set PSS/E ships,
-and from public question threads, and is listed with its evidence in the
+is licensed and not public. Every statement these readers accept was therefore
+established from public contingency analysis files, from the example set PSS/E
+ships, and from public question threads, and is listed with its evidence in the
 fixture README. A statement outside the list keeps its line, with the
-surrounding whitespace dropped, rather than failing the file, so a file this
+surrounding whitespace dropped, rather than failing the file, so a file a
 reader has never seen still reads, and a new spelling shows up as a
-`READ.CON.STATEMENT_UNRECOGNIZED` note rather than as a silent loss.
+`READ.CON.STATEMENT_UNRECOGNIZED`, `READ.SUB.STATEMENT_UNRECOGNIZED`, or
+`READ.MON.STATEMENT_UNRECOGNIZED` note rather than as a silent loss.
 
 ## Tokenizer
 
@@ -293,6 +296,259 @@ reader's budget of 16: the first case past it records one
 `BUILD.CON.NOTES_TRUNCATED` in place of its note and the cases after that
 record nothing, so a set resolved against the wrong network cannot grow the
 note list without limit. Every case is still counted.
+
+## The subsystem description file
+
+`sub.rs` reads `.sub` into `SubsystemSet` and writes it back with `to_sub`. A
+subsystem names a set of buses; a `.con` automatic specification and a `.mon`
+statement both name a subsystem stated here.
+
+```text
+/PSS(R)E 35
+COM SUBSYSTEM description file entry created by PSS(R)E Config File Builder
+SUBSYSTEM 'WOA'
+   AREA 1
+END
+END
+```
+
+A file is optional header comments, then any number of subsystems, then one
+file level `END`. `SUBSYSTEM name` opens one and `SYSTEM name` is its synonym;
+the name is quoted or bare. Indentation is spaces or tabs and blank lines are
+dropped. An `END` closes the innermost open block: the open `JOIN` group when
+there is one, the subsystem otherwise, and the file after that. A missing file
+`END` is tolerated and the writer adds one, a further bare `END` after it
+states nothing, and any other statement after it is kept at file level, marked
+`after_end`, and reported once as `READ.SUB.TEXT_AFTER_END`. The writer states
+those statements after the `END` it writes, so a `SUBSYSTEM` line read after
+the terminator is written after the terminator and reads back as text rather
+than as a subsystem.
+
+Two conditions refuse the file, each naming its 1-based line: a `SUBSYSTEM`
+that starts before the previous one reached `END`, and a subsystem or a `JOIN`
+group still open at end of input.
+
+### Selectors
+
+Each selector is one keyword and its values, and several may follow the
+subsystem name on one line, in which case a trailing `END` there closes the
+subsystem: `SUBSYSTEM CON AREA 5 ZONE 1 END` is one subsystem. A single valued
+spelling reads as a range whose ends are equal, and both ends are inclusive.
+
+| Statement | Reads as |
+| --- | --- |
+| `AREA n`, `AREAS a b` | `Area { from, to }` |
+| `ZONE n`, `ZONES a b` | `Zone { from, to }` |
+| `OWNER n`, `OWNERS a b` | `Owner { from, to }` |
+| `BUS n`, `BUSES a b` | `Bus { from, to }` |
+| `KVRANGE lo hi` | `KvRange { lo, hi }`, floats, inclusive on base kV |
+| `JOIN [name]` ... `END` | one `SelectorGroup` whose `join` states the name |
+
+`JOIN` opens a group closed by its own `END`, and selectors may follow the
+keyword on that line as they may follow a subsystem name. The token after the
+keyword is the group's name unless it opens a selector, so `JOIN AREA 1` opens
+a group with no name over area 1. The rest of the line reads as selectors, and
+a tail outside the grammar is reported and kept as text in the group the line
+opened rather than dropped.
+
+A group's `join` states how the file stated it: absent for the subsystem's
+implicit group, which holds the selectors stated outside any `JOIN`,
+`anonymous` for a `JOIN` with no name, and `named` for one with a name. Two
+`JOIN` blocks with no name are therefore two groups whose bus sets union,
+rather than one group whose selectors intersect.
+
+A line whose first token is a selector keyword but whose values are not the
+numbers it needs is reported as `READ.SUB.SOURCE_MALFORMED`, a warning; any
+other line inside a subsystem is reported as
+`READ.SUB.STATEMENT_UNRECOGNIZED`. Both keep their trimmed line where the file
+stated it: on the `SelectorGroup` when a `JOIN` is open, and on the subsystem
+otherwise. That is where the TARA-only statements land: `SCALE ALL FOR EXPORT
+INCLUDE OFFLINE`, `PARTICIPATE`, `ADD ...`, `BASELOAD n`, `TURBINETYPE n`, and
+`EXCEPT`. A `JOIN` line read while a `JOIN` is already open opens no group and
+is kept in the open one the same way. A line at file level outside any
+subsystem is kept on the set and reported the same way. The reader records at
+most 16 notes and then one `READ.SUB.NOTES_TRUNCATED`.
+
+### Which buses a subsystem names
+
+`Subsystem::select_buses` takes a `BalancedNetwork` and returns the bus ids.
+Within one group, the buses matching each selector family present are unioned
+within the family and intersected across the families; the groups of a
+subsystem are unioned. A group with no selector, and a subsystem with no group,
+names no bus.
+
+`OWNER` reads the bus's `extras["psse_owner"]`, and an absent property means
+owner 1, because the RAW reader keeps that field only when it differs from the
+default. `KVRANGE` reads `Bus::base_kv`.
+
+The bare body rule is the same as a single `JOIN` group. PSS/E's own rule for a
+body that mixes bare selectors with `JOIN` groups is not publicly documented;
+this reader unions the implicit group with the named ones, which is what
+`pssetools` and the 3phaseee notes describe for named groups.
+
+### What the subsystem writer states
+
+`to_sub` writes the header lines as written, then each subsystem, then the file
+level statements kept as text, then a final `END`.
+
+| Value | Written as |
+| --- | --- |
+| subsystem | `SUBSYSTEM 'name'`, its groups, its kept lines, `END` |
+| implicit group | its selectors, one per line, indented three spaces |
+| named `JOIN` group | `   JOIN 'name'`, its selectors, its kept lines, `   END` |
+| `JOIN` group with no name | `   JOIN`, its selectors, its kept lines, `   END` |
+| `Area` | `   AREA {n}`, or `   AREAS {a} {b}` when the ends differ |
+| `Zone`, `Owner` | `ZONE`/`ZONES`, `OWNER`/`OWNERS`, the same way |
+| `Bus` | `   BUS {n}`, or `   BUSES {a} {b}` |
+| `KvRange` | `   KVRANGE {lo} {hi}` |
+
+A float is written in its `Display` form, with `.0` added when that form states
+no decimal point, so `KVRANGE 69.0 999.0` reads back as the same two `f64`
+values. The implicit group is written first and the `JOIN` groups after it, in
+the order they were read, so reading the written file gives the same set. Each
+kept line is written where it was read, inside its group or its subsystem, so
+it reads back into the same place; the file level statements read after the
+file `END` are written after the `END` the writer states.
+
+## The monitored element file
+
+`mon.rs` reads `.mon` into `MonitoredSet` and writes it back with `to_mon`.
+
+```text
+/PSS(R)E 34
+COM MONITORED element file entry created by PSS(R)E Config File Builder
+MONITOR VOLTAGE RANGE SUBSYSTEM 'ILLINOIS200' 0.950 1.050
+MONITOR BRANCHES IN SUBSYSTEM 'ILLINOIS200'
+MONITOR TIES FROM SUBSYSTEM 'ILLINOIS200'
+END
+```
+
+| Statement | Synonyms | Reads as |
+| --- | --- | --- |
+| `MONITOR BRANCHES IN SUBSYSTEM name [3WLOWVOLTAGE]` | `BRANCHES`, `LINES`; `IN`, `FROM` | `BranchesInSubsystem { subsystem, low_voltage_3w }` |
+| `MONITOR TIES FROM SUBSYSTEM name` | `IN`, `FROM` | `TiesFromSubsystem { subsystem }` |
+| `MONITOR BRANCHES` ... `END`, holding `i j [ckt]` | `BRANCHES`, `LINES` | `Branches(Vec<BranchRef>)` |
+| `MONITOR INTERFACE name [RATING x [MW]]` ... `END` | | `Interface { name, rating_mw, branches }` |
+| `MONITOR VOLTAGE RANGE scope lo hi` | | `VoltageRange { scope, vmin, vmax }` |
+| `MONITOR VOLTAGE DEVIATION scope down [up]` | | `VoltageDeviation { scope, down, up }` |
+
+A `MONITOR BRANCHES` line with nothing after it opens a block of branch lines
+that runs to the next `END`, and `MONITOR INTERFACE` always opens one. Inside a
+block, `i j` names circuit `1` and `i j ckt` names that circuit. A scope is one
+of `ALL BUSES`, `SUBSYSTEM name`, `BUS n`, `AREA n`, `ZONE n`, `OWNER n`, and
+`KV x`.
+
+Files carry one or two file level `END`s and both read the same: the first ends
+the file, a further bare `END` states nothing, and any other statement after it
+is kept at file level, marked `after_end`, and reported once as
+`READ.MON.TEXT_AFTER_END`. The writer states those statements after the `END`
+it writes, so a `MONITOR` line read after the terminator is written after the
+terminator and reads back as text rather than as a statement. A line inside a
+block that states no branch is reported as `READ.MON.SOURCE_MALFORMED`, a
+warning, any other line outside the grammar as
+`READ.MON.STATEMENT_UNRECOGNIZED`, and both keep their trimmed line where the
+file stated it: on the `Branches` or `Interface` statement when a block is
+open, and on the set otherwise. A `MONITOR` line inside a block opens no
+statement, because the block runs to its own `END`, so it is kept in the block
+the same way. The reader records at most 16 notes and then one
+`READ.MON.NOTES_TRUNCATED`. A block still open at end of input refuses the
+file, naming the line that opened it.
+
+`to_mon` writes the header lines as written, the statements in order, the lines
+kept from before the file `END`, a final `END`, and then the lines read after
+that `END`. The spellings are the ones in the table above, with
+`SUBSYSTEM 'name'` and `INTERFACE 'name'` quoted, a rating written
+`RATING {x} MW`, floats written as in `to_sub`, and a block's branches written
+one per line as `{i:>6} {j:>6} {ckt}`, then the block's kept lines, before its
+`END`.
+
+### Binding a monitored set to a network
+
+`MonitoredSet::resolve` takes the network and a `SubsystemSet` and returns
+`MonitoredResolution`, whose rows are positions in the network's tables. A
+caller binding several files to one network builds one `PsseEquipmentIndex` and
+calls `MonitoredSet::resolve_with` and `ContingencySet::expand_with`, which read
+the network the index borrows.
+
+| Statement | Binds to |
+| --- | --- |
+| `BranchesInSubsystem` | `branch_rows`: every branch with both terminals in the subsystem. With `3WLOWVOLTAGE`, `transformer_3w_rows` gains every three winding transformer whose lowest voltage winding sits there |
+| `TiesFromSubsystem` | `tie_rows`: every branch with exactly one terminal in the subsystem |
+| `Branches` | `branch_rows`, one per listed branch |
+| `Interface` | one `ResolvedInterface`, its members in statement order |
+| `VoltageRange`, `VoltageDeviation` | one `ResolvedVoltageScope`, the scope's bus rows with the limits |
+
+An interface member is a row and the orientation the statement stated it in. A
+branch's flow runs from its stored `from` terminal to its stored `to` terminal,
+so a member the statement named the other way round carries `reversed` and
+enters the interface sum with the opposite sign.
+
+A listed branch binds through `PsseEquipmentIndex::branch_rows`, so it matches
+in either terminal order; zero rows is `NoSuchBranch` and more than one is
+`AmbiguousBranch`, and either keeps the statement in `unresolved`. A statement
+naming a subsystem the set does not state is `NoSuchSubsystem`. Each entry of
+`unresolved` earns one `BUILD.MON.STATEMENT_UNRESOLVED` note.
+
+A scope naming an area, zone, owner, bus, or kV level the network does not hold
+names no row and is not counted unresolved, because the statement is
+well formed and the network simply holds nothing there. `Kv x` matches a base
+kV within 1e-6. Service state does not enter: a monitored element is reported
+on whether or not the network states it in service, because monitoring reads a
+result rather than changing the case.
+
+## Automatic expansion
+
+`ContingencySet::expand` takes a network and a `SubsystemSet` and turns each
+`AutomaticSpec` into explicit cases. The expanded set keeps the header and the
+statements kept as text, states the explicit cases first and the generated
+cases after them, and holds no specification that expanded.
+
+| Specification | Expands to one case per |
+| --- | --- |
+| `SINGLE BRANCH IN SUBSYSTEM s` | in service branch with both terminals in `s` |
+| `SINGLE BRANCH IN SUBSYSTEM s 3WLOWVOLTAGE` | the above, plus each in service three winding transformer whose lowest voltage winding bus is in `s` |
+| `SINGLE UNIT IN SUBSYSTEM s` | in service generator at a bus in `s` |
+| `SINGLE TIE FROM SUBSYSTEM s` | in service branch with exactly one terminal in `s` |
+| `DOUBLE ...` | unordered pair of the corresponding single cases, actions concatenated |
+
+Cases keep table order. A branch a `SkipRule` names, in either terminal order
+and on the same circuit, produces no case. Only elements the network states in
+service expand, because outaging one already out of service changes nothing.
+Circuit and machine ids come from `PsseEquipmentIndex`, so a generated case
+names its element the way a RAW file written from this network would.
+
+A specification naming a subsystem the set does not state stays in `automatic`
+and earns one `BUILD.CON.SUBSYSTEM_UNKNOWN` note. A specification whose
+subsystem is stated but holds fewer in service elements of its target family
+than its order needs, one for `SINGLE` and two for `DOUBLE`, expands into no
+case and earns one `BUILD.CON.SPECIFICATION_EMPTY` note whose message states
+how many elements were eligible and how many the order needs. A `DOUBLE`
+specification needs two, because its cases are the unordered pairs of the
+eligible elements. Those two findings are the whole of what an expansion notes.
+
+The `SKIP` rules are the expansion's own input, so they are dropped only once
+every specification that could read them has expanded: a set that states rules
+and no specification at all keeps them.
+
+### Names the expansion gives its cases
+
+PSS/E's own generated case names are not publicly documented. These are
+PowerIO's convention, following the spelling the GO Competition's `case14.con`
+uses:
+
+| Case | Named |
+| --- | --- |
+| branch or tie | `L_{from}_{to}_{ckt}` |
+| machine | `G_{bus}_{id}` |
+| three winding transformer | `T_{a}_{b}_{c}_{ckt}`, the buses in winding order |
+| double | `{first}+{second}` |
+
+What `3WLOWVOLTAGE` selects is likewise not publicly documented. This reading
+is PowerIO's: the transformer joins the expansion when the bus of its lowest
+voltage winding is in the subsystem. A winding stating no nominal kV defers to
+its terminal bus base kV, the same rule the RAW reader states, and a tie
+between two windings takes the earlier one. The flag has no effect on a `TIE`
+specification.
 
 ## A later convergence point
 
