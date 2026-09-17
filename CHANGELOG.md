@@ -43,6 +43,29 @@
   states the three new structural types. A document stating what no reader
   could have read, from a line number of 0 to a band whose ends run the wrong
   way round, is refused rather than decoded.
+- Reach the three PSS/E contingency analysis files from Python and C. Python
+  gains the `ContingencySet`, `SubsystemSet`, and `MonitoredSet` value classes,
+  each with a `text` property, and the `BalancedNetwork` methods
+  `resolve_contingencies`, `expand_contingencies`, and
+  `select_subsystem_buses`. Rust gains
+  `ContingencyAction::to_con_statement`, the one line statement a single
+  action writes, which both bindings report for an action that bound to
+  nothing. C ABI 7 gains the additive symbols `pio_value_contingency_set`,
+  `pio_value_subsystem_set`, `pio_value_monitored_set`, which borrow the
+  module value and hold its owner rather than copying the set;
+  `pio_contingency_set_parse`, the set and subsystem accessors, the writers
+  `pio_contingency_set_to_con`, `pio_subsystem_set_to_sub`, and
+  `pio_monitored_set_to_mon`, which return owned text so an expanded set
+  reaches a file from C; and `pio_contingency_set_resolve` with the
+  `PioContingencyResolution` accessors, including
+  `pio_contingency_resolution_case_unresolved_action` for the statement of an
+  action that bound to nothing, and `pio_contingency_set_expand`. Each element
+  a case bound to reports the table its row indexes and the identity the
+  network states for that row, which is optional: C reads the table from
+  `PioContingencyComponentView.id.component_type` and reads a `local_id` of
+  length 0 for a row the network states no identity for, and Python reads the
+  table from `"type"` and `"id": None` for that row. The ABI version is
+  unchanged.
 
 ## 0.11.2
 

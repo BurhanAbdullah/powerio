@@ -111,6 +111,103 @@ release separately. `pio_module_deserialize` refuses an unsupported schema
 name or generation and reports what it found. The reader accepts generation 2
 and the structural types implemented by the library. C ABI 7 has no module JSON aliases.
 
+## PSS/E contingency analysis files
+
+A `.con`, `.sub`, or `.mon` file parses through `pio_parse` like any other
+source; `pio_value_contingency_set`, `pio_value_subsystem_set`, and
+`pio_value_monitored_set` take the typed handle from the module value, and
+`pio_contingency_set_parse` reads a contingency file straight from an acquired
+source with `pio_contingency_set_diagnostics` for the reader's notes.
+`pio_emit` writes each one back under `psse-con`, `psse-sub`, or `psse-mon`.
+
+A handle from `pio_value_contingency_set`, `pio_value_subsystem_set`, or
+`pio_value_monitored_set` borrows the module value rather than copying it, and
+holds the module owner alive, so it stays readable after the module handle is
+released. A handle from `pio_contingency_set_parse` or
+`pio_contingency_set_expand` owns its set instead.
+
+`pio_contingency_set_resolve` binds every case to a balanced network and
+returns a `PioContingencyResolution`. It reports rather than refuses: a case
+naming an element the network does not hold is counted unresolved and keeps
+its reason. `pio_contingency_set_expand` turns the automatic specifications
+into explicit cases against a network and a subsystem set.
+
+```c
+PioContingencySet *cases = pio_contingency_set_parse(source, &error);
+PioContingencyResolution *resolution =
+    pio_contingency_set_resolve(cases, network, &error);
+
+printf("%zu of %zu cases bound\n",
+       pio_contingency_resolution_resolved_count(resolution),
+       pio_contingency_resolution_case_count(resolution));
+
+for (size_t i = 0; i < pio_contingency_resolution_case_count(resolution); i++) {
+    size_t bound =
+        pio_contingency_resolution_case_component_count(resolution, i);
+    for (size_t j = 0; j < bound; j++) {
+        PioContingencyComponentView component;
+        if (!pio_contingency_resolution_case_component(resolution, i, j,
+                                                       &component, &error)) {
+            break;
+        }
+        /* component.id.component_type names the table component.row
+           indexes; component.id.local_id is the element's own identity,
+           and its len is 0 when the network states none for that row */
+    }
+
+    size_t missing =
+        pio_contingency_resolution_case_unresolved_count(resolution, i);
+    for (size_t j = 0; j < missing; j++) {
+        PioStringView statement =
+            pio_contingency_resolution_case_unresolved_action(resolution, i, j,
+                                                              &error);
+        PioStringView reason =
+            pio_contingency_resolution_case_unresolved_reason(resolution, i, j,
+                                                             &error);
+        /* statement is the `.con` line of the action; reason is a fixed name
+           such as "no_such_branch", the same name Python reports */
+        printf("%.*s: %.*s\n", (int)statement.len, statement.data,
+               (int)reason.len, reason.data);
+    }
+}
+
+PioDiagnostics *notes = NULL;
+PioContingencySet *expanded =
+    pio_contingency_set_expand(cases, network, subsystems, &notes, &error);
+PioString *text = pio_contingency_set_to_con(expanded, &error);
+PioStringView view = pio_string_view(text);
+printf("%.*s", (int)view.len, view.data);
+
+pio_string_release(text);
+pio_diagnostics_release(notes);
+pio_contingency_set_release(expanded);
+pio_contingency_resolution_release(resolution);
+pio_contingency_set_release(cases);
+```
+
+The set accessors are `pio_contingency_set_case_count`,
+`pio_contingency_set_case_name`, `pio_contingency_set_diagnostics`, and
+`pio_contingency_set_to_con`; `pio_subsystem_set_count`,
+`pio_subsystem_set_name`, and `pio_subsystem_set_to_sub`; and
+`pio_monitored_set_statement_count` and `pio_monitored_set_to_mon`. Each of
+the three writers returns owned text, read with `pio_string_view` and released
+with `pio_string_release`, which is how an expanded set reaches a file. The
+resolution accessors are `pio_contingency_resolution_case_count`,
+`pio_contingency_resolution_resolved_count`,
+`pio_contingency_resolution_unresolved_count`,
+`pio_contingency_resolution_unrecognized_statement_count`,
+`pio_contingency_resolution_case_name`,
+`pio_contingency_resolution_case_is_resolved`,
+`pio_contingency_resolution_case_component_count`,
+`pio_contingency_resolution_case_component`,
+`pio_contingency_resolution_case_unresolved_count`,
+`pio_contingency_resolution_case_unresolved_reason`, and
+`pio_contingency_resolution_case_unresolved_action`. Each handle has its own
+`pio_contingency_set_retain` and `pio_contingency_set_release`,
+`pio_subsystem_set_retain` and `pio_subsystem_set_release`,
+`pio_monitored_set_retain` and `pio_monitored_set_release`, and
+`pio_contingency_resolution_retain` and `pio_contingency_resolution_release`.
+
 ## Collections, updates, and calculations
 
 Time series and scenario set handles give you the length and owner rooted
