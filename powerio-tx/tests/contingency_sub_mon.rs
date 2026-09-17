@@ -448,6 +448,21 @@ fn an_end_on_a_selector_line_closes_the_open_join_alone() {
 }
 
 #[test]
+fn a_base_kv_band_stated_high_to_low_is_kept_as_text() {
+    let parsed =
+        SubsystemSet::parse("SUBSYSTEM 'A'\n   KVRANGE 240.0 100.0\n   AREA 1\nEND\nEND\n")
+            .expect("parse");
+    assert_eq!(sub_codes(&parsed), vec!["READ.SUB.SOURCE_MALFORMED"]);
+    let subsystem = &parsed.set.subsystems[0];
+    assert_eq!(
+        subsystem.groups[0].selectors,
+        vec![SubsystemSelector::Area { from: 1, to: 1 }]
+    );
+    assert_eq!(subsystem.retained[0].text, "KVRANGE 240.0 100.0");
+    check_sub_fixed_point(&parsed);
+}
+
+#[test]
 fn subsystem_text_after_the_file_end_is_reported_once() {
     let parsed = SubsystemSet::parse("SUBSYSTEM 'A'\n   AREA 1\nEND\nEND\nBUSNAMES\nBUSNUMBERS\n")
         .expect("parse");
@@ -599,7 +614,7 @@ fn a_generated_monitored_element_file_reads_every_statement() {
     assert_eq!(
         statements[0],
         MonitorStatement::VoltageRange {
-            scope: MonitorScope::Subsystem("A1".into()),
+            scope: MonitorScope::Subsystem { name: "A1".into() },
             vmin: 0.95,
             vmax: 1.05,
         }
@@ -607,7 +622,7 @@ fn a_generated_monitored_element_file_reads_every_statement() {
     assert_eq!(
         statements[1],
         MonitorStatement::VoltageDeviation {
-            scope: MonitorScope::Subsystem("A1".into()),
+            scope: MonitorScope::Subsystem { name: "A1".into() },
             down: 0.03,
             up: Some(0.06),
         }
@@ -661,11 +676,11 @@ fn a_generated_monitored_element_file_reads_every_statement() {
     assert_eq!(
         scopes,
         vec![
-            &MonitorScope::Bus(BusId(101)),
-            &MonitorScope::Area(2),
-            &MonitorScope::Zone(3),
-            &MonitorScope::Owner(3),
-            &MonitorScope::Kv(230.0),
+            &MonitorScope::Bus { bus: BusId(101) },
+            &MonitorScope::Area { area: 2 },
+            &MonitorScope::Zone { zone: 3 },
+            &MonitorScope::Owner { owner: 3 },
+            &MonitorScope::Kv { kv: 230.0 },
         ]
     );
     assert!(parsed.set.retained.is_empty());
@@ -789,6 +804,28 @@ fn a_block_line_that_states_no_branch_is_reported_and_kept_in_the_block() {
     assert_eq!(kept_text(retained), vec!["ALL TIES"]);
     // The line stays inside the block, so the set states none at file level.
     assert!(parsed.set.retained.is_empty());
+    check_mon_fixed_point(&parsed);
+}
+
+#[test]
+fn a_voltage_range_stated_high_to_low_is_kept_as_text() {
+    let parsed = MonitoredSet::parse(
+        "MONITOR VOLTAGE RANGE ALL BUSES 1.05 0.95\nMONITOR VOLTAGE RANGE ALL BUSES 0.95 1.05\nEND\n",
+    )
+    .expect("parse");
+    assert_eq!(mon_codes(&parsed), vec!["READ.MON.STATEMENT_UNRECOGNIZED"]);
+    assert_eq!(
+        parsed.set.statements,
+        vec![MonitorStatement::VoltageRange {
+            scope: MonitorScope::AllBuses,
+            vmin: 0.95,
+            vmax: 1.05,
+        }]
+    );
+    assert_eq!(
+        parsed.set.retained[0].text,
+        "MONITOR VOLTAGE RANGE ALL BUSES 1.05 0.95"
+    );
     check_mon_fixed_point(&parsed);
 }
 
