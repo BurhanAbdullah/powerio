@@ -643,13 +643,9 @@ fn fixed_dispatch_has_zero_objective_and_monitors_conductor_limits() {
     let instance =
         LinDist3FlowPfInstance::from_network(network, LinDist3FlowBuildOptions::default()).unwrap();
 
-    assert!(
-        instance
-            .formulation()
-            .base_instance()
-            .objective()
-            .terms()
-            .is_empty()
+    assert_eq!(
+        instance.formulation().base_instance().objective().terms(),
+        []
     );
     assert_eq!(
         instance

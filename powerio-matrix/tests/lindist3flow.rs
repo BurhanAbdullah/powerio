@@ -287,7 +287,7 @@ fn fixed_dispatch_monitors_limits_without_adding_thermal_cones() {
         LinDist3FlowPfInstance::from_network(network, LinDist3FlowBuildOptions::default()).unwrap(),
     );
     let form = build_lindist3flow_pf_standard_form(&instance).unwrap();
-    assert!(form.canonical.cones.is_empty());
+    assert_eq!(form.canonical.cones.as_slice(), []);
     assert!(form.q.iter().all(|coefficient| *coefficient == 0.0));
 
     let mut values = LinDist3FlowOpfValues::default();
@@ -312,7 +312,7 @@ fn fixed_dispatch_monitors_limits_without_adding_thermal_cones() {
     .unwrap();
     assert_eq!(solution.limit_checks().len(), 3);
     let failed = LinDist3FlowPfSolution::new(instance, Termination::Infeasible, values).unwrap();
-    assert!(failed.limit_checks().is_empty());
+    assert_eq!(failed.limit_checks(), []);
 }
 
 #[test]

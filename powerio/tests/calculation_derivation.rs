@@ -225,14 +225,14 @@ fn multiconductor_module_derives_and_reextracts_fixed_dispatch_lindist3flow() {
     let dynamic = derived.map_value(powerio::PioValue::from);
     let extracted = powerio::to_lindist3flow_pf_instance(&dynamic).unwrap();
     assert_eq!(extracted.history().len(), history_len);
-    assert!(
+    assert_eq!(
         extracted
             .value()
             .formulation()
             .base_instance()
             .objective()
-            .terms()
-            .is_empty()
+            .terms(),
+        []
     );
 }
 

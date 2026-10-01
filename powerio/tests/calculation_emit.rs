@@ -251,7 +251,7 @@ fn lindist3flow_instances_emit_the_source_network_not_the_prepared_one() {
         .with_unsupported(powerio::LinDist3FlowUnsupported::Lower);
     let opf = LinDist3FlowOpfInstance::from_network(network.clone(), options).unwrap();
     let pf = LinDist3FlowPfInstance::from_network(network, options).unwrap();
-    assert!(opf.network().capacitors().is_empty());
+    assert_eq!(opf.network().capacitors().as_slice(), []);
     for module in [
         PioModule::new(PioValue::from(opf)),
         PioModule::new(PioValue::from(pf)),
