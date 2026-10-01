@@ -86,7 +86,7 @@ fn index_states_the_machine_and_circuit_ids_the_raw_writer_allocates() {
     // The branch stored 3-1 answers a statement in either orientation.
     assert_eq!(index.branch_rows(BusId(3), BusId(1), "1"), vec![2]);
     assert_eq!(index.branch_rows(BusId(1), BusId(3), "1"), vec![2]);
-    assert!(index.branch_rows(BusId(3), BusId(4), "1").is_empty());
+    assert_eq!(index.branch_rows(BusId(3), BusId(4), "1"), [] as [usize; 0]);
 
     assert_eq!(index.machine_row(BusId(2), "3"), Some(2));
     assert_eq!(index.machine_row(BusId(2), "1"), Some(3));
@@ -182,7 +182,10 @@ fn every_statement_binds_to_the_element_psse_would_address() {
     // work.
     assert_eq!(bound(&resolution, "BUS_DISCONNECT"), [("bus", 4, true)]);
     assert_eq!(bound(&resolution, "LOAD_CHANGE"), [("bus", 3, true)]);
-    assert!(bound(&resolution, "NO_ACTIONS").is_empty());
+    assert_eq!(
+        bound(&resolution, "NO_ACTIONS"),
+        [] as [(&str, usize, bool); 0]
+    );
     assert!(case(&resolution, "NO_ACTIONS").is_resolved());
 
     let unresolved: Vec<(&str, UnresolvedReason)> = resolution
@@ -232,7 +235,10 @@ fn a_terminal_pair_and_circuit_naming_two_branches_binds_to_neither() {
         case(&resolution, "BR_1_2_C1").unresolved[0].reason,
         UnresolvedReason::AmbiguousBranch { matches: 2 }
     );
-    assert!(case(&resolution, "BR_1_2_C1").components.is_empty());
+    assert_eq!(
+        case(&resolution, "BR_1_2_C1").components,
+        [] as [powerio_tx::ResolvedComponent; 0]
+    );
 }
 
 /// The component type strings `powerio_prob`'s update resolver requires are
@@ -401,7 +407,7 @@ fn two_transformers_on_one_bus_triple_bind_to_neither() {
         case.unresolved[0].reason,
         UnresolvedReason::AmbiguousTransformer3w { matches: 2 }
     );
-    assert!(case.components.is_empty());
+    assert_eq!(case.components, [] as [powerio_tx::ResolvedComponent; 0]);
     let note = resolution
         .diagnostics()
         .into_iter()

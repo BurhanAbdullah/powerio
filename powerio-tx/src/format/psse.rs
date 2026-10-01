@@ -5864,7 +5864,7 @@ Q
 ";
         let net = parse_psse(raw).unwrap();
         assert_eq!(net.branches().len(), 1, "K = 0.00 is a 2-winding record");
-        assert!(net.transformers_3w().is_empty());
+        assert_eq!(net.transformers_3w().as_slice(), []);
         assert_eq!(
             net.areas().len(),
             1,
@@ -7287,7 +7287,7 @@ Q
         // Round trip: write and re-read keeps the windings and the star voltage.
         let net2 = parse_psse(&write_psse(&net).text).unwrap();
         assert_eq!(net2.transformers_3w().len(), 1);
-        assert!(net2.branches().is_empty());
+        assert_eq!(net2.branches().as_slice(), []);
         let t2 = &net2.transformers_3w()[0];
         close(t2.z[1].x, 0.20);
         close(t2.windings[2].tap, 0.95);

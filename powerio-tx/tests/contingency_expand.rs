@@ -99,7 +99,10 @@ fn the_fixture_expands_every_target_and_keeps_the_unknown_subsystem() {
 
     // The header and the statements kept as text survive.
     assert_eq!(expanded.set.header.len(), 1);
-    assert!(expanded.set.retained.is_empty());
+    assert_eq!(
+        expanded.set.retained,
+        [] as [powerio_tx::RetainedStatement; 0]
+    );
 }
 
 #[test]
@@ -181,8 +184,8 @@ fn a_skip_rule_removes_a_branch_in_either_orientation() {
     );
     assert_eq!(names(&with), vec!["L_101_102_1", "L_102_103_1"]);
     // Every specification expanded, so no SKIP rule is left to apply.
-    assert!(with.set.automatic.is_empty());
-    assert!(with.set.skips.is_empty());
+    assert_eq!(with.set.automatic, [] as [powerio_tx::AutomaticSpec; 0]);
+    assert_eq!(with.set.skips, [] as [powerio_tx::SkipRule; 0]);
 
     // A rule on another circuit removes nothing.
     let other = expand(
@@ -277,8 +280,8 @@ fn a_specification_that_names_nothing_in_its_subsystem_is_noted() {
         &net,
         &subsystems,
     );
-    assert!(empty.set.cases.is_empty());
-    assert!(empty.set.automatic.is_empty());
+    assert_eq!(empty.set.cases, [] as [powerio_tx::ContingencyCase; 0]);
+    assert_eq!(empty.set.automatic, [] as [powerio_tx::AutomaticSpec; 0]);
     assert_eq!(
         empty
             .diagnostics
@@ -292,7 +295,7 @@ fn a_specification_that_names_nothing_in_its_subsystem_is_noted() {
     // A specification that names one element is not empty.
     let filled = expand("SINGLE UNIT IN SUBSYSTEM 'A2'\nEND\n", &net, &subsystems);
     assert_eq!(names(&filled), vec!["G_201_1"]);
-    assert!(filled.diagnostics.is_empty());
+    assert_eq!(filled.diagnostics, [] as [powerio_core::Diagnostic; 0]);
 }
 
 #[test]
@@ -301,8 +304,8 @@ fn a_double_specification_that_names_one_element_is_noted() {
     let subsystems = subsystems();
     // Subsystem 'A2' holds one in service generator, and a pair needs two.
     let expanded = expand("DOUBLE UNIT IN SUBSYSTEM 'A2'\nEND\n", &net, &subsystems);
-    assert!(expanded.set.cases.is_empty());
-    assert!(expanded.set.automatic.is_empty());
+    assert_eq!(expanded.set.cases, [] as [powerio_tx::ContingencyCase; 0]);
+    assert_eq!(expanded.set.automatic, [] as [powerio_tx::AutomaticSpec; 0]);
     assert_eq!(
         expanded
             .diagnostics
@@ -330,7 +333,7 @@ fn skip_rules_stay_on_a_set_that_states_no_specification() {
     };
     let expanded = set.expand(&net, &SubsystemSet::default());
     assert_eq!(expanded.set.skips, set.skips);
-    assert!(expanded.diagnostics.is_empty());
+    assert_eq!(expanded.diagnostics, [] as [powerio_core::Diagnostic; 0]);
 }
 
 #[test]
@@ -360,5 +363,5 @@ fn a_set_with_no_automatic_specification_expands_to_itself() {
     };
     let expanded = explicit.expand(&net, &SubsystemSet::default());
     assert_eq!(expanded.set, explicit);
-    assert!(expanded.diagnostics.is_empty());
+    assert_eq!(expanded.diagnostics, [] as [powerio_core::Diagnostic; 0]);
 }

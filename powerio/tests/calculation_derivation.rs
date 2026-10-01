@@ -68,9 +68,9 @@ fn neutral_network_module(grounded: bool) -> powerio::PioModule<powerio::PioValu
 fn check_records<T>(module: &powerio::PioModule<T>, output_type: &str) {
     assert_eq!(module.producer().name(), "powerio");
     assert_eq!(module.producer().version(), powerio::VERSION);
-    assert!(!module.sources().is_empty());
+    assert_ne!(module.sources(), []);
     assert!(module.source().is_none());
-    assert!(module.source_map().is_empty());
+    assert_eq!(module.source_map(), []);
     let history = module.history().last().unwrap();
     assert_eq!(history.kind(), HistoryKind::Transform);
     assert_eq!(history.input_type(), Some("powerio.BalancedNetwork"));

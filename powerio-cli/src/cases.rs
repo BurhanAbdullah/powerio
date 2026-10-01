@@ -355,7 +355,10 @@ mod tests {
     #[test]
     fn missing_root_yields_empty() {
         let tmp = tempfile::tempdir().unwrap();
-        assert!(discover_cases(&tmp.path().join("nope"), None).is_empty());
+        assert_eq!(
+            discover_cases(&tmp.path().join("nope"), None),
+            [] as [std::path::PathBuf; 0]
+        );
     }
 
     #[test]

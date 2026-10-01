@@ -6445,7 +6445,7 @@ mod tests {
         close(net.generators()[0].vg, 1.0);
         // Idempotent: nothing left to repair, and a second pass appends
         // nothing.
-        assert!(net.validate_values().is_empty());
+        assert_eq!(net.validate_values().as_slice(), []);
         let entries = module.history();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].kind(), powerio_core::HistoryKind::Repair);
@@ -6461,7 +6461,7 @@ mod tests {
     #[test]
     fn validate_values_is_empty_for_a_clean_network() {
         let net = BalancedNetwork::in_memory("t", 100.0, vec![bus(1), bus(2)], Vec::new());
-        assert!(net.validate_values().is_empty());
+        assert_eq!(net.validate_values().as_slice(), []);
     }
 
     #[test]

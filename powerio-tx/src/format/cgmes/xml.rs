@@ -591,7 +591,7 @@ mod tests {
         );
         assert_eq!(doc.objects[1].id, "base");
         assert!(!doc.objects[1].definition);
-        assert!(doc.objects[2].id.is_empty());
+        assert_eq!(doc.objects[2].id, "");
         assert_eq!(
             doc.objects[3].props,
             vec![(

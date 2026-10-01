@@ -167,7 +167,10 @@ fn a_generated_psse_35_subsystem_file_keeps_its_header_and_selector() {
         subsystem.groups[0].selectors,
         vec![SubsystemSelector::Area { from: 1, to: 1 }]
     );
-    assert!(parsed.set.retained.is_empty());
+    assert_eq!(
+        parsed.set.retained,
+        [] as [powerio_tx::RetainedStatement; 0]
+    );
     let written = parsed.set.to_sub();
     assert!(written.contains("SUBSYSTEM 'WOA'\n   AREA 1\nEND\n"));
 }
@@ -263,7 +266,10 @@ fn every_selector_spelling_reads() {
         tara.retained[0].text,
         "SCALE ALL FOR EXPORT INCLUDE OFFLINE"
     );
-    assert!(parsed.set.retained.is_empty());
+    assert_eq!(
+        parsed.set.retained,
+        [] as [powerio_tx::RetainedStatement; 0]
+    );
 
     // The file states no final END and the writer adds one.
     assert!(parsed.set.to_sub().ends_with("END\nEND\n"));
@@ -358,7 +364,10 @@ fn subsystem_structural_errors_name_their_line() {
 fn a_selector_that_states_no_number_is_reported_and_kept() {
     let parsed = SubsystemSet::parse("SUBSYSTEM 'A'\n   AREA WEST\nEND\nEND\n").expect("parse");
     assert_eq!(sub_codes(&parsed), vec!["READ.SUB.SOURCE_MALFORMED"]);
-    assert!(parsed.set.subsystems[0].groups.is_empty());
+    assert_eq!(
+        parsed.set.subsystems[0].groups,
+        [] as [powerio_tx::SelectorGroup; 0]
+    );
     assert_eq!(parsed.set.subsystems[0].retained[0].text, "AREA WEST");
     check_sub_fixed_point(&parsed);
 }
@@ -406,13 +415,16 @@ fn a_join_line_tail_outside_the_grammar_is_reported_and_kept() {
         subsystem.groups[0].join,
         Some(JoinName::Named { name: "G".into() })
     );
-    assert!(subsystem.groups[0].selectors.is_empty());
+    assert_eq!(
+        subsystem.groups[0].selectors,
+        [] as [powerio_tx::SubsystemSelector; 0]
+    );
     // The tail belongs to the group the line opened.
     assert_eq!(
         kept_text(&subsystem.groups[0].retained),
         vec!["PARTICIPATE"]
     );
-    assert!(subsystem.retained.is_empty());
+    assert_eq!(subsystem.retained, [] as [powerio_tx::RetainedStatement; 0]);
     check_sub_fixed_point(&parsed);
 
     let malformed = SubsystemSet::parse("SUBSYSTEM 'A'\n   JOIN 'G' AREA WEST\n   END\nEND\nEND\n")
@@ -481,7 +493,7 @@ fn subsystem_text_after_the_file_end_is_reported_once() {
 fn a_subsystem_stated_after_the_file_end_stays_text() {
     let parsed = SubsystemSet::parse("END\nSUBSYSTEM 'A'\nAREA 1\nEND\n").expect("parse");
     assert_eq!(sub_codes(&parsed), vec!["READ.SUB.TEXT_AFTER_END"]);
-    assert!(parsed.set.subsystems.is_empty());
+    assert_eq!(parsed.set.subsystems, [] as [powerio_tx::Subsystem; 0]);
     assert_eq!(
         kept_text(&parsed.set.retained),
         vec!["SUBSYSTEM 'A'", "AREA 1"]
@@ -517,7 +529,7 @@ fn a_line_read_inside_a_join_is_kept_in_that_group() {
     );
     assert_eq!(kept_text(&join.retained), vec!["JOIN 'H'"]);
     // The line belongs to the group, not to the subsystem around it.
-    assert!(subsystem.retained.is_empty());
+    assert_eq!(subsystem.retained, [] as [powerio_tx::RetainedStatement; 0]);
 
     let written = check_sub_fixed_point(&parsed);
     let again = SubsystemSet::parse(&written).expect("read the written set");
@@ -683,7 +695,10 @@ fn a_generated_monitored_element_file_reads_every_statement() {
             &MonitorScope::Kv { kv: 230.0 },
         ]
     );
-    assert!(parsed.set.retained.is_empty());
+    assert_eq!(
+        parsed.set.retained,
+        [] as [powerio_tx::RetainedStatement; 0]
+    );
     // The file states two ENDs; the writer states one.
     assert!(parsed.set.to_mon().ends_with("KV 230.0 0.93 1.07\nEND\n"));
 }
@@ -803,7 +818,10 @@ fn a_block_line_that_states_no_branch_is_reported_and_kept_in_the_block() {
     );
     assert_eq!(kept_text(retained), vec!["ALL TIES"]);
     // The line stays inside the block, so the set states none at file level.
-    assert!(parsed.set.retained.is_empty());
+    assert_eq!(
+        parsed.set.retained,
+        [] as [powerio_tx::RetainedStatement; 0]
+    );
     check_mon_fixed_point(&parsed);
 }
 
@@ -846,7 +864,10 @@ fn a_monitor_statement_after_the_file_end_stays_text() {
     let parsed =
         MonitoredSet::parse("END\nMONITOR VOLTAGE RANGE ALL BUSES 0.9 1.1\n").expect("parse");
     assert_eq!(mon_codes(&parsed), vec!["READ.MON.TEXT_AFTER_END"]);
-    assert!(parsed.set.statements.is_empty());
+    assert_eq!(
+        parsed.set.statements,
+        [] as [powerio_tx::MonitorStatement; 0]
+    );
     assert_eq!(
         kept_text(&parsed.set.retained),
         vec!["MONITOR VOLTAGE RANGE ALL BUSES 0.9 1.1"]
@@ -881,7 +902,10 @@ fn a_statement_read_inside_a_block_is_kept_in_that_block() {
         kept_text(retained),
         vec!["MONITOR VOLTAGE RANGE ALL BUSES 0.9 1.1"]
     );
-    assert!(parsed.set.retained.is_empty());
+    assert_eq!(
+        parsed.set.retained,
+        [] as [powerio_tx::RetainedStatement; 0]
+    );
 
     let written = check_mon_fixed_point(&parsed);
     let again = MonitoredSet::parse(&written).expect("read the written set");
@@ -937,8 +961,14 @@ fn a_generated_monitored_set_binds_to_the_rows_of_the_network() {
     assert_eq!(rows(&resolution.transformer_3w_rows), [0]);
     // A tie has exactly one terminal inside.
     assert_eq!(rows(&resolution.tie_rows), [3, 5]);
-    assert!(resolution.interfaces.is_empty());
-    assert!(resolution.unresolved.is_empty());
+    assert_eq!(
+        resolution.interfaces,
+        [] as [powerio_tx::ResolvedInterface; 0]
+    );
+    assert_eq!(
+        resolution.unresolved,
+        [] as [powerio_tx::UnresolvedMonitor; 0]
+    );
 
     let ranges: Vec<(Vec<usize>, f64, Option<f64>)> = resolution
         .voltage_ranges
@@ -970,7 +1000,10 @@ fn a_generated_monitored_set_binds_to_the_rows_of_the_network() {
             (vec![3, 4], 0.06, Some(0.055)),
         ]
     );
-    assert!(resolution.diagnostics().is_empty());
+    assert_eq!(
+        resolution.diagnostics(),
+        [] as [powerio_core::Diagnostic; 0]
+    );
 }
 
 #[test]
@@ -1057,7 +1090,10 @@ fn an_interface_member_states_its_orientation_against_the_stored_row() {
             },
         ]
     );
-    assert!(resolution.unresolved.is_empty());
+    assert_eq!(
+        resolution.unresolved,
+        [] as [powerio_tx::UnresolvedMonitor; 0]
+    );
 }
 
 #[test]
@@ -1113,5 +1149,8 @@ fn a_scope_naming_nothing_in_the_network_names_no_row() {
             .iter()
             .all(|scope| scope.bus_rows.is_empty())
     );
-    assert!(resolution.unresolved.is_empty());
+    assert_eq!(
+        resolution.unresolved,
+        [] as [powerio_tx::UnresolvedMonitor; 0]
+    );
 }

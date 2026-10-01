@@ -2896,7 +2896,7 @@ mod tests {
         let mut network =
             crate::format::xiidm::parse_xiidm_source(source, &mut xiidm_diagnostics).unwrap();
         let detailed = network.detailed_connectivity().as_deref().unwrap();
-        assert!(detailed.bus_breaker_buses.is_empty());
+        assert_eq!(detailed.bus_breaker_buses.as_slice(), []);
         assert_eq!(detailed.calculated_buses.len(), 1);
         assert_eq!(detailed.calculated_buses[0].nodes.len(), 3);
         let detailed = Arc::make_mut(network.detailed_connectivity_mut().as_mut().unwrap());
@@ -6479,7 +6479,7 @@ mod tests {
         assert_eq!(uids(network), uids(&again.network));
 
         let detailed = network.detailed_connectivity().as_deref().unwrap();
-        assert!(detailed.bus_breaker_buses.is_empty());
+        assert_eq!(detailed.bus_breaker_buses.as_slice(), []);
         assert_eq!(detailed.calculated_buses.len(), 3);
         let joined = detailed
             .calculated_buses
@@ -6532,7 +6532,7 @@ mod tests {
             .collect();
         let parsed = read::read_cgmes_documents(closed, Some("closed")).unwrap();
         assert_eq!(parsed.network.buses().len(), 2);
-        assert!(parsed.network.switches().is_empty());
+        assert_eq!(parsed.network.switches().as_slice(), []);
         let bb1 = bus_named(&parsed.network, "BB1").id;
         assert_eq!(
             parsed
