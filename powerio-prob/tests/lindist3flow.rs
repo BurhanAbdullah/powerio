@@ -289,6 +289,51 @@ fn mesh_orientation_is_stable_under_line_reversal_and_reordering() {
 }
 
 #[test]
+fn single_phase_lines_on_different_phases_are_not_a_mesh() {
+    let phases = terminals(&["1", "2"]);
+    let mut network = MulticonductorNetwork::named("split-phase");
+    for bus in ["source", "load"] {
+        network.buses_mut().push(DistBus::new(bus, phases.clone()));
+    }
+    network
+        .line_codes_mut()
+        .push(DistLineCode::new("one", vec![vec![0.1]], vec![vec![0.1]]));
+    for phase in ["1", "2"] {
+        network.lines_mut().push(DistLine::new(
+            format!("phase-{phase}"),
+            "source",
+            "load",
+            terminals(&[phase]),
+            terminals(&[phase]),
+            "one",
+            1.0,
+        ));
+    }
+    network.sources_mut().push(VoltageSource::new(
+        "grid",
+        "source",
+        phases,
+        vec![230.0; 2],
+        vec![0.0, -2.0 * std::f64::consts::PI / 3.0],
+    ));
+
+    // The two lines join the same buses but no conductor twice, so the
+    // conductor graph is a forest.
+    let instance =
+        LinDist3FlowOpfInstance::from_network(network, LinDist3FlowBuildOptions::default())
+            .unwrap();
+    assert!(!instance.topology().meshed);
+    assert_eq!(instance.topology().conductors.len(), 2);
+    assert!(
+        instance
+            .applicability()
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code() != "BUILD.LINDIST3FLOW.MESH_APPROXIMATION")
+    );
+}
+
+#[test]
 fn parallel_lines_remain_distinct() {
     let instance = LinDist3FlowOpfInstance::from_network(
         one_phase_mesh_with_lines(&[

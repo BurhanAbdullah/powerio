@@ -829,7 +829,9 @@ fn build_topology(network: &MulticonductorNetwork) -> Result<LinDist3FlowTopolog
                     line.name, line.bus_to
                 )
             })?;
-        meshed |= !bus_components.join(from_bus, to_bus);
+        // Bus-level loops whose lines carry disjoint conductors are still a
+        // conductor forest; only conductor joins below decide `meshed`.
+        bus_components.join(from_bus, to_bus);
         for (conductor, (from_terminal, to_terminal)) in line
             .terminal_map_from
             .iter()
