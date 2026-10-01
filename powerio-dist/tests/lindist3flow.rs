@@ -111,18 +111,96 @@ fn line_charging_and_capacitors_become_explicit_shunts() {
     let prepared =
         prepare_lindist3flow_network(&source, LinDist3FlowPreparationPolicy::Lower).unwrap();
 
+    let shunt = |prefix: &str| {
+        prepared
+            .network()
+            .shunts()
+            .iter()
+            .find(|shunt| shunt.name.starts_with(prefix))
+            .unwrap_or_else(|| panic!("no `{prefix}` shunt"))
+    };
     assert_eq!(prepared.network().shunts().len(), 2);
     assert!(prepared.network().capacitors().is_empty());
     assert_eq!(prepared.network().line_codes()[0].b_from, vec![vec![0.0]]);
     assert_eq!(
-        prepared.network().shunts()[0].b,
+        shunt("__l3f-line-").b,
         vec![vec![0.01]],
         "per-metre charging is scaled by line length"
     );
     assert_eq!(
-        prepared.network().shunts()[1].b,
+        shunt("__l3f-capacitor-").b,
         vec![vec![1_000.0 / 230.0f64.powi(2)]]
     );
+}
+
+#[test]
+fn a_grounded_wye_bank_neutral_is_reduced_with_the_network() {
+    let wires = terminals(&["1", "2", "3", "4"]);
+    let mut source = MulticonductorNetwork::named("four-wire");
+    for id in ["source", "load"] {
+        let mut bus = DistBus::new(id, wires.clone());
+        bus.grounded.push("4".to_owned());
+        source.buses_mut().push(bus);
+    }
+    source.line_codes_mut().push(DistLineCode::new(
+        "four",
+        vec![
+            vec![0.4, 0.02, 0.02, 0.1],
+            vec![0.02, 0.4, 0.02, 0.1],
+            vec![0.02, 0.02, 0.4, 0.1],
+            vec![0.1, 0.1, 0.1, 0.5],
+        ],
+        vec![
+            vec![0.3, 0.01, 0.01, 0.05],
+            vec![0.01, 0.3, 0.01, 0.05],
+            vec![0.01, 0.01, 0.3, 0.05],
+            vec![0.05, 0.05, 0.05, 0.2],
+        ],
+    ));
+    source.lines_mut().push(DistLine::new(
+        "feeder",
+        "source",
+        "load",
+        wires.clone(),
+        wires.clone(),
+        "four",
+        10.0,
+    ));
+    source.sources_mut().push(VoltageSource::new(
+        "grid",
+        "source",
+        wires.clone(),
+        vec![230.0, 230.0, 230.0, 0.0],
+        vec![0.0, -2.094, 2.094, 0.0],
+    ));
+    source.capacitors_mut().push(DistCapacitor::new(
+        "bank",
+        "load",
+        wires,
+        Configuration::Wye,
+        600e3,
+        4160.0,
+    ));
+
+    // The bank lowers to a shunt before neutral reduction, so the grounded
+    // neutral is eliminated with the rest of the network's.
+    let prepared =
+        prepare_lindist3flow_network(&source, LinDist3FlowPreparationPolicy::Lower).unwrap();
+    assert!(prepared.network().capacitors().is_empty());
+    let shunt = prepared
+        .network()
+        .shunts()
+        .iter()
+        .find(|shunt| shunt.name.starts_with("__l3f-capacitor-"))
+        .unwrap();
+    assert_eq!(shunt.terminal_map, terminals(&["1", "2", "3"]));
+    let phase = 600e3 / 3.0 / (4160.0f64.powi(2) / 3.0);
+    for row in 0..3 {
+        for column in 0..3 {
+            let expected = if row == column { phase } else { 0.0 };
+            assert!((shunt.b[row][column] - expected).abs() < 1e-9);
+        }
+    }
 }
 
 #[test]

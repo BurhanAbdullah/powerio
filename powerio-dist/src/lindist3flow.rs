@@ -382,35 +382,46 @@ fn capacitor_matrix(capacitor: &DistCapacitor) -> Result<Vec<Vec<f64>>> {
         )));
     }
     let n = capacitor.terminal_map.len();
+    let mut matrix = zero_matrix(n);
+    let mut couple = |a: usize, b: usize, value: f64| {
+        matrix[a][a] += value;
+        matrix[b][b] += value;
+        matrix[a][b] -= value;
+        matrix[b][a] -= value;
+    };
     match capacitor.configuration {
-        Configuration::Wye if n == 1 => Ok(vec![vec![capacitor.q_rated / capacitor.v_nom.powi(2)]]),
-        Configuration::Wye if n == 3 => {
-            let value = capacitor.q_rated / capacitor.v_nom.powi(2);
-            Ok((0..3)
-                .map(|row| {
-                    (0..3)
-                        .map(|column| if row == column { value } else { 0.0 })
-                        .collect()
-                })
-                .collect())
+        // A lone wye terminal is a phase-to-ground unit rated across itself.
+        Configuration::Wye if n == 1 => {
+            matrix[0][0] = capacitor.q_rated / capacitor.v_nom.powi(2);
+        }
+        // Phase terminals to the last (neutral) terminal at line-to-line
+        // nameplate voltage, matching the Y-bus and PMD conventions.
+        Configuration::Wye => {
+            let phases = n - 1;
+            let v_ln = capacitor.v_nom / 3f64.sqrt();
+            #[allow(clippy::cast_precision_loss)]
+            let value = capacitor.q_rated / (phases as f64) / v_ln.powi(2);
+            for phase in 0..phases {
+                couple(phase, phases, value);
+            }
         }
         Configuration::SinglePhase if n == 2 => {
-            let value = capacitor.q_rated / capacitor.v_nom.powi(2);
-            Ok(vec![vec![value, -value], vec![-value, value]])
+            couple(0, 1, capacitor.q_rated / capacitor.v_nom.powi(2));
         }
         Configuration::Delta if n == 3 => {
-            let branch = capacitor.q_rated / (3.0 * capacitor.v_nom.powi(2));
-            Ok(vec![
-                vec![2.0 * branch, -branch, -branch],
-                vec![-branch, 2.0 * branch, -branch],
-                vec![-branch, -branch, 2.0 * branch],
-            ])
+            let value = capacitor.q_rated / (3.0 * capacitor.v_nom.powi(2));
+            for pair in 0..3 {
+                couple(pair, (pair + 1) % 3, value);
+            }
         }
-        _ => Err(fail(format!(
-            "capacitor `{}` {:?} connection with {n} terminals is not supported",
-            capacitor.name, capacitor.configuration
-        ))),
+        _ => {
+            return Err(fail(format!(
+                "capacitor `{}` {:?} connection with {n} terminals is not supported",
+                capacitor.name, capacitor.configuration
+            )));
+        }
     }
+    Ok(matrix)
 }
 
 fn lower_capacitors(
@@ -709,6 +720,9 @@ pub fn prepare_lindist3flow_network(
         ..LinDist3FlowPreparationReport::default()
     };
     if policy.at_least(LinDist3FlowPreparationPolicy::Lower) {
+        // Capacitors become typed shunts first so neutral reduction can
+        // eliminate a wye bank's explicit neutral terminal.
+        lower_capacitors(&mut prepared, &mut report)?;
         let reduction = neutral_kron_reduce(&prepared, &NeutralKronOptions::default())?;
         let (network, neutral_report) = reduction.into_parts();
         prepared = network;
@@ -726,7 +740,6 @@ pub fn prepare_lindist3flow_network(
         }
         lower_switches(&mut prepared, &mut report)?;
         lower_line_shunts(&mut prepared, &mut report)?;
-        lower_capacitors(&mut prepared, &mut report)?;
     }
     if policy.at_least(LinDist3FlowPreparationPolicy::Approximate) {
         approximate_loads(&mut prepared, &mut report)?;
