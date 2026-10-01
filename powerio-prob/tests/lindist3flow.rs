@@ -474,8 +474,8 @@ fn lower_policy_prepares_static_switches_and_capacitors_without_mutating_source(
 
     assert_eq!(instance.source_network().switches().len(), 1);
     assert_eq!(instance.source_network().capacitors().len(), 1);
-    assert!(instance.network().switches().is_empty());
-    assert!(instance.network().capacitors().is_empty());
+    assert_eq!(instance.network().switches().as_slice(), []);
+    assert_eq!(instance.network().capacitors().as_slice(), []);
     assert!(instance.applicability().lowered);
     assert!(
         instance.preparation().actions.iter().any(|action| {
@@ -518,7 +518,7 @@ fn approximate_policy_prepares_current_loads_and_static_ibrs() {
         LinDist3FlowBuildOptions::default().with_unsupported(LinDist3FlowUnsupported::Approximate);
     let instance = LinDist3FlowOpfInstance::from_network(network, options).unwrap();
 
-    assert!(instance.network().ibrs().is_empty());
+    assert_eq!(instance.network().ibrs().as_slice(), []);
     assert_eq!(instance.network().generators().len(), 1);
     assert!(
         instance

@@ -71,7 +71,7 @@ fn switch_contacts_keep_independent_flows_and_limits() {
         .collect::<Vec<_>>();
 
     assert_eq!(source.switches().len(), 3, "the input remains unchanged");
-    assert!(prepared.network().switches().is_empty());
+    assert_eq!(prepared.network().switches().as_slice(), []);
     assert_eq!(contact_lines.len(), 2);
     assert_eq!(contact_lines[0].i_max.as_deref(), Some(&[10.0][..]));
     assert_eq!(contact_lines[1].i_max.as_deref(), Some(&[20.0][..]));
@@ -120,7 +120,7 @@ fn line_charging_and_capacitors_become_explicit_shunts() {
             .unwrap_or_else(|| panic!("no `{prefix}` shunt"))
     };
     assert_eq!(prepared.network().shunts().len(), 2);
-    assert!(prepared.network().capacitors().is_empty());
+    assert_eq!(prepared.network().capacitors().as_slice(), []);
     assert_eq!(prepared.network().line_codes()[0].b_from, vec![vec![0.0]]);
     assert_eq!(
         shunt("__l3f-line-").b,
@@ -186,7 +186,7 @@ fn a_grounded_wye_bank_neutral_is_reduced_with_the_network() {
     // neutral is eliminated with the rest of the network's.
     let prepared =
         prepare_lindist3flow_network(&source, LinDist3FlowPreparationPolicy::Lower).unwrap();
-    assert!(prepared.network().capacitors().is_empty());
+    assert_eq!(prepared.network().capacitors().as_slice(), []);
     let shunt = prepared
         .network()
         .shunts()
@@ -242,7 +242,7 @@ fn approximate_policy_linearizes_loads_and_static_ibrs() {
     assert_eq!(alpha_z, &[0.5]);
     assert_eq!(alpha_i, &[0.0]);
     assert_eq!(alpha_p, &[0.5]);
-    assert!(prepared.network().ibrs().is_empty());
+    assert_eq!(prepared.network().ibrs().as_slice(), []);
     let generator = &prepared.network().generators()[0];
     assert_eq!(generator.p_min.as_deref(), Some(&[0.0][..]));
     assert_eq!(generator.p_max.as_deref(), Some(&[400.0][..]));
@@ -262,7 +262,7 @@ fn permissive_policy_omits_untyped_records_but_lower_retains_them() {
         prepare_lindist3flow_network(&source, LinDist3FlowPreparationPolicy::Permissive).unwrap();
 
     assert_eq!(lower.network().untyped_objects().len(), 1);
-    assert!(permissive.network().untyped_objects().is_empty());
+    assert_eq!(permissive.network().untyped_objects().as_slice(), []);
     assert!(
         permissive.report().actions.iter().any(|action| {
             action.kind == LinDist3FlowPreparationActionKind::UntypedObjectOmitted

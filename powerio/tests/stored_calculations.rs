@@ -191,7 +191,7 @@ fn lindist3flow_preparation_reconstructs_from_the_preserved_source_network() {
     };
 
     assert_eq!(instance.source_network().switches().len(), 1);
-    assert!(instance.network().switches().is_empty());
+    assert_eq!(instance.network().switches().as_slice(), []);
     assert!(
         instance.preparation().actions.iter().any(|action| {
             action.kind == LinDist3FlowPreparationActionKind::ClosedSwitchLowered
