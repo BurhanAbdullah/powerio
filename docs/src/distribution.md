@@ -204,8 +204,8 @@ The fixed-dispatch types add no ABI 7 symbols; they remain available through
 Rust, Python, and IR version 2 until a future C ABI revision can add a
 fixed symbol set deliberately.
 
-PowerIO 0.11.1 writes the OPF pair in IR version 2; the 0.11.4 additive
-catalog adds the fixed-dispatch pair. Readers without those structural types
+PowerIO 0.11.1 writes the OPF pair in IR version 2, and 0.11.4 adds the
+fixed-dispatch pair under the same version. Readers without those structural types
 reject them, while existing network and calculation records keep their
 representation.
 

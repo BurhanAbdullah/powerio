@@ -12,9 +12,9 @@ implemented by a release and keep their published bytes and identifiers.
 | none | v0.9.0 | `pio-package` lineage `0.9` | `pio-ir/0.9/schema.json` | no |
 | 1 | v0.10.0 | `powerio.module`, version `1` | `pio-ir/1/schema.json` | no |
 | 2 | v0.11.0 | `pio-ir`, version `2` | `pio-ir/2/schema.json` | yes |
-| 2 | v0.11.1, additive type catalog | `pio-ir`, version `2` | `pio-ir/2/0.11.1/schema.json` | yes |
-| 2 | v0.11.3, additive type catalog | `pio-ir`, version `2` | `pio-ir/2/0.11.3/schema.json` | yes |
-| 2 | v0.11.4, additive type catalog | `pio-ir`, version `2` | `pio-ir/2/0.11.4/schema.json` | yes |
+| 2 | v0.11.1 | `pio-ir`, version `2` | `pio-ir/2/0.11.1/schema.json` | yes |
+| 2 | v0.11.3 | `pio-ir`, version `2` | `pio-ir/2/0.11.3/schema.json` | yes |
+| 2 | v0.11.4 | `pio-ir`, version `2` | `pio-ir/2/0.11.4/schema.json` | yes |
 
 The current document begins:
 

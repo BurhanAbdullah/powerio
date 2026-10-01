@@ -27,8 +27,8 @@
 
 - Add distinct fixed-dispatch LinDist3Flow instance and solution types with a
   zero objective, monitored rather than enforced line thermal ratings, SI
-  loading reports, and Rust/Python APIs. IR version 2 is kept and the additive
-  catalog `pio-ir/2/0.11.4/schema.json` states the two new structural types.
+  loading reports, and Rust/Python APIs. The IR version stays 2; the schema
+  `pio-ir/2/0.11.4/schema.json` describes the two new structural types.
 
 ## 0.11.3
 
