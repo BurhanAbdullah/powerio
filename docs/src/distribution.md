@@ -201,7 +201,7 @@ columns. `pio_lindist3flow_opf_instance_node_at` and
 Their strings stay valid while the instance handle remains alive.
 Sparse conic preparation and solver adapters remain Rust APIs.
 The fixed-dispatch types add no ABI 7 symbols; they remain available through
-Rust, Python, and generation-2 IR until a future C ABI revision can add a
+Rust, Python, and IR version 2 until a future C ABI revision can add a
 fixed symbol set deliberately.
 
 PowerIO 0.11.1 writes the OPF pair in IR version 2; the 0.11.4 additive
