@@ -806,8 +806,10 @@ fn multiconductor_calculation_network(
     match value {
         PioValue::McAcPfInstance(instance) => Some(instance.network()),
         PioValue::McAcOpfInstance(instance) => Some(instance.network()),
-        PioValue::LinDist3FlowPfInstance(instance) => Some(instance.network()),
-        PioValue::LinDist3FlowOpfInstance(instance) => Some(instance.network()),
+        // The source network, not the prepared formulation network: emitting
+        // the latter would silently drop lowered and omitted components.
+        PioValue::LinDist3FlowPfInstance(instance) => Some(instance.source_network()),
+        PioValue::LinDist3FlowOpfInstance(instance) => Some(instance.source_network()),
         _ => None,
     }
 }
@@ -940,12 +942,18 @@ fn emit_solution(
         PioValue::McAcOpfSolution(solution) => {
             emit_multiconductor_solution_network(module, solution.network(), format, destination)
         }
-        PioValue::LinDist3FlowPfSolution(solution) => {
-            emit_multiconductor_solution_network(module, solution.network(), format, destination)
-        }
-        PioValue::LinDist3FlowOpfSolution(solution) => {
-            emit_multiconductor_solution_network(module, solution.network(), format, destination)
-        }
+        PioValue::LinDist3FlowPfSolution(solution) => emit_multiconductor_solution_network(
+            module,
+            solution.instance().source_network(),
+            format,
+            destination,
+        ),
+        PioValue::LinDist3FlowOpfSolution(solution) => emit_multiconductor_solution_network(
+            module,
+            solution.instance().source_network(),
+            format,
+            destination,
+        ),
         PioValue::AcScucSolution(solution) if is_goc3(format) => {
             emit_goc3_solution(solution, destination)
         }
@@ -987,14 +995,14 @@ fn emit_versioned_bmopf(
             )],
         ),
         PioValue::LinDist3FlowPfInstance(instance) => (
-            instance.network().clone(),
+            instance.source_network().clone(),
             vec![calculation_data_omitted(
                 module.value().type_name(),
                 &format,
             )],
         ),
         PioValue::LinDist3FlowOpfInstance(instance) => (
-            instance.network().clone(),
+            instance.source_network().clone(),
             vec![calculation_data_omitted(
                 module.value().type_name(),
                 &format,
@@ -1012,11 +1020,11 @@ fn emit_versioned_bmopf(
             vec![solution_data_omitted(module.value().type_name(), &format)],
         ),
         PioValue::LinDist3FlowPfSolution(solution) => (
-            solution.instance().network().clone(),
+            solution.instance().source_network().clone(),
             vec![solution_data_omitted(module.value().type_name(), &format)],
         ),
         PioValue::LinDist3FlowOpfSolution(solution) => (
-            solution.instance().network().clone(),
+            solution.instance().source_network().clone(),
             vec![solution_data_omitted(module.value().type_name(), &format)],
         ),
         _ => return Err(unsupported_type(module, &format)),
