@@ -4,7 +4,7 @@
 use std::path::Path;
 
 const SCHEMA_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/schema");
-const CURRENT_SCHEMA: &str = "pio-ir/2/0.11.3/schema.json";
+const CURRENT_SCHEMA: &str = "pio-ir/2/0.11.4/schema.json";
 
 fn read_schema_file(relative: &str) -> String {
     let path = Path::new(SCHEMA_ROOT).join(relative);
@@ -51,6 +51,7 @@ fn the_schema_directory_contains_the_documented_powerio_ir_history() {
             "pio-ir/0.9/schema.json",
             "pio-ir/1/schema.json",
             "pio-ir/2/0.11.1/schema.json",
+            "pio-ir/2/0.11.3/schema.json",
             CURRENT_SCHEMA,
             "pio-ir/2/schema.json",
         ]
@@ -85,6 +86,10 @@ fn historical_schemas_preserve_their_original_identifiers() {
             "pio-ir/2/0.11.1/schema.json",
             "https://powerio.dev/schema/pio-ir/2/0.11.1/schema.json",
         ),
+        (
+            "pio-ir/2/0.11.3/schema.json",
+            "https://powerio.dev/schema/pio-ir/2/0.11.3/schema.json",
+        ),
     ] {
         let schema: serde_json::Value = serde_json::from_str(&read_schema_file(path)).unwrap();
         assert_eq!(schema["$id"], expected_id, "historical schema {path}");
@@ -112,7 +117,11 @@ fn the_current_powerio_ir_schema_is_committed() {
 /// a catalog that renames or reshapes a published record fails here.
 #[test]
 fn the_generation_two_catalog_only_adds_structural_types() {
-    for earlier in ["pio-ir/2/schema.json", "pio-ir/2/0.11.1/schema.json"] {
+    for earlier in [
+        "pio-ir/2/schema.json",
+        "pio-ir/2/0.11.1/schema.json",
+        "pio-ir/2/0.11.3/schema.json",
+    ] {
         let mut published: serde_json::Value =
             serde_json::from_str(&read_schema_file(earlier)).unwrap();
         let mut current: serde_json::Value =

@@ -307,6 +307,7 @@ pub enum PioValue {
     AcOpfInstance(powerio_prob::AcOpfInstance),
     McAcPfInstance(powerio_prob::McAcPfInstance),
     McAcOpfInstance(powerio_prob::McAcOpfInstance),
+    LinDist3FlowPfInstance(powerio_prob::LinDist3FlowPfInstance),
     LinDist3FlowOpfInstance(powerio_prob::LinDist3FlowOpfInstance),
     AcScucInstance(powerio_prob::AcScucInstance),
     DcPfSolution(powerio_prob::DcPfSolution),
@@ -316,6 +317,7 @@ pub enum PioValue {
     SocwrOpfSolution(powerio_prob::solution::SocwrOpfSolution),
     McAcPfSolution(powerio_prob::McAcPfSolution),
     McAcOpfSolution(powerio_prob::McAcOpfSolution),
+    LinDist3FlowPfSolution(powerio_prob::LinDist3FlowPfSolution),
     LinDist3FlowOpfSolution(powerio_prob::LinDist3FlowOpfSolution),
     AcScucSolution(powerio_prob::AcScucSolution),
 }
@@ -343,6 +345,7 @@ impl PioValue {
             Self::AcOpfInstance(_) => "powerio.AcOpfInstance",
             Self::McAcPfInstance(_) => "powerio.McAcPfInstance",
             Self::McAcOpfInstance(_) => "powerio.McAcOpfInstance",
+            Self::LinDist3FlowPfInstance(_) => "powerio.LinDist3FlowPfInstance",
             Self::LinDist3FlowOpfInstance(_) => "powerio.LinDist3FlowOpfInstance",
             Self::AcScucInstance(_) => "powerio.AcScucInstance",
             Self::DcPfSolution(_) => "powerio.DcPfSolution",
@@ -352,6 +355,7 @@ impl PioValue {
             Self::SocwrOpfSolution(_) => "powerio.SocwrOpfSolution",
             Self::McAcPfSolution(_) => "powerio.McAcPfSolution",
             Self::McAcOpfSolution(_) => "powerio.McAcOpfSolution",
+            Self::LinDist3FlowPfSolution(_) => "powerio.LinDist3FlowPfSolution",
             Self::LinDist3FlowOpfSolution(_) => "powerio.LinDist3FlowOpfSolution",
             Self::AcScucSolution(_) => "powerio.AcScucSolution",
         }
@@ -390,6 +394,7 @@ value_conversion!(powerio_prob::DcOpfInstance, DcOpfInstance);
 value_conversion!(powerio_prob::AcOpfInstance, AcOpfInstance);
 value_conversion!(powerio_prob::McAcPfInstance, McAcPfInstance);
 value_conversion!(powerio_prob::McAcOpfInstance, McAcOpfInstance);
+value_conversion!(powerio_prob::LinDist3FlowPfInstance, LinDist3FlowPfInstance);
 value_conversion!(
     powerio_prob::LinDist3FlowOpfInstance,
     LinDist3FlowOpfInstance
@@ -402,6 +407,7 @@ value_conversion!(powerio_prob::AcOpfSolution, AcOpfSolution);
 value_conversion!(powerio_prob::solution::SocwrOpfSolution, SocwrOpfSolution);
 value_conversion!(powerio_prob::McAcPfSolution, McAcPfSolution);
 value_conversion!(powerio_prob::McAcOpfSolution, McAcOpfSolution);
+value_conversion!(powerio_prob::LinDist3FlowPfSolution, LinDist3FlowPfSolution);
 value_conversion!(
     powerio_prob::LinDist3FlowOpfSolution,
     LinDist3FlowOpfSolution

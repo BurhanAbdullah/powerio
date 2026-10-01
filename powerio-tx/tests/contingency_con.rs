@@ -105,14 +105,17 @@ fn a_generated_psse_35_file_keeps_its_header_and_specification() {
             "COM WRITTEN BY THE CONTINGENCY DESCRIPTION BUILDER".to_owned(),
         ]
     );
-    assert!(parsed.set.cases.is_empty());
+    assert_eq!(parsed.set.cases, [] as [powerio_tx::ContingencyCase; 0]);
     assert_eq!(parsed.set.automatic.len(), 1);
     let spec = &parsed.set.automatic[0];
     assert_eq!(spec.order, AutomaticOrder::Single);
     assert_eq!(spec.target, AutomaticTarget::Branch);
     assert_eq!(spec.subsystem, "WOA");
     assert!(!spec.low_voltage_3w);
-    assert!(parsed.set.retained.is_empty());
+    assert_eq!(
+        parsed.set.retained,
+        [] as [powerio_tx::RetainedStatement; 0]
+    );
     assert!(
         parsed
             .set
@@ -203,11 +206,14 @@ fn explicit_cases_read_every_action_the_grammar_states() {
             ContingencyAction::RemoveSwitchedShunt { bus: BusId(8125) },
         ]
     );
-    assert!(cases[6].actions.is_empty());
+    assert_eq!(cases[6].actions, [] as [powerio_tx::ContingencyAction; 0]);
     // The mid-file COM line is a comment, not a header line and not a
     // statement.
-    assert!(parsed.set.header.is_empty());
-    assert!(parsed.set.retained.is_empty());
+    assert_eq!(parsed.set.header, [] as [std::string::String; 0]);
+    assert_eq!(
+        parsed.set.retained,
+        [] as [powerio_tx::RetainedStatement; 0]
+    );
 }
 
 #[test]
@@ -524,7 +530,7 @@ fn structural_errors_name_their_line() {
 fn a_statement_outside_a_case_is_kept_at_file_level() {
     let parsed = ContingencySet::parse("OPEN LINE FROM BUS 1 TO BUS 2\n").expect("parse");
     assert_eq!(codes(&parsed), vec!["READ.CON.STATEMENT_UNRECOGNIZED"]);
-    assert!(parsed.set.cases.is_empty());
+    assert_eq!(parsed.set.cases, [] as [powerio_tx::ContingencyCase; 0]);
     assert_eq!(parsed.set.retained[0].text, "OPEN LINE FROM BUS 1 TO BUS 2");
     assert_eq!(parsed.set.retained[0].line, 1);
     assert!(!parsed.set.retained[0].after_end);
@@ -534,7 +540,10 @@ fn a_statement_outside_a_case_is_kept_at_file_level() {
 fn comment_and_blank_lines_after_the_file_end_state_nothing() {
     let parsed = ContingencySet::parse("CONTINGENCY 'A'\nEND\nEND\nCOM done\n\n").expect("parse");
     assert!(parsed.diagnostics.is_empty(), "{:?}", codes(&parsed));
-    assert!(parsed.set.retained.is_empty());
+    assert_eq!(
+        parsed.set.retained,
+        [] as [powerio_tx::RetainedStatement; 0]
+    );
     assert_eq!(parsed.set.cases.len(), 1);
     check_fixed_point(&parsed);
 }
@@ -562,7 +571,7 @@ fn a_file_of_one_end_is_an_empty_set() {
 fn a_skip_line_that_states_no_branch_is_reported_and_kept() {
     let parsed = ContingencySet::parse("SKIP\nALL TIES\nEND\nEND\n").expect("parse");
     assert_eq!(codes(&parsed), vec!["READ.CON.SOURCE_MALFORMED"]);
-    assert!(parsed.set.skips.is_empty());
+    assert_eq!(parsed.set.skips, [] as [powerio_tx::SkipRule; 0]);
     assert_eq!(parsed.set.retained[0].text, "ALL TIES");
 }
 
@@ -612,7 +621,7 @@ fn one_finding_past_the_budget_records_the_marker_in_its_place() {
 fn statements_after_the_file_end_are_written_after_the_end() {
     let parsed = ContingencySet::parse("END\nCONTINGENCY 'B'\nEND\n").expect("parse");
     assert_eq!(codes(&parsed), vec!["READ.CON.TEXT_AFTER_END"]);
-    assert!(parsed.set.cases.is_empty());
+    assert_eq!(parsed.set.cases, [] as [powerio_tx::ContingencyCase; 0]);
     let retained: Vec<&str> = parsed
         .set
         .retained
@@ -634,9 +643,9 @@ fn statements_after_the_file_end_are_written_after_the_end() {
 #[test]
 fn a_skip_block_after_the_file_end_stays_text() {
     let parsed = ContingencySet::parse("END\nSKIP\n100 TO 200 CIRCUIT 1\nEND\n").expect("parse");
-    assert!(parsed.set.skips.is_empty());
+    assert_eq!(parsed.set.skips, [] as [powerio_tx::SkipRule; 0]);
     let again = ContingencySet::parse(&parsed.set.to_con()).expect("read the written set");
-    assert!(again.set.skips.is_empty());
+    assert_eq!(again.set.skips, [] as [powerio_tx::SkipRule; 0]);
     assert_eq!(again.set.retained.len(), 3);
     check_fixed_point(&parsed);
 }
@@ -707,7 +716,7 @@ fn an_id_opening_with_a_slash_is_written_quoted() {
 fn a_value_holding_both_quote_characters_is_kept_as_text() {
     let name = ContingencySet::parse("CONTINGENCY A'B\"C\nEND\n").expect("parse");
     assert_eq!(codes(&name), vec!["READ.CON.SOURCE_MALFORMED"]);
-    assert!(name.set.cases.is_empty());
+    assert_eq!(name.set.cases, [] as [powerio_tx::ContingencyCase; 0]);
     assert_eq!(name.set.retained[0].text, "CONTINGENCY A'B\"C");
     assert!(!name.set.retained[0].after_end);
     check_fixed_point(&name);
@@ -726,7 +735,10 @@ fn a_value_holding_both_quote_characters_is_kept_as_text() {
     let subsystem =
         ContingencySet::parse("SINGLE BRANCH IN SUBSYSTEM A'B\"C\nEND\n").expect("parse");
     assert_eq!(codes(&subsystem), vec!["READ.CON.SOURCE_MALFORMED"]);
-    assert!(subsystem.set.automatic.is_empty());
+    assert_eq!(
+        subsystem.set.automatic,
+        [] as [powerio_tx::AutomaticSpec; 0]
+    );
     assert_eq!(
         subsystem.set.retained[0].text,
         "SINGLE BRANCH IN SUBSYSTEM A'B\"C"
@@ -735,7 +747,7 @@ fn a_value_holding_both_quote_characters_is_kept_as_text() {
 
     let skip = ContingencySet::parse("SKIP\n100 TO 200 CIRCUIT A'B\"C\nEND\nEND\n").expect("parse");
     assert_eq!(codes(&skip), vec!["READ.CON.SOURCE_MALFORMED"]);
-    assert!(skip.set.skips.is_empty());
+    assert_eq!(skip.set.skips, [] as [powerio_tx::SkipRule; 0]);
     assert_eq!(skip.set.retained[0].text, "100 TO 200 CIRCUIT A'B\"C");
     check_fixed_point(&skip);
 }
@@ -754,7 +766,10 @@ fn a_contingency_line_states_one_name_and_reports_the_rest() {
     assert_eq!(parsed.set.cases.len(), 1);
     assert_eq!(parsed.set.cases[0].name, "A");
     assert_eq!(parsed.set.cases[0].actions.len(), 1);
-    assert!(parsed.set.retained.is_empty());
+    assert_eq!(
+        parsed.set.retained,
+        [] as [powerio_tx::RetainedStatement; 0]
+    );
     check_fixed_point(&parsed);
 }
 
@@ -825,6 +840,6 @@ fn the_local_stressed_corpus_reads_completely() {
     let text = std::fs::read_to_string(&path).expect("read the corpus file");
     let parsed = ContingencySet::parse(&text).expect("parse the corpus file");
     assert!(parsed.diagnostics.is_empty(), "{:?}", codes(&parsed));
-    assert!(!parsed.set.cases.is_empty());
+    assert_ne!(parsed.set.cases, [] as [powerio_tx::ContingencyCase; 0]);
     check_fixed_point(&parsed);
 }

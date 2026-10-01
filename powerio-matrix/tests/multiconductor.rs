@@ -325,7 +325,7 @@ fn a_parsed_micro_feeder_assembles_end_to_end() {
     assert!(system.index().len() >= 6, "three phases at two buses");
     assert!(system.susceptance().nnz() > 0);
     // The source anchors the system through the augmented rows.
-    assert!(!system.augmented().labels.is_empty());
+    assert_ne!(system.augmented().labels, [] as [std::string::String; 0]);
 }
 
 #[test]

@@ -2885,7 +2885,7 @@ fn a_name_declared_at_the_top_level_and_under_extras_reads_once() {
 fn an_orphan_transformer_overlay_warns() {
     let text = doc_with(r#", "extras": {"transformer": {"single_phase": {"t": {"tap": 1.05}}}}"#);
     let net = parse_bmopf_str(&text).unwrap();
-    assert!(net.transformers().is_empty());
+    assert_eq!(net.transformers().as_slice(), []);
     assert!(
         net.warnings
             .iter()
@@ -3614,7 +3614,7 @@ fn bmopf_regulator_subtypes_round_trip_verbatim() {
     let net = parse_bmopf_str(text).unwrap();
     // Typed reads: the autotransformer is one row, the open delta bank its
     // two legs, none of them untyped.
-    assert!(net.untyped_objects().is_empty());
+    assert_eq!(net.untyped_objects().as_slice(), []);
     let by_name = |name: &str| {
         net.transformers()
             .iter()

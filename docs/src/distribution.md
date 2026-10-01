@@ -148,11 +148,31 @@ the selected solver determines whether and how they enter its objective.
 ## LinDist3Flow bindings
 
 Python and Julia expose `LinDist3FlowOpfInstance` and `LinDist3FlowOpfSolution`
-as typed module values. `to_lindist3flow_opf_instance` constructs an instance
+as typed module values. Rust and Python also expose the distinct fixed-dispatch
+`LinDist3FlowPfInstance` and `LinDist3FlowPfSolution` types.
+`to_lindist3flow_opf_instance` constructs an instance
 from a supported phase-only network or multiconductor AC OPF instance.
 `instance.metadata` supplies the node and conductor axes, roots, and fixed
-reference voltages. Line powers follow the reported parent-to-child direction.
+reference voltages. It also reports whether the retained conductor graph is
+meshed. Line powers follow the reported parent-to-child direction.
 Python positions are zero based; Julia positions are one based.
+
+Cycles and parallel lines remain in the LinDist3Flow equations. PowerIO emits
+`BUILD.LINDIST3FLOW.MESH_APPROXIMATION` for such an instance because it does
+not add angle recovery, loop-consistency equations, circulating-flow
+regularisation, or automatic radialisation. Mesh feasibility therefore means
+feasibility of this declared linear approximation, not AC feasibility or a
+unique physical allocation of branch flows.
+
+`LinDist3FlowBuildOptions::unsupported` selects the component-preparation
+policy. `Reject` keeps the strict boundary. `Lower` applies audited static
+neutral, switch, line-shunt and capacitor transformations. `Approximate` also
+linearizes supported load models and maps IBRs to static generators while
+freezing named controls. `Permissive` can additionally omit retained untyped
+records. `instance.source_network()` remains the caller's input,
+`instance.network()` is the prepared calculation network, and
+`instance.preparation()` records every action. The serialized instance stores
+the source network and reconstructs the preparation report on read.
 
 Solutions expose their instance, termination, objective, and named primal
 columns: `terminal_voltage_magnitude_squared`, `line_active_power`,
@@ -162,6 +182,16 @@ volts and power values use watts or vars. Node and line columns follow the
 metadata axes; generator and source columns follow network table order, then
 channel order. Each returned column is an independent copy.
 
+`to_lindist3flow_pf_instance` requires finite prescribed generator/IBR P/Q
+(or equal lower and upper bounds), clears the objective, and removes conductor
+limits from the conic constraint set. After a converged solve,
+`evaluate_lindist3flow_pf_limits` reports retained line apparent-power and
+both-end current ratings in VA or A, including loading ratios and overload
+flags. These checks explicitly state `constraint_enforced = false`.
+Transformer/regulator lowering and their thermal checks remain unsupported;
+the preparation report records any selected omission rather than presenting
+an incomplete report as comprehensive.
+
 C ABI 7 adds `pio_value_lindist3flow_opf_instance`,
 `pio_value_lindist3flow_opf_solution`, and
 `pio_module_to_lindist3flow_opf_instance`. The generic calculation accessors
@@ -170,10 +200,14 @@ columns. `pio_lindist3flow_opf_instance_node_at` and
 `pio_lindist3flow_opf_instance_conductor_at` return borrowed typed axis views.
 Their strings stay valid while the instance handle remains alive.
 Sparse conic preparation and solver adapters remain Rust APIs.
+The fixed-dispatch types add no ABI 7 symbols; they remain available through
+Rust, Python, and IR version 2 until a future C ABI revision can add a
+fixed symbol set deliberately.
 
-PowerIO 0.11.1 writes these values in IR version 2. LinDist3Flow adds new
-structural type names; readers without those types reject them, while existing
-network and calculation records keep their representation.
+PowerIO 0.11.1 writes the OPF pair in IR version 2, and 0.11.4 adds the
+fixed-dispatch pair under the same version. Readers without those structural types
+reject them, while existing network and calculation records keep their
+representation.
 
 
 ## Solver adapters, including Tellegen
@@ -197,6 +231,13 @@ projection, calculation, and result storage:
    then construct `LinDist3FlowOpfSolution` with the retained instance,
    termination, decoded values, and objective. Store the result in a module
    and call `powerio::serialize` for IR 2 output.
+
+For fixed dispatch, use `build_lindist3flow_pf_standard_form`, decode with
+`lindist3flow_pf_values_from_standard_primal`, and construct a
+`LinDist3FlowPfSolution`. Its constructor evaluates retained ratings after a
+converged result; `evaluate_lindist3flow_pf_limits` exposes the same report for
+preview. The compiled objective is identically zero; line thermal cones are
+intentionally omitted.
 
 Tellegen can reuse this Rust boundary for native and WebAssembly adapters.
 The remaining consumer work is solver dispatch, capability checks, and

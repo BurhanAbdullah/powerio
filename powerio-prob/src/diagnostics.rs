@@ -51,11 +51,30 @@ pub mod codes {
             "a network component is outside the implemented LinDist3Flow slice",
             category = Data;
         BUILD_LINDIST3FLOW_TOPOLOGY_INVALID = "BUILD.LINDIST3FLOW.TOPOLOGY_INVALID", Error,
-            "the conductor-resolved network is not a source-rooted forest", category = Data;
+            "the conductor-resolved network is not a valid source-covered graph", category = Data;
+        BUILD_LINDIST3FLOW_MESH_APPROXIMATION =
+            "BUILD.LINDIST3FLOW.MESH_APPROXIMATION", Warning,
+            "a meshed LinDist3Flow model omits angle and loop-consistency equations";
         BUILD_LINDIST3FLOW_REFERENCE_INVALID = "BUILD.LINDIST3FLOW.REFERENCE_INVALID", Error,
             "the LinDist3Flow coefficient reference is missing or invalid", category = Data;
         BUILD_LINDIST3FLOW_POLICY_UNAVAILABLE = "BUILD.LINDIST3FLOW.POLICY_UNAVAILABLE", Error,
             "the requested LinDist3Flow projection policy is not implemented", category = Data;
+        BUILD_LINDIST3FLOW_PREPARATION_FAILED =
+            "BUILD.LINDIST3FLOW.PREPARATION_FAILED", Error,
+            "a selected LinDist3Flow component preparation failed", category = Data;
+        BUILD_LINDIST3FLOW_COMPONENT_LOWERED =
+            "BUILD.LINDIST3FLOW.COMPONENT_LOWERED", Warning,
+            "a distribution component was lowered to the LinDist3Flow vocabulary";
+        BUILD_LINDIST3FLOW_COMPONENT_APPROXIMATED =
+            "BUILD.LINDIST3FLOW.COMPONENT_APPROXIMATED", Warning,
+            "a distribution component was approximated for LinDist3Flow";
+        BUILD_LINDIST3FLOW_COMPONENT_OMITTED =
+            "BUILD.LINDIST3FLOW.COMPONENT_OMITTED", Warning,
+            "source data with no retained LinDist3Flow role was omitted";
+        BUILD_LINDIST3FLOW_FIXED_DISPATCH_REQUIRED =
+            "BUILD.LINDIST3FLOW.FIXED_DISPATCH_REQUIRED", Error,
+            "fixed-dispatch LinDist3Flow requires fixed generator active and reactive power",
+            category = Data;
         BUILD_LINDIST3FLOW_OBJECTIVE_UNSUPPORTED =
             "BUILD.LINDIST3FLOW.OBJECTIVE_UNSUPPORTED", Error,
             "the LinDist3Flow objective is outside the implemented formulation",
@@ -71,6 +90,9 @@ pub mod codes {
             "a branch value produced a non-finite operator entry", category = Data;
         BUILD_SOLUTION_SHAPE_MISMATCH = "BUILD.SOLUTION.SHAPE_MISMATCH", Error,
             "a solution column disagrees with the instance's element tables",
+            category = Data;
+        BUILD_SOLUTION_LIMIT_CHECK_INVALID = "BUILD.SOLUTION.LIMIT_CHECK_INVALID", Error,
+            "a semantic limit check is inconsistent with its instance or reported values",
             category = Data;
         BUILD_SOLUTION_MULTIPLIER_INVALID = "BUILD.SOLUTION.MULTIPLIER_INVALID", Error,
             "a constraint multiplier is negative or non-finite", category = Data;

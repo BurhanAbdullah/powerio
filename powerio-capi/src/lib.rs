@@ -21499,7 +21499,7 @@ mod tests {
                 member.as_mut_ptr(),
                 &mut error,
             ));
-            assert!(!view_text(member.assume_init().local_id).is_empty());
+            assert_ne!(view_text(member.assume_init().local_id), "");
 
             let mut boundary = std::mem::MaybeUninit::<PioBoundaryLineView>::uninit();
             assert!(pio_detailed_connectivity_boundary_line_at(
@@ -23943,7 +23943,10 @@ mpc.gencost = [
             );
             let skipped = pio_dc_operators_skipped_branch_rows(operators);
             assert_eq!(std::slice::from_raw_parts(skipped.data, skipped.len), &[0]);
-            assert!(!view_text(pio_dc_operators_branch_identity(operators, 0)).is_empty());
+            assert_ne!(
+                view_text(pio_dc_operators_branch_identity(operators, 0)),
+                ""
+            );
             let past_end = pio_dc_operators_branch_identity(operators, 1);
             assert!(past_end.data.is_null());
             assert_eq!(past_end.len, 0);

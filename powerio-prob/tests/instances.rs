@@ -62,8 +62,8 @@ fn costless_networks_construct_explicit_feasibility_opf_instances() {
 
     let dc = DcOpfInstance::from_network(net.clone()).unwrap();
     let ac = AcOpfInstance::from_network(net).unwrap();
-    assert!(dc.objective().terms().is_empty());
-    assert!(ac.objective().terms().is_empty());
+    assert_eq!(dc.objective().terms(), []);
+    assert_eq!(ac.objective().terms(), []);
 }
 
 #[test]

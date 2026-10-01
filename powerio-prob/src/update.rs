@@ -2438,7 +2438,7 @@ mod tests {
         .unwrap();
         assert!(report.is_empty());
         assert!(module.source().is_some());
-        assert!(module.history().is_empty());
+        assert_eq!(module.history(), []);
     }
 
     #[test]
@@ -2524,7 +2524,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.info().unwrap().code, "VALIDATE.UPDATE.VALUE_INVALID");
         assert_number_eq(module.value().network().loads()[0].p, 0.0);
-        assert!(module.history().is_empty());
+        assert_eq!(module.history(), []);
     }
 
     #[test]

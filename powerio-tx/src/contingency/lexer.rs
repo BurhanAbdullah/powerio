@@ -248,7 +248,7 @@ mod tests {
                 LineKind::Statement,
             ]
         );
-        assert!(lines[4].tokens.is_empty());
+        assert_eq!(lines[4].tokens.as_slice(), []);
         assert_eq!(lines[4].text, "COM banner");
     }
 

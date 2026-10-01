@@ -17,6 +17,19 @@
   snapshot path names a type catalog of that version. This changelog has an
   open section again.
 
+- Accept LinDist3Flow conductor cycles and parallel lines while retaining each
+  line's nodal-balance and squared-voltage-drop equations. Meshed instances
+  report that angle and loop-consistency equations are intentionally absent.
+
+- Implement the LinDist3Flow preparation-policy ladder with typed provenance:
+  lower neutral, switch, line-shunt and capacitor data; approximate supported
+  loads and static IBRs; and preserve the source network through IR round trips.
+
+- Add distinct fixed-dispatch LinDist3Flow instance and solution types with a
+  zero objective, monitored rather than enforced line thermal ratings, SI
+  loading reports, and Rust/Python APIs. The IR version stays 2; the schema
+  `pio-ir/2/0.11.4/schema.json` describes the two new structural types.
+
 ## 0.11.3
 
 - Read and write PSS/E contingency description files (`.con`) through

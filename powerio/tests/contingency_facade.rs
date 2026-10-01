@@ -32,7 +32,7 @@ fn each_file_parses_to_its_own_value_with_the_reader_notes() {
             con.value().type_name()
         );
     };
-    assert!(!set.cases.is_empty());
+    assert_ne!(set.cases, [] as [powerio::ContingencyCase; 0]);
     assert_eq!(
         con.source()
             .and_then(|s| s.format())
@@ -63,7 +63,7 @@ fn each_file_parses_to_its_own_value_with_the_reader_notes() {
             mon.value().type_name()
         );
     };
-    assert!(!set.statements.is_empty());
+    assert_ne!(set.statements, [] as [powerio::MonitorStatement; 0]);
     assert!(
         mon.diagnostics()
             .iter()

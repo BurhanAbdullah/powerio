@@ -92,7 +92,7 @@ mod tests {
                 module.value().type_name()
             );
         };
-        assert!(!network.buses().is_empty());
+        assert_ne!(network.buses().as_slice(), []);
 
         let serialized =
             powerio::serialize(&module, powerio::Destination::memory("module").unwrap()).unwrap();
