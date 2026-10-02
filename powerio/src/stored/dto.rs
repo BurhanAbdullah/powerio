@@ -290,6 +290,17 @@ fn bounded_history<'de, D: Deserializer<'de>>(
 const MAX_STORED_COLLECTION_ENTRIES: usize = 65_536;
 const MAX_STORED_OPERATING_POINT_QUANTITIES: usize = 64;
 
+/// Entries one stored operating point or solution vector may carry, values
+/// and identities alike. These vectors run over network elements, and a
+/// multiconductor vector has one entry per bus terminal, so the bound is
+/// dimensional rather than the generic collection bound: a 27,239 bus BMOPF
+/// feeder already has 106,038 terminals. 2^22 is about six times the
+/// 676,529 terminals of the largest real distribution model measured. A
+/// vector at the bound holds 32 MiB of `f64`, and decoding still refuses the
+/// first entry past it. The writer refuses a longer vector, so `serialize`
+/// never writes one that `deserialize` rejects.
+pub(super) const MAX_STORED_OPERATING_POINT_VALUES: usize = 4_194_304;
+
 fn bounded_collection_entries<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Vec<T>, D::Error> {
@@ -306,7 +317,7 @@ fn bounded_operating_point_identities<'de, D: Deserializer<'de>>(
     limits::bounded_vec(
         deserializer,
         "operating point identities",
-        MAX_STORED_COLLECTION_ENTRIES,
+        MAX_STORED_OPERATING_POINT_VALUES,
     )
 }
 
@@ -316,7 +327,7 @@ fn bounded_operating_point_values<'de, D: Deserializer<'de>>(
     limits::bounded_vec(
         deserializer,
         "operating point values",
-        MAX_STORED_COLLECTION_ENTRIES,
+        MAX_STORED_OPERATING_POINT_VALUES,
     )
 }
 
@@ -2095,6 +2106,36 @@ mod decode_bound_tests {
                 .contains("more than 65536 collection entries"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn operating_point_values_are_refused_past_the_dimensional_bound() {
+        let quantity = |count: usize| {
+            let values = vec!["0"; count].join(",");
+            format!(r#"{{"identities":[],"values":[{values}]}}"#)
+        };
+        let accepted =
+            serde_json::from_str::<StoredQuantity>(&quantity(MAX_STORED_OPERATING_POINT_VALUES))
+                .unwrap();
+        assert_eq!(accepted.values.len(), MAX_STORED_OPERATING_POINT_VALUES);
+        let error = serde_json::from_str::<StoredQuantity>(&quantity(
+            MAX_STORED_OPERATING_POINT_VALUES + 1,
+        ))
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("more than 4194304 operating point values"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn operating_point_identities_pass_the_generic_collection_bound() {
+        let identities = vec![r#""t""#; MAX_STORED_COLLECTION_ENTRIES + 1].join(",");
+        let text = format!(r#"{{"identities":[{identities}],"values":[]}}"#);
+        let quantity = serde_json::from_str::<StoredQuantity>(&text).unwrap();
+        assert_eq!(quantity.identities.len(), MAX_STORED_COLLECTION_ENTRIES + 1);
     }
 
     #[test]
