@@ -1163,6 +1163,9 @@ Schema definition: `StoredQuantity`.
 | `identities` | array of string | | | each names a component of the network; unique; same length as `values` | required |
 | `values` | array of float | the quantity's unit; a flag is 0 or 1 | | | required |
 
+`identities` and `values` carry at most 4,194,304 entries each; see
+[Resource limits](pio-json-schema.md#resource-limits).
+
 An operating point stored inside a collection or an instance omits the
 network, because the enclosing record gives it once.
 
@@ -1649,7 +1652,10 @@ generator. Injections are net injections into the network at a bus,
 positive for generation; branch flows are measured into the branch at the
 named terminal. Each solution says how the calculation ended and what
 residuals the producer reported. `producer` is the producer's free text
-solver identity, or null.
+solver identity, or null. In the DC, AC, SOCWR, multiconductor, and
+LinDist3Flow solutions, a per bus, branch, generator, terminal, source, or
+conductor array carries at most 4,194,304 entries; see
+[Resource limits](pio-json-schema.md#resource-limits).
 
 `Termination` is tagged by `kind`: `converged`, `iteration_limit`,
 `infeasible`, `unbounded`, `failed`, or `not_reported`, for a source that
