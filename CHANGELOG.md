@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Read back multiconductor solutions over more than 65,536 bus terminals.
+  Operating point and solution vectors carry up to 4,194,304 (2^22) entries
+  each, required and optional arrays alike, so a 106,038 terminal
+  `McAcPfSolution` that `serialize` wrote no longer fails `deserialize` with
+  `READ.MODULE.INVALID`. Time series, scenario sets, and three winding
+  transformer power records keep the 65,536 entry bound. Decoding still
+  refuses the first entry past a bound, and `serialize` refuses a longer
+  operating point or solution vector with the new `EMIT.MODULE.RECORD_CAP`
+  error instead of writing a document the reader refuses. The IR version and
+  the schema are unchanged.
+
 - `scripts/check-capi-v7.sh` checks the C entry point names in both
   directions against a paired PowerIO.jl checkout. Every entry point ABI 7
   declares must be called by the binding or listed in the binding's

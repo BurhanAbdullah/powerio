@@ -117,6 +117,23 @@ records, extension data, collection lengths, ID lengths, and nested value
 depth. Hitting a limit produces a structured PowerIO diagnostic rather than
 an allocation failure or a truncated result.
 
+Stored collections have two entry bounds. Operating point and solution
+vectors follow the network's dimensions: each `StoredQuantity`'s `identities`
+and `values`, and every bus, branch, generator, terminal, source, and
+conductor array of a DC, AC, SOCWR, multiconductor, or LinDist3Flow solution,
+optional arrays included, carries at most 4,194,304 (2^22) entries. A
+multiconductor solution has one entry per bus terminal, so solutions over up
+to 4,194,304 bus terminals round trip. The reader refuses the first entry
+past the bound with `READ.MODULE.INVALID`, and `serialize` refuses a longer
+vector with `EMIT.MODULE.RECORD_CAP` rather than write a document the reader
+refuses. Time series and scenario sets carry at most 65,536 entries each, as
+do the three winding transformer power records of a solution. A stored
+operating point names at most 64 quantities.
+
+These bounds count entries, not bytes. `deserialize` applies the primary file
+limit to a path, 64 MiB unless `POWERIO_MAX_PRIMARY_BYTES` sets another byte
+count, and no byte limit to content already in memory.
+
 ## IR versions
 
 The integer `version` is the IR version of the serialized representation. It

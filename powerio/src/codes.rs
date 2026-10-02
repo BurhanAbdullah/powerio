@@ -101,6 +101,9 @@ powerio_core::diagnostic_codes! {
         "serializing LinDist3Flow options for transform history failed", category = Output;
     EMIT_MODULE_SERIALIZE_FAILED = "EMIT.MODULE.SERIALIZE_FAILED", Error,
         "serializing the stored document to JSON failed", category = Output;
+    EMIT_MODULE_RECORD_CAP = "EMIT.MODULE.RECORD_CAP", Error,
+        "a stored record would exceed a bound the PowerIO IR reader enforces",
+        category = Request;
 }
 
 /// Every code this crate declares.
