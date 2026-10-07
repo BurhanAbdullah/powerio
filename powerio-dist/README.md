@@ -12,7 +12,7 @@ directory and written as one document.
 
 The explicit `sincal-multiconductor` reader maps verified native SINCAL profiles
 to the same model. Native SQLite/archive input uses `parse` with a declared
-format; `parse_sincal` and `SincalReadOptions` additionally select a variant,
+format; `parse_sincal` and `SincalReadOptions` additionally select a native `Variant_ID`,
 daily snapshot and explicitly acquired Access tables. Unsupported modes reject
 atomically. The `powerio` facade handles byte-exact native echo; a fresh SINCAL
 writer has a separate experimental scope. See the workspace SINCAL guide and
