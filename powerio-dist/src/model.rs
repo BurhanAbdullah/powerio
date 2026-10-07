@@ -30,6 +30,7 @@ pub type ConductorMatrix = Vec<Vec<f64>>;
 #[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum DistSourceFormat {
+    Sincal,
     Dss,
     BmopfJson,
     PmdJson,
@@ -37,10 +38,11 @@ pub enum DistSourceFormat {
 }
 
 impl DistSourceFormat {
-    /// The canonical format name (`dss`, `pmd-json`, `bmopf-json`,
-    /// `cim-dist`), accepted back by [`crate::parse_dist_target_format`].
+    /// The canonical source format name. A read-only format need not have a
+    /// corresponding [`crate::DistTargetFormat`].
     pub fn name(self) -> &'static str {
         match self {
+            DistSourceFormat::Sincal => "sincal",
             DistSourceFormat::Dss => "dss",
             DistSourceFormat::PmdJson => "pmd-json",
             DistSourceFormat::BmopfJson => "bmopf-json",

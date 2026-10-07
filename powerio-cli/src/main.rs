@@ -480,6 +480,9 @@ impl<'a> GenCostCliOptions<'a> {
 /// PowerWorld `.pwb` and the IEEE CDF have no emitter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum FormatArg {
+    /// Explicit conductor-resolved SINCAL input; unchanged native echo on output.
+    #[value(name = "sincal-multiconductor")]
+    SincalMulticonductor,
     /// Explicit balanced SINCAL input; unchanged binary echo only on output.
     #[value(name = "sincal-balanced")]
     SincalBalanced,
@@ -606,6 +609,7 @@ impl FormatArg {
             | FormatArg::Gridfm
             | FormatArg::Pwb
             | FormatArg::IeeeCdf
+            | FormatArg::SincalMulticonductor
             | FormatArg::SincalBalanced
             | FormatArg::Dss
             | FormatArg::PmdJson
@@ -614,6 +618,11 @@ impl FormatArg {
             | FormatArg::Bmopf020
             | FormatArg::CimDist => return None,
         })
+    }
+
+    /// Reader-family selection includes formats without a fresh writer.
+    fn is_distribution_input(self) -> bool {
+        self.distribution().is_some() || self == Self::SincalMulticonductor
     }
 
     /// The distribution target, or `None` outside that family. For every
@@ -652,6 +661,7 @@ impl FormatArg {
             | FormatArg::Gridfm
             | FormatArg::Pwb
             | FormatArg::IeeeCdf
+            | FormatArg::SincalMulticonductor
             | FormatArg::SincalBalanced => None,
         }
     }
@@ -659,6 +669,7 @@ impl FormatArg {
     /// The canonical name the format dispatcher accepts for forcing a parser.
     fn name(self) -> &'static str {
         match self {
+            FormatArg::SincalMulticonductor => "sincal-multiconductor",
             FormatArg::SincalBalanced => "sincal-balanced",
             FormatArg::Matpower => "matpower",
             FormatArg::PowerModelsJson => "powermodels-json",
@@ -2148,6 +2159,16 @@ fn convert_multiconductor_module(
     to: FormatArg,
     output: Option<&Path>,
 ) -> anyhow::Result<()> {
+    if to == FormatArg::SincalMulticonductor {
+        let Some(output) = output.filter(|p| p.as_os_str() != "-") else {
+            fail_with!(
+                REQUEST_CLI_OUTPUT_REQUIRED,
+                "binary SINCAL output requires -o <file>"
+            );
+        };
+        let result = powerio::emit(module, to.name(), powerio::Destination::path(output))?;
+        return finish_path_emission(module.diagnostics(), &result, output);
+    }
     let target = to.distribution().ok_or_else(|| {
         failure!(
             REQUEST_CLI_FAMILY_MISMATCH,
@@ -2926,7 +2947,7 @@ fn parse_family_case(input: &Path, from: Option<FormatArg>) -> anyhow::Result<Fa
         let f = stdin_format(from)?;
         let source = module_io::declare_format(stdin_source()?, Some(f.name()))
             .context("declaring the standard input format")?;
-        return if f.distribution().is_some() {
+        return if f.is_distribution_input() {
             let net = powerio_dist::parse(source).context("reading standard input")?;
             Ok(FamilyCase::Distribution(Box::new(net)))
         } else {
@@ -2942,7 +2963,7 @@ fn parse_family_case(input: &Path, from: Option<FormatArg>) -> anyhow::Result<Fa
                  subcommand, not this command",
             ));
         }
-        return if f.distribution().is_some() {
+        return if f.is_distribution_input() {
             let net = module_io::load_multiconductor_module(input, Some(f.name()))
                 .with_context(|| format!("reading {}", input.display()))?;
             Ok(FamilyCase::Distribution(Box::new(net)))
@@ -3015,7 +3036,7 @@ fn reject_nontransmission_from(from: Option<FormatArg>) -> anyhow::Result<()> {
                  subcommand, not this command"
             );
         }
-        if f.distribution().is_some() {
+        if f.is_distribution_input() {
             fail_with!(
                 REQUEST_CLI_FAMILY_MISMATCH,
                 "`{}` is a distribution format; this command reads transmission cases \
