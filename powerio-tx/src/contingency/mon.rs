@@ -1000,6 +1000,7 @@ fn resolve_statement(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_branches_in_subsystem(
     statement: &MonitorStatement,
     subsystem: &str,
