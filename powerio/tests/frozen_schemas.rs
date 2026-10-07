@@ -112,7 +112,80 @@ fn the_current_powerio_ir_schema_is_committed() {
     );
 }
 
-/// Published IR records remain backward compatible as the current catalog grows.\n/// Existing properties, required fields, variants, and their schemas cannot\n/// change. A current record may add optional properties, and a current\n/// discriminated catalog may add new variants. This keeps historical schema\n/// snapshots intact without treating every additive field as an IR break.\n#[test]\nfn the_generation_two_catalog_preserves_published_shapes() {\n    fn discriminator(value: &serde_json::Value) -> Option<&serde_json::Value> {\n        value["properties"]["kind"]["const"]\n            .as_str()\n            .map(|_| &value["properties"]["kind"]["const"])\n            .or_else(|| {\n                value["properties"]["type"]["const"]\n                    .as_str()\n                    .map(|_| &value["properties"]["type"]["const"])\n            })\n    }\n\n    fn assert_preserved(published: &serde_json::Value, current: &serde_json::Value, path: &str) {\n        match (published, current) {\n            (serde_json::Value::Object(old), serde_json::Value::Object(new)) => {\n                for (name, value) in old {\n                    let current_value = new.get(name).unwrap_or_else(|| {\n                        panic!("{path}.{name}: published schema member was removed")\n                    });\n                    assert_preserved(value, current_value, &format!("{path}.{name}"));\n                }\n            }\n            (serde_json::Value::Array(old), serde_json::Value::Array(new)) => {\n                let discriminated = old.iter().all(|value| discriminator(value).is_some());\n                if discriminated {\n                    for value in old {\n                        let key = discriminator(value).unwrap();\n                        let current_value = new\n                            .iter()\n                            .find(|candidate| discriminator(candidate) == Some(key))\n                            .unwrap_or_else(|| {\n                                panic!("{path}: published discriminated variant {key} was removed")\n                            });\n                        assert_preserved(value, current_value, path);\n                    }\n                } else {\n                    assert_eq!(old, new, "{path}: non-discriminated array changed");\n                }\n            }\n            _ => assert_eq!(published, current, "{path}: published schema changed"),\n        }\n    }\n\n    for earlier in [\n        "pio-ir/2/schema.json",\n        "pio-ir/2/0.11.1/schema.json",\n        "pio-ir/2/0.11.3/schema.json",\n    ] {\n        let mut published: serde_json::Value =\n            serde_json::from_str(&read_schema_file(earlier)).unwrap();\n        let mut current: serde_json::Value =\n            serde_json::from_str(&read_schema_file(CURRENT_SCHEMA)).unwrap();\n        let published_defs = published.as_object_mut().unwrap().remove("$defs").unwrap();\n        let current_defs = current.as_object_mut().unwrap().remove("$defs").unwrap();\n        published.as_object_mut().unwrap().remove("$id");\n        current.as_object_mut().unwrap().remove("$id");\n        assert_preserved(&published, &current, earlier);\n\n        for (name, definition) in published_defs.as_object().unwrap() {\n            let current_definition = current_defs\n                .get(name)\n                .unwrap_or_else(|| panic!("{earlier}: record {name} was removed"));\n            assert_preserved(definition, current_definition, &format!("{earlier}: record {name}"));\n        }\n    }\n}\n\n/// Every property of every value kind in the current document carries a type,
+/// Published IR records remain backward compatible as the current catalog grows.
+/// Existing properties, required fields, variants, and their schemas cannot
+/// change. A current record may add optional properties, and a current
+/// discriminated catalog may add new variants. This keeps historical schema
+/// snapshots intact without treating every additive field as an IR break.
+#[test]
+fn the_generation_two_catalog_preserves_published_shapes() {
+    fn discriminator(value: &serde_json::Value) -> Option<&serde_json::Value> {
+        value["properties"]["kind"]["const"]
+            .as_str()
+            .map(|_| &value["properties"]["kind"]["const"])
+            .or_else(|| {
+                value["properties"]["type"]["const"]
+                    .as_str()
+                    .map(|_| &value["properties"]["type"]["const"])
+            })
+    }
+
+    fn assert_preserved(published: &serde_json::Value, current: &serde_json::Value, path: &str) {
+        match (published, current) {
+            (serde_json::Value::Object(old), serde_json::Value::Object(new)) => {
+                for (name, value) in old {
+                    let current_value = new.get(name).unwrap_or_else(|| {
+                        panic!("{path}.{name}: published schema member was removed")
+                    });
+                    assert_preserved(value, current_value, &format!("{path}.{name}"));
+                }
+            }
+            (serde_json::Value::Array(old), serde_json::Value::Array(new)) => {
+                let discriminated = old.iter().all(|value| discriminator(value).is_some());
+                if discriminated {
+                    for value in old {
+                        let key = discriminator(value).unwrap();
+                        let current_value = new
+                            .iter()
+                            .find(|candidate| discriminator(candidate) == Some(key))
+                            .unwrap_or_else(|| {
+                                panic!("{path}: published discriminated variant {key} was removed")
+                            });
+                        assert_preserved(value, current_value, path);
+                    }
+                } else {
+                    assert_eq!(old, new, "{path}: non-discriminated array changed");
+                }
+            }
+            _ => assert_eq!(published, current, "{path}: published schema changed"),
+        }
+    }
+
+    for earlier in [
+        "pio-ir/2/schema.json",
+        "pio-ir/2/0.11.1/schema.json",
+        "pio-ir/2/0.11.3/schema.json",
+    ] {
+        let mut published: serde_json::Value =
+            serde_json::from_str(&read_schema_file(earlier)).unwrap();
+        let mut current: serde_json::Value =
+            serde_json::from_str(&read_schema_file(CURRENT_SCHEMA)).unwrap();
+        let published_defs = published.as_object_mut().unwrap().remove("$defs").unwrap();
+        let current_defs = current.as_object_mut().unwrap().remove("$defs").unwrap();
+        published.as_object_mut().unwrap().remove("$id");
+        current.as_object_mut().unwrap().remove("$id");
+        assert_preserved(&published, &current, earlier);
+
+        for (name, definition) in published_defs.as_object().unwrap() {
+            let current_definition = current_defs
+                .get(name)
+                .unwrap_or_else(|| panic!("{earlier}: record {name} was removed"));
+            assert_preserved(definition, current_definition, &format!("{earlier}: record {name}"));
+        }
+    }
+}
+
+/// Every property of every value kind in the current document carries a type,
 /// a `$ref`, or a composed schema.
 #[test]
 fn every_powerio_ir_property_is_typed() {
