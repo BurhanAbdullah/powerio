@@ -9270,7 +9270,10 @@
               "anyOf": [
                 {
                   "format": "double",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "null"
+                  ]
                 },
                 {
                   "enum": [
@@ -9280,7 +9283,8 @@
                   ],
                   "type": "string"
                 }
-              ]
+              ],
+              "description": "Optional base-kV filter on the subsystem's buses."
             },
             "name": {
               "type": "string"
