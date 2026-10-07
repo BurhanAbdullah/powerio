@@ -626,7 +626,10 @@ fn a_generated_monitored_element_file_reads_every_statement() {
     assert_eq!(
         statements[0],
         MonitorStatement::VoltageRange {
-            scope: MonitorScope::Subsystem { name: "A1".into(), kv: None },
+            scope: MonitorScope::Subsystem {
+                name: "A1".into(),
+                kv: None,
+            },
             vmin: 0.95,
             vmax: 1.05,
         }
@@ -957,15 +960,9 @@ END\n",
     );
 
     let written = check_mon_fixed_point(&parsed);
-    assert!(written.contains(
-        "MONITOR BRANCHES IN SUBSYSTEM 'A1' KVRANGE 200.0 240.0\n"
-    ));
-    assert!(written.contains(
-        "MONITOR TIES FROM SUBSYSTEM 'A1' KVRANGE 200.0 240.0\n"
-    ));
-    assert!(written.contains(
-        "MONITOR VOLTAGE RANGE SUBSYSTEM 'A1' KV 230.0 0.95 1.05\n"
-    ));
+    assert!(written.contains("MONITOR BRANCHES IN SUBSYSTEM 'A1' KVRANGE 200.0 240.0\n"));
+    assert!(written.contains("MONITOR TIES FROM SUBSYSTEM 'A1' KVRANGE 200.0 240.0\n"));
+    assert!(written.contains("MONITOR VOLTAGE RANGE SUBSYSTEM 'A1' KV 230.0 0.95 1.05\n"));
 }
 
 #[test]
@@ -991,10 +988,8 @@ END\n",
 
 #[test]
 fn monitored_kv_qualified_forms_keep_invalid_ranges_as_text() {
-    let reversed = MonitoredSet::parse(
-        "MONITOR BRANCHES IN SUBSYSTEM 'A1' KVRANGE 240 200\nEND\n",
-    )
-    .expect("parse reversed kV range");
+    let reversed = MonitoredSet::parse("MONITOR BRANCHES IN SUBSYSTEM 'A1' KVRANGE 240 200\nEND\n")
+        .expect("parse reversed kV range");
     assert_eq!(
         mon_codes(&reversed),
         vec!["READ.MON.STATEMENT_UNRECOGNIZED"]
@@ -1004,10 +999,9 @@ fn monitored_kv_qualified_forms_keep_invalid_ranges_as_text() {
         "MONITOR BRANCHES IN SUBSYSTEM 'A1' KVRANGE 240 200"
     );
 
-    let nonfinite = MonitoredSet::parse(
-        "MONITOR TIES FROM SUBSYSTEM 'A1' KVRANGE Infinity 240\nEND\n",
-    )
-    .expect("parse non-finite kV range");
+    let nonfinite =
+        MonitoredSet::parse("MONITOR TIES FROM SUBSYSTEM 'A1' KVRANGE Infinity 240\nEND\n")
+            .expect("parse non-finite kV range");
     assert_eq!(
         mon_codes(&nonfinite),
         vec!["READ.MON.STATEMENT_UNRECOGNIZED"]
@@ -1018,10 +1012,9 @@ fn monitored_kv_qualified_forms_keep_invalid_ranges_as_text() {
 fn monitored_subsystem_kv_scope_uses_kv_tolerance() {
     let net = select_network();
     let subsystems = parse_sub("selectors.sub").set;
-    let exact = MonitoredSet::parse(
-        "MONITOR VOLTAGE RANGE SUBSYSTEM 'A1' KV 230.0000005 0.95 1.05\nEND\n",
-    )
-    .expect("parse tolerant kV scope");
+    let exact =
+        MonitoredSet::parse("MONITOR VOLTAGE RANGE SUBSYSTEM 'A1' KV 230.0000005 0.95 1.05\nEND\n")
+            .expect("parse tolerant kV scope");
     let resolution = exact.set.resolve(&net, &subsystems);
     assert_eq!(
         resolution.voltage_ranges[0].bus_rows,
