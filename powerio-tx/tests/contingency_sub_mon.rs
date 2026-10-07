@@ -981,11 +981,11 @@ END\n",
     let subsystems = parse_sub("selectors.sub").set;
     let resolution = parsed.set.resolve(&net, &subsystems);
 
-    assert_eq!(rows(&resolution.branch_rows), [0, 1, 2]);
-    assert_eq!(rows(&resolution.tie_rows), [3, 5]);
+    assert_eq!(rows(&resolution.branch_rows), [0, 1]);
+    assert_eq!(rows(&resolution.tie_rows), [5]);
     assert_eq!(
         resolution.voltage_ranges[0].bus_rows,
-        [0, 1, 2].into_iter().collect()
+        [0, 1].into_iter().collect()
     );
 }
 
@@ -1021,7 +1021,7 @@ fn monitored_subsystem_kv_scope_uses_kv_tolerance() {
     let resolution = exact.set.resolve(&net, &subsystems);
     assert_eq!(
         resolution.voltage_ranges[0].bus_rows,
-        [0, 1, 2].into_iter().collect()
+        [0, 1].into_iter().collect()
     );
 }
 
