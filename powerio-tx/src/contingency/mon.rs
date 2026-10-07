@@ -484,12 +484,15 @@ fn is_end(line: &LexedLine<'_>) -> bool {
 // Statement grammar
 // ---------------------------------------------------------------------------
 
+/// Parsed subsystem monitor head plus its optional base-kV range.
+type SubsystemMonitorSpec = (String, bool, Option<(f64, f64)>);
+
 /// `IN|FROM SUBSYSTEM name [3WLOWVOLTAGE]` at `at`.
 fn parse_in_subsystem_kv(
     upper: &[String],
     words: &[&str],
     at: usize,
-) -> Option<(String, bool, Option<(f64, f64)>)> {
+) -> Option<SubsystemMonitorSpec> {
     let subsystem = words.get(at + 2)?.trim().to_owned();
     if !matches!(upper.get(at)?.as_str(), "IN" | "FROM") || upper.get(at + 1)? != "SUBSYSTEM" {
         return None;
@@ -923,52 +926,27 @@ fn resolve_statement(
             subsystem,
             low_voltage_3w,
             kv_range,
-        } => {
-            let Some(buses) = select(subsystems, subsystem, net) else {
-                unresolved_subsystem(statement, out);
-                return;
-            };
-            for (row, branch) in net.branches().iter().enumerate() {
-                if buses.contains(&branch.from)
-                    && buses.contains(&branch.to)
-                    && kv_range.is_none_or(|(lo, hi)| {
-                        bus_in_kv_range(net, branch.from, lo, hi)
-                            && bus_in_kv_range(net, branch.to, lo, hi)
-                    })
-                {
-                    out.branch_rows.insert(row);
-                }
-            }
-            if *low_voltage_3w {
-                for (row, transformer) in net.transformers_3w().iter().enumerate() {
-                    if buses.contains(&low_voltage_bus(net, index, transformer)) {
-                        out.transformer_3w_rows.insert(row);
-                    }
-                }
-            }
-        }
+        } => resolve_branches_in_subsystem(
+            statement,
+            subsystem,
+            *low_voltage_3w,
+            *kv_range,
+            net,
+            subsystems,
+            index,
+            out,
+        ),
         MonitorStatement::TiesFromSubsystem {
             subsystem,
             kv_range,
-        } => {
-            let Some(buses) = select(subsystems, subsystem, net) else {
-                unresolved_subsystem(statement, out);
-                return;
-            };
-            for (row, branch) in net.branches().iter().enumerate() {
-                let from_inside = buses.contains(&branch.from);
-                let to_inside = buses.contains(&branch.to);
-                let in_scope = match (from_inside, to_inside, *kv_range) {
-                    (true, false, Some((lo, hi))) => bus_in_kv_range(net, branch.from, lo, hi),
-                    (false, true, Some((lo, hi))) => bus_in_kv_range(net, branch.to, lo, hi),
-                    (true, false, None) | (false, true, None) => true,
-                    _ => false,
-                };
-                if from_inside != to_inside && in_scope {
-                    out.tie_rows.insert(row);
-                }
-            }
-        }
+        } => resolve_ties_from_subsystem(
+            statement,
+            subsystem,
+            *kv_range,
+            net,
+            subsystems,
+            out,
+        ),
         MonitorStatement::Branches { branches, .. } => {
             for branch in branches {
                 match bind_branch(index, branch) {
@@ -1025,6 +1003,67 @@ fn resolve_statement(
                 low: *down,
                 high: *up,
             });
+        }
+    }
+}
+
+fn resolve_branches_in_subsystem(
+    statement: &MonitorStatement,
+    subsystem: &str,
+    low_voltage_3w: bool,
+    kv_range: Option<(f64, f64)>,
+    net: &BalancedNetwork,
+    subsystems: &SubsystemSet,
+    index: &PsseEquipmentIndex,
+    out: &mut MonitoredResolution,
+) {
+    let Some(buses) = select(subsystems, subsystem, net) else {
+        unresolved_subsystem(statement, out);
+        return;
+    };
+    for (row, branch) in net.branches().iter().enumerate() {
+        if buses.contains(&branch.from)
+            && buses.contains(&branch.to)
+            && kv_range.is_none_or(|(lo, hi)| {
+                bus_in_kv_range(net, branch.from, lo, hi)
+                    && bus_in_kv_range(net, branch.to, lo, hi)
+            })
+        {
+            out.branch_rows.insert(row);
+        }
+    }
+    if low_voltage_3w {
+        for (row, transformer) in net.transformers_3w().iter().enumerate() {
+            if buses.contains(&low_voltage_bus(net, index, transformer)) {
+                out.transformer_3w_rows.insert(row);
+            }
+        }
+    }
+}
+
+fn resolve_ties_from_subsystem(
+    statement: &MonitorStatement,
+    subsystem: &str,
+    kv_range: Option<(f64, f64)>,
+    net: &BalancedNetwork,
+    subsystems: &SubsystemSet,
+    out: &mut MonitoredResolution,
+) {
+    let Some(buses) = select(subsystems, subsystem, net) else {
+        unresolved_subsystem(statement, out);
+        return;
+    };
+    for (row, branch) in net.branches().iter().enumerate() {
+        let from_inside = buses.contains(&branch.from);
+        let to_inside = buses.contains(&branch.to);
+        let in_scope = match (from_inside, to_inside, kv_range) {
+            (true, false, Some((lo, hi))) => bus_in_kv_range(net, branch.from, lo, hi),
+            (false, true, Some((lo, hi))) => bus_in_kv_range(net, branch.to, lo, hi),
+            (true, false, None) | (false, true, None) => true,
+            _ => false,
+        };
+        if from_inside != to_inside && in_scope {
+            out.tie_rows.insert(row);
         }
     }
 }
