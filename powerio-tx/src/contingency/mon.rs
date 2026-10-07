@@ -432,8 +432,7 @@ impl Reader {
                     });
                     return Some(Read::OpenedBlock);
                 }
-                let (subsystem, low_voltage_3w, kv_range) =
-                    parse_in_subsystem_kv(upper, words, 2)?;
+                let (subsystem, low_voltage_3w, kv_range) = parse_in_subsystem_kv(upper, words, 2)?;
                 Some(Read::Statement(MonitorStatement::BranchesInSubsystem {
                     subsystem,
                     low_voltage_3w,
@@ -493,9 +492,7 @@ fn parse_in_subsystem_kv(
     at: usize,
 ) -> Option<(String, bool, Option<(f64, f64)>)> {
     let subsystem = words.get(at + 2)?.trim().to_owned();
-    if !matches!(upper.get(at)?.as_str(), "IN" | "FROM")
-        || upper.get(at + 1)? != "SUBSYSTEM"
-    {
+    if !matches!(upper.get(at)?.as_str(), "IN" | "FROM") || upper.get(at + 1)? != "SUBSYSTEM" {
         return None;
     }
     let mut next = at + 3;
@@ -610,7 +607,7 @@ fn parse_scope(upper: &[String], words: &[&str], at: usize) -> Option<(MonitorSc
                 None
             };
             Some((MonitorScope::Subsystem { name, kv }, next))
-        },
+        }
         "BUS" => Some((
             MonitorScope::Bus {
                 bus: BusId(integer(1)?),
@@ -705,7 +702,10 @@ fn write_statement(statement: &MonitorStatement) -> String {
             };
             format!("MONITOR BRANCHES IN SUBSYSTEM '{subsystem}'{low}{kv}\n")
         }
-        MonitorStatement::TiesFromSubsystem { subsystem, kv_range } => {
+        MonitorStatement::TiesFromSubsystem {
+            subsystem,
+            kv_range,
+        } => {
             let kv = match kv_range {
                 Some((lo, hi)) => format!(" KVRANGE {} {}", decimal(*lo), decimal(*hi)),
                 None => String::new(),
