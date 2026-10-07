@@ -440,8 +440,7 @@ impl Reader {
                 }))
             }
             "TIES" => {
-                let (subsystem, low_voltage_3w, kv_range) =
-                    parse_in_subsystem_kv(upper, words, 2)?;
+                let (subsystem, low_voltage_3w, kv_range) = parse_in_subsystem_kv(upper, words, 2)?;
                 (!low_voltage_3w).then_some(Read::Statement(MonitorStatement::TiesFromSubsystem {
                     subsystem,
                     kv_range,
