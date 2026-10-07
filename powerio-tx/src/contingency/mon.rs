@@ -929,7 +929,13 @@ fn resolve_statement(
                 return;
             };
             for (row, branch) in net.branches().iter().enumerate() {
-                if buses.contains(&branch.from) && buses.contains(&branch.to) {
+                if buses.contains(&branch.from)
+                    && buses.contains(&branch.to)
+                    && kv_range.is_none_or(|(lo, hi)| {
+                        bus_in_kv_range(net, branch.from, lo, hi)
+                            && bus_in_kv_range(net, branch.to, lo, hi)
+                    })
+                {
                     out.branch_rows.insert(row);
                 }
             }
@@ -941,13 +947,21 @@ fn resolve_statement(
                 }
             }
         }
-        MonitorStatement::TiesFromSubsystem { subsystem } => {
+        MonitorStatement::TiesFromSubsystem { subsystem, .. } => {
             let Some(buses) = select(subsystems, subsystem, net) else {
                 unresolved_subsystem(statement, out);
                 return;
             };
             for (row, branch) in net.branches().iter().enumerate() {
-                if buses.contains(&branch.from) != buses.contains(&branch.to) {
+                let from_inside = buses.contains(&branch.from);
+                let to_inside = buses.contains(&branch.to);
+                let in_scope = match (from_inside, to_inside, kv_range) {
+                    (true, false, Some((lo, hi))) => bus_in_kv_range(net, branch.from, lo, hi),
+                    (false, true, Some((lo, hi))) => bus_in_kv_range(net, branch.to, lo, hi),
+                    (true, false, None) | (false, true, None) => true,
+                    _ => false,
+                };
+                if from_inside != to_inside && in_scope {
                     out.tie_rows.insert(row);
                 }
             }
