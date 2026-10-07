@@ -852,7 +852,7 @@ impl MonitoredResolution {
 fn describe(statement: &MonitorStatement, reason: &UnresolvedMonitorReason) -> String {
     let what = match statement {
         MonitorStatement::BranchesInSubsystem { subsystem, .. }
-        | MonitorStatement::TiesFromSubsystem { subsystem } => {
+        | MonitorStatement::TiesFromSubsystem { subsystem, .. } => {
             format!("monitored subsystem '{subsystem}'")
         }
         MonitorStatement::Branches { .. } => "monitored branches".to_owned(),
