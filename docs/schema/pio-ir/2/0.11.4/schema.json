@@ -9442,7 +9442,10 @@
                   ]
                 }
               ],
-              "type": "array"
+              "type": [
+                "array",
+                "null"
+              ]
             },
             "low_voltage_3w": {
               "description": "`3WLOWVOLTAGE`: also the three winding transformers whose lowest\nvoltage winding sits in the subsystem.",
@@ -9504,7 +9507,10 @@
                   ]
                 }
               ],
-              "type": "array"
+              "type": [
+                "array",
+                "null"
+              ]
             },
             "subsystem": {
               "type": "string"
