@@ -939,14 +939,7 @@ fn resolve_statement(
         MonitorStatement::TiesFromSubsystem {
             subsystem,
             kv_range,
-        } => resolve_ties_from_subsystem(
-            statement,
-            subsystem,
-            *kv_range,
-            net,
-            subsystems,
-            out,
-        ),
+        } => resolve_ties_from_subsystem(statement, subsystem, *kv_range, net, subsystems, out),
         MonitorStatement::Branches { branches, .. } => {
             for branch in branches {
                 match bind_branch(index, branch) {
@@ -1025,8 +1018,7 @@ fn resolve_branches_in_subsystem(
         if buses.contains(&branch.from)
             && buses.contains(&branch.to)
             && kv_range.is_none_or(|(lo, hi)| {
-                bus_in_kv_range(net, branch.from, lo, hi)
-                    && bus_in_kv_range(net, branch.to, lo, hi)
+                bus_in_kv_range(net, branch.from, lo, hi) && bus_in_kv_range(net, branch.to, lo, hi)
             })
         {
             out.branch_rows.insert(row);
