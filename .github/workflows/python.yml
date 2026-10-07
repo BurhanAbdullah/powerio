@@ -464,21 +464,15 @@ jobs:
 
   publish:
     name: publish to PyPI
-    # PRs validate the publication artifacts without uploading them. Real PyPI
-    # publication remains protected to release/manual-dispatch events.
-    # release-binaries.yml stages each release as a draft a human publishes, so
-    # the release event fires with a user actor (events from a workflow's
-    # GITHUB_TOKEN are swallowed by the recursion guard). Manual dispatch is the
-    # recovery path for a missed event. A prerelease still builds wheels and an
-    # sdist as run artifacts, but never uploads them to PyPI.
-    if: github.event_name == 'pull_request' || (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch'
+    # PRs validate the publication artifacts without uploading them. Releases
+    # retain the protected PyPI environment and real publication action.
     needs: [ release-preflight, lint, quality, test, test-gridfm, goc3-reference, wheels, wheel-smoke, sdist ]
     runs-on: ubuntu-latest
-    # Deployment protection (required reviewers, tag rules) lives on the pypi
-    # environment in the repo settings, not in this file.
-    environment: pypi
+    environment:
+      name: ${{ github.event_name == 'pull_request' && 'pypi-pr-validation' || 'pypi' }}
     permissions:
-      id-token: write  # PyPI trusted publishing; no stored token
+      contents: read
+      id-token: write
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
