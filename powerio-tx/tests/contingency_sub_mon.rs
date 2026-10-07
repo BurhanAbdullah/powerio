@@ -644,6 +644,7 @@ fn a_generated_monitored_element_file_reads_every_statement() {
         MonitorStatement::BranchesInSubsystem {
             subsystem: "A1".into(),
             low_voltage_3w: true,
+            kv_range: None,
         }
     );
     // LINES is the BRANCHES synonym.
@@ -652,12 +653,14 @@ fn a_generated_monitored_element_file_reads_every_statement() {
         MonitorStatement::BranchesInSubsystem {
             subsystem: "A2".into(),
             low_voltage_3w: false,
+            kv_range: None,
         }
     );
     assert_eq!(
         statements[4],
         MonitorStatement::TiesFromSubsystem {
             subsystem: "A1".into(),
+            kv_range: None,
         }
     );
     assert_eq!(
