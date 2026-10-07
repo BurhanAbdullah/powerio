@@ -959,7 +959,7 @@ fn resolve_statement(
             for (row, branch) in net.branches().iter().enumerate() {
                 let from_inside = buses.contains(&branch.from);
                 let to_inside = buses.contains(&branch.to);
-                let in_scope = match (from_inside, to_inside, kv_range) {
+                let in_scope = match (from_inside, to_inside, *kv_range) {
                     (true, false, Some((lo, hi))) => bus_in_kv_range(net, branch.from, lo, hi),
                     (false, true, Some((lo, hi))) => bus_in_kv_range(net, branch.to, lo, hi),
                     (true, false, None) | (false, true, None) => true,
