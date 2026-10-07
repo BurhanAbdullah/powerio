@@ -923,6 +923,7 @@ fn resolve_statement(
         MonitorStatement::BranchesInSubsystem {
             subsystem,
             low_voltage_3w,
+            kv_range,
         } => {
             let Some(buses) = select(subsystems, subsystem, net) else {
                 unresolved_subsystem(statement, out);
