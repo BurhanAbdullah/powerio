@@ -39,20 +39,28 @@ env:
 
 jobs:
   release-preflight:
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request' || github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.release.outputs.tag }}
-      sha: ${{ steps.release.outputs.sha }}
+      tag: ${{ steps.release.outputs.tag || steps.pr.outputs.tag }}
+      sha: ${{ steps.release.outputs.sha || steps.pr.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.SOURCE_REF }}
           fetch-depth: 0
+      - name: PR artifact identity
+        id: pr
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "tag=pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Release identity agreement
+        if: github.event_name != 'pull_request'
         run: bash scripts/check-release-versions.sh
       - name: Verify the immutable published release
         id: release
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -315,7 +323,7 @@ jobs:
 
   wheels:
     name: wheels (${{ matrix.platform.target }} on ${{ matrix.platform.runner }})
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request' || github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     needs: release-preflight
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -369,7 +377,7 @@ jobs:
   # macOS x86_64 runs the cross compiled x86_64 wheel under Rosetta.
   wheel-smoke:
     name: wheel smoke (${{ matrix.platform.target }} on ${{ matrix.platform.runner }})
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request' || github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     needs: [ release-preflight, wheels ]
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -425,7 +433,7 @@ jobs:
           "$py" scripts/wheel-smoke.py
 
   sdist:
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request' || github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     needs: release-preflight
     runs-on: ubuntu-latest
     steps:
