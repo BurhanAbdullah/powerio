@@ -180,7 +180,7 @@ fn the_generation_two_catalog_preserves_published_shapes() {
             let current_definition = current_defs
                 .get(name)
                 .unwrap_or_else(|| panic!("{earlier}: record {name} was removed"));
-            assert_preserved(definition, current_definition, &format!("{earlier}: record {name}"));
+            assert_preserved(\n                definition,\n                current_definition,\n                &format!("{earlier}: record {name}"),\n            );
         }
     }
 }
