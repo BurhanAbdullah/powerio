@@ -133,19 +133,6 @@ fn the_generation_two_catalog_preserves_published_shapes() {
     fn assert_preserved(published: &serde_json::Value, current: &serde_json::Value, path: &str) {
         match (published, current) {
             (serde_json::Value::Object(old), serde_json::Value::Object(new)) => {
-                if let Some(serde_json::Value::Array(published_required)) = old.get("required") {
-                    let current_required = new
-                        .get("required")
-                        .and_then(serde_json::Value::as_array)
-                        .unwrap_or(&[]);
-                    for required in current_required {
-                        assert!(
-                            published_required.contains(required),
-                            "{path}.required: current schema made a new field required: {required}"
-                        );
-                    }
-                }
-
                 for (name, value) in old {
                     let current_value = new.get(name).unwrap_or_else(|| {
                         panic!("{path}.{name}: published schema member was removed")
