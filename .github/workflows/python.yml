@@ -42,28 +42,26 @@ jobs:
     if: github.event_name == 'pull_request' || github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.release.outputs.tag || steps.pr.outputs.tag }}
-      sha: ${{ steps.release.outputs.sha || steps.pr.outputs.sha }}
+      tag: ${{ steps.release.outputs.tag }}
+      sha: ${{ steps.release.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.SOURCE_REF }}
           fetch-depth: 0
-      - name: PR artifact identity
-        id: pr
-        if: github.event_name == 'pull_request'
-        run: |
-          echo "tag=pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Release identity agreement
-        if: github.event_name != 'pull_request'
         run: bash scripts/check-release-versions.sh
-      - name: Verify the immutable published release
+      - name: Verify source or immutable release identity
         id: release
-        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            echo "tag=pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            echo "PR artifact identity: $(git rev-parse HEAD)"
+            exit 0
+          fi
           git check-ref-format "refs/tags/$RELEASE_TAG" >/dev/null \
             || { echo "invalid release tag: $RELEASE_TAG" >&2; exit 1; }
           git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null \
