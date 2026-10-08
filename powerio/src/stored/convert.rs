@@ -1442,10 +1442,9 @@ fn encode_ac_pf_solution(solution: &powerio_prob::AcPfSolution) -> Result<dto::A
         })?,
         branch_to_active_flow: branch_column(network, |id| solution.branch_to_active_flow(id))?,
         branch_to_reactive_flow: branch_column(network, |id| solution.branch_to_reactive_flow(id))?,
-        three_winding_transformer_terminal_powers:
-            encode_three_winding_transformer_terminal_powers(
-                solution.three_winding_transformer_terminal_powers(),
-            )?,
+        three_winding_transformer_terminal_powers: encode_three_winding_transformer_terminal_powers(
+            solution.three_winding_transformer_terminal_powers(),
+        )?,
         generator_dispatch: encode_dispatch(solution.generator_dispatch())?,
     })
 }
