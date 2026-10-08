@@ -1032,7 +1032,7 @@ fn monitored_subsystem_kv_scope_uses_kv_tolerance() {
 #[test]
 fn monitored_four_value_voltage_range_round_trips_and_resolves() {
     let parsed = MonitoredSet::parse(
-        "MONITOR VOLTAGE RANGE SUBSYSTEM 'A1' KV 230 0.9000 1.0500 0.9500 1.0500\\nEND\\n",
+        "MONITOR VOLTAGE RANGE SUBSYSTEM 'A1' KV 230 0.9000 1.0500 0.9500 1.0500\nEND\n",
     )
     .expect("parse four-value voltage range");
     assert!(parsed.diagnostics.is_empty(), "{:?}", mon_codes(&parsed));
@@ -1051,7 +1051,7 @@ fn monitored_four_value_voltage_range_round_trips_and_resolves() {
 
     let written = check_mon_fixed_point(&parsed);
     assert!(written.contains(
-        "MONITOR VOLTAGE RANGE SUBSYSTEM 'A1' KV 230.0 0.9 1.05 0.95 1.05\\n"
+        "MONITOR VOLTAGE RANGE SUBSYSTEM 'A1' KV 230.0 0.9 1.05 0.95 1.05\n"
     ));
 
     let net = select_network();
@@ -1074,10 +1074,7 @@ fn monitored_four_value_voltage_range_rejects_invalid_bands() {
         "MONITOR VOLTAGE RANGE ALL BUSES 0.95 1.05 1.05 0.95\\nEND\\n",
     ] {
         let parsed = MonitoredSet::parse(line).expect("parse invalid range");
-        assert_eq!(
-            mon_codes(&parsed),
-            vec!["READ.MON.STATEMENT_UNRECOGNIZED"]
-        );
+        assert_eq!(mon_codes(&parsed), vec!["READ.MON.STATEMENT_UNRECOGNIZED"]);
         assert_eq!(parsed.set.retained.len(), 1);
     }
 }
