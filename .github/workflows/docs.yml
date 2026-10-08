@@ -219,16 +219,11 @@ jobs:
 
   deploy:
     needs: build
-    # PRs execute a deployment validation step but never publish to Pages.
-    if: always() && needs.build.result == 'success'
+    # PR runs build to catch doc breakage but never publish; only main / dispatch deploy.
     runs-on: ubuntu-latest
     environment:
-      name: ${{ github.event_name == 'pull_request' && 'github-pages-validation' || 'github-pages' }}
+      name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-    - name: Validate PR deployment artifact
-      if: github.event_name == 'pull_request'
-      run: echo 'PR deployment validation complete; GitHub Pages was not modified.'
     - id: deployment
-      if: github.event_name != 'pull_request'
       uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
