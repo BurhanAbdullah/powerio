@@ -483,20 +483,19 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.x"
-      - name: Check distributions and publish when authorized
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+      - name: Check distributions
         run: |
           python -m pip install twine
           python -m twine check dist/*
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            echo "PR publication dry-run: distributions passed twine check; no upload performed."
-          else
-            echo "Release publication: uploading distributions to PyPI."
-            python -m pip install twine
-            twine upload --skip-existing dist/*
+      - name: PR publication dry-run
+        if: github.event_name == 'pull_request'
+        run: echo "PR publication dry-run: distributions passed twine check; no upload performed."
+      - name: Publish distributions
+        if: github.event_name != 'pull_request'
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist
+          skip-existing: true
           fi
 
   publish-pr-validation:
