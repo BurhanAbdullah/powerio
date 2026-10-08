@@ -1884,7 +1884,7 @@ fn validate_monitored_set(set: &powerio_tx::MonitoredSet) -> Result<(), String> 
             validate_retained(&format!("monitor statement {index}"), retained)?;
         }
         match statement {
-            powerio_tx::MonitorStatement::VoltageRange { scope, vmin, vmax } => {
+            powerio_tx::MonitorStatement::VoltageRange { scope, vmin, vmax, .. } => {
                 if !(vmin.is_finite() && vmax.is_finite() && vmin <= vmax) {
                     return Err(format!(
                         "monitor statement {index} states a voltage range that does not run low to high"
