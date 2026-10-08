@@ -464,19 +464,17 @@ jobs:
 
   publish:
     name: publish to PyPI
-    # release-binaries.yml stages each release as a draft a human publishes, so
-    # the release event fires with a user actor (events from a workflow's
-    # GITHUB_TOKEN are swallowed by the recursion guard). Manual dispatch is the
-    # recovery path for a missed event. A prerelease still builds wheels and an
-    # sdist as run artifacts, but never uploads them to PyPI.
-    if: (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch'
+    # PRs run the complete publication validation path, including artifact
+    # checks, but never upload. Release/manual runs use the protected PyPI
+    # environment and perform the real trusted publication.
+    if: github.event_name == 'pull_request' || (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch'
     needs: [ release-preflight, lint, quality, test, test-gridfm, goc3-reference, wheels, wheel-smoke, sdist ]
     runs-on: ubuntu-latest
-    # Deployment protection (required reviewers, tag rules) lives on the pypi
-    # environment in the repo settings, not in this file.
-    environment: pypi
+    environment:
+      name: ${{ github.event_name == 'pull_request' && 'pypi-pr-validation' || 'pypi' }}
     permissions:
-      id-token: write  # PyPI trusted publishing; no stored token
+      contents: read
+      id-token: write
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -485,18 +483,22 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.x"
-      - name: Check distributions
+      - name: Check distributions and publish when authorized
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           python -m pip install twine
           python -m twine check dist/*
-      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
-        with:
-          packages-dir: dist
-          # A partially failed upload (e.g. wheels in, sdist rejected) is
-          # recovered by re-running; already-uploaded files are skipped.
-          skip-existing: true
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            echo "PR publication dry-run: distributions passed twine check; no upload performed."
+          else
+            echo "Release publication: uploading distributions to PyPI."
+            python -m pip install twine
+            twine upload --skip-existing dist/*
+          fi
 
-  
   publish-pr-validation:
     name: publish to PyPI (PR validation)
     if: github.event_name == 'pull_request'
