@@ -9609,6 +9609,49 @@
               "const": "voltage_range",
               "type": "string"
             },
+            "pre": {
+              "description": "Optional pre-contingency voltage band. The two-value form is\npost-contingency only; the four-value form adds this band.",
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ],
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ],
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "type": [
+                "array",
+                "null"
+              ]
+            },
             "scope": {
               "$ref": "#/$defs/MonitorScope"
             },
