@@ -586,7 +586,7 @@ fn parse_voltage(upper: &[String], words: &[&str]) -> Option<MonitorStatement> {
                 vmax: *vmax,
                 pre: Some((*pre_min, *pre_max)),
             })
-        },
+        }
         (true, [down]) => Some(MonitorStatement::VoltageDeviation {
             scope,
             down: *down,
@@ -760,7 +760,7 @@ fn write_statement(statement: &MonitorStatement) -> String {
                 decimal(*vmin),
                 decimal(*vmax)
             )
-        },
+        }
         MonitorStatement::VoltageDeviation { scope, down, up } => {
             let tail = match up {
                 Some(up) => format!(" {}", decimal(*up)),
