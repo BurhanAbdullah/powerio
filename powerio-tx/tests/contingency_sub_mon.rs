@@ -676,6 +676,7 @@ fn a_generated_monitored_element_file_reads_every_statement() {
             scope: MonitorScope::AllBuses,
             vmin: 0.94,
             vmax: 1.06,
+            pre: None,
         }
     );
     // A deviation statement may name one value.
@@ -849,6 +850,7 @@ fn a_voltage_range_stated_high_to_low_is_kept_as_text() {
             scope: MonitorScope::AllBuses,
             vmin: 0.95,
             vmax: 1.05,
+            pre: None,
         }]
     );
     assert_eq!(
@@ -959,6 +961,7 @@ END\n",
                 },
                 vmin: 0.95,
                 vmax: 1.05,
+                pre: None,
             },
         ]
     );
