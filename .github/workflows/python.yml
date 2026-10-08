@@ -478,10 +478,11 @@ jobs:
     runs-on: ubuntu-latest
     # Deployment protection (required reviewers, tag rules) lives on the pypi
     # environment in the repo settings, not in this file.
-    environment: pypi
+    environment:
+      name: ${{ github.event_name == 'pull_request' && 'pypi-validation' || 'pypi' }}
     permissions:
       contents: read
-      id-token: ${{ github.event_name != 'pull_request' && 'write' || 'none' }}  # PyPI trusted publishing only on releases
+      id-token: write  # OIDC is only consumed by the release-only publish step
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
