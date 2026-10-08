@@ -632,6 +632,7 @@ fn a_generated_monitored_element_file_reads_every_statement() {
             },
             vmin: 0.95,
             vmax: 1.05,
+            pre: None,
         }
     );
     assert_eq!(
@@ -1023,6 +1024,59 @@ fn monitored_subsystem_kv_scope_uses_kv_tolerance() {
         resolution.voltage_ranges[0].bus_rows,
         [0, 1].into_iter().collect()
     );
+}
+
+#[test]
+fn monitored_four_value_voltage_range_round_trips_and_resolves() {
+    let parsed = MonitoredSet::parse(
+        "MONITOR VOLTAGE RANGE SUBSYSTEM 'A1' KV 230 0.9000 1.0500 0.9500 1.0500\\nEND\\n",
+    )
+    .expect("parse four-value voltage range");
+    assert!(parsed.diagnostics.is_empty(), "{:?}", mon_codes(&parsed));
+    assert_eq!(
+        parsed.set.statements,
+        vec![MonitorStatement::VoltageRange {
+            scope: MonitorScope::Subsystem {
+                name: "A1".into(),
+                kv: Some(230.0),
+            },
+            vmin: 0.9,
+            vmax: 1.05,
+            pre: Some((0.95, 1.05)),
+        }]
+    );
+
+    let written = check_mon_fixed_point(&parsed);
+    assert!(written.contains(
+        "MONITOR VOLTAGE RANGE SUBSYSTEM 'A1' KV 230.0 0.9 1.05 0.95 1.05\\n"
+    ));
+
+    let net = select_network();
+    let subsystems = parse_sub("selectors.sub").set;
+    let resolution = parsed.set.resolve(&net, &subsystems);
+    assert_eq!(resolution.voltage_ranges.len(), 1);
+    assert_eq!(
+        resolution.voltage_ranges[0].bus_rows,
+        [0, 1].into_iter().collect()
+    );
+    assert_eq!(resolution.voltage_ranges[0].low, 0.9);
+    assert_eq!(resolution.voltage_ranges[0].high, Some(1.05));
+    assert_eq!(resolution.voltage_ranges[0].pre, Some((0.95, 1.05)));
+}
+
+#[test]
+fn monitored_four_value_voltage_range_rejects_invalid_bands() {
+    for line in [
+        "MONITOR VOLTAGE RANGE ALL BUSES 1.05 0.95 0.95 1.05\\nEND\\n",
+        "MONITOR VOLTAGE RANGE ALL BUSES 0.95 1.05 1.05 0.95\\nEND\\n",
+    ] {
+        let parsed = MonitoredSet::parse(line).expect("parse invalid range");
+        assert_eq!(
+            mon_codes(&parsed),
+            vec!["READ.MON.STATEMENT_UNRECOGNIZED"]
+        );
+        assert_eq!(parsed.set.retained.len(), 1);
+    }
 }
 
 #[test]
