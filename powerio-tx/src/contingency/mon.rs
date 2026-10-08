@@ -98,6 +98,10 @@ pub enum MonitorStatement {
         scope: MonitorScope,
         vmin: f64,
         vmax: f64,
+        /// Optional pre-contingency voltage band. The two-value form is
+        /// post-contingency only; the four-value form adds this band.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pre: Option<(f64, f64)>,
     },
     /// A voltage deviation band over a scope of buses. A statement naming one
     /// value states the downward limit alone.
@@ -573,7 +577,16 @@ fn parse_voltage(upper: &[String], words: &[&str]) -> Option<MonitorStatement> {
             scope,
             vmin: *vmin,
             vmax: *vmax,
+            pre: None,
         }),
+        (false, [vmin, vmax, pre_min, pre_max]) => {
+            (vmin <= vmax && pre_min <= pre_max).then_some(MonitorStatement::VoltageRange {
+                scope,
+                vmin: *vmin,
+                vmax: *vmax,
+                pre: Some((*pre_min, *pre_max)),
+            })
+        },
         (true, [down]) => Some(MonitorStatement::VoltageDeviation {
             scope,
             down: *down,
@@ -731,12 +744,23 @@ fn write_statement(statement: &MonitorStatement) -> String {
             };
             write_branch_block(&head, branches, retained)
         }
-        MonitorStatement::VoltageRange { scope, vmin, vmax } => format!(
-            "MONITOR VOLTAGE RANGE {} {} {}\n",
-            write_scope(scope),
-            decimal(*vmin),
-            decimal(*vmax)
-        ),
+        MonitorStatement::VoltageRange {
+            scope,
+            vmin,
+            vmax,
+            pre,
+        } => {
+            let pre = match pre {
+                Some((low, high)) => format!(" {} {}", decimal(*low), decimal(*high)),
+                None => String::new(),
+            };
+            format!(
+                "MONITOR VOLTAGE RANGE {} {} {}{pre}\n",
+                write_scope(scope),
+                decimal(*vmin),
+                decimal(*vmax)
+            )
+        },
         MonitorStatement::VoltageDeviation { scope, down, up } => {
             let tail = match up {
                 Some(up) => format!(" {}", decimal(*up)),
@@ -805,6 +829,8 @@ pub struct ResolvedVoltageScope {
     pub bus_rows: BTreeSet<usize>,
     pub low: f64,
     pub high: Option<f64>,
+    /// Optional pre-contingency voltage band.
+    pub pre: Option<(f64, f64)>,
 }
 
 /// One statement that named nothing, kept with the reason.
@@ -975,7 +1001,12 @@ fn resolve_statement(
             }
             out.interfaces.push(resolved);
         }
-        MonitorStatement::VoltageRange { scope, vmin, vmax } => {
+        MonitorStatement::VoltageRange {
+            scope,
+            vmin,
+            vmax,
+            pre,
+        } => {
             let Some(bus_rows) = scope_rows(scope, net, subsystems, index) else {
                 unresolved_subsystem(statement, out);
                 return;
@@ -984,6 +1015,7 @@ fn resolve_statement(
                 bus_rows,
                 low: *vmin,
                 high: Some(*vmax),
+                pre: *pre,
             });
         }
         MonitorStatement::VoltageDeviation { scope, down, up } => {
@@ -995,6 +1027,7 @@ fn resolve_statement(
                 bus_rows,
                 low: *down,
                 high: *up,
+                pre: None,
             });
         }
     }
