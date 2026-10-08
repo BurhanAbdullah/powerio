@@ -1050,9 +1050,7 @@ fn monitored_four_value_voltage_range_round_trips_and_resolves() {
     );
 
     let written = check_mon_fixed_point(&parsed);
-    assert!(written.contains(
-        "MONITOR VOLTAGE RANGE SUBSYSTEM 'A1' KV 230.0 0.9 1.05 0.95 1.05\n"
-    ));
+    assert!(written.contains("MONITOR VOLTAGE RANGE SUBSYSTEM 'A1' KV 230.0 0.9 1.05 0.95 1.05\n"));
 
     let net = select_network();
     let subsystems = parse_sub("selectors.sub").set;
