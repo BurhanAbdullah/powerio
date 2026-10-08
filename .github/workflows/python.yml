@@ -470,8 +470,6 @@ jobs:
     if: github.event_name == 'pull_request' || (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch'
     needs: [ release-preflight, lint, quality, test, test-gridfm, goc3-reference, wheels, wheel-smoke, sdist ]
     runs-on: ubuntu-latest
-    environment:
-      name: ${{ github.event_name == 'pull_request' && 'pypi-pr-validation' || 'pypi' }}
     permissions:
       contents: read
       id-token: write
