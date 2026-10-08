@@ -1,3 +1,4 @@
+# CI note: retrigger after transient release-assets download failure on hosted aarch64 runner.
 name: Python
 
 on:
