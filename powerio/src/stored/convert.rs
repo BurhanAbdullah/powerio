@@ -1442,9 +1442,10 @@ fn encode_ac_pf_solution(solution: &powerio_prob::AcPfSolution) -> Result<dto::A
         })?,
         branch_to_active_flow: branch_column(network, |id| solution.branch_to_active_flow(id))?,
         branch_to_reactive_flow: branch_column(network, |id| solution.branch_to_reactive_flow(id))?,
-        three_winding_transformer_terminal_powers: encode_three_winding_transformer_terminal_powers(
-            solution.three_winding_transformer_terminal_powers(),
-        )?,
+        three_winding_transformer_terminal_powers:
+            encode_three_winding_transformer_terminal_powers(
+                solution.three_winding_transformer_terminal_powers(),
+            )?,
         generator_dispatch: encode_dispatch(solution.generator_dispatch())?,
     })
 }
@@ -3259,8 +3260,8 @@ mod collection_write_bound_tests {
         let accepted = bounded_collection((0..bound).collect::<Vec<_>>(), "scenario entries");
         assert!(accepted.is_ok());
 
-        let error = bounded_collection((0..=bound).collect::<Vec<_>>(), "scenario entries")
-            .unwrap_err();
+        let error =
+            bounded_collection((0..=bound).collect::<Vec<_>>(), "scenario entries").unwrap_err();
         assert_eq!(
             error.info().map(|info| info.code),
             Some(codes::EMIT_MODULE_RECORD_CAP.code)
@@ -3284,20 +3285,20 @@ mod collection_write_bound_tests {
     #[test]
     fn three_winding_writer_uses_the_same_collection_bound() {
         let bound = dto::MAX_STORED_COLLECTION_ENTRIES;
-        let values = vec![
-            powerio_prob::ThreeWindingTransformerTerminalPower::new(
-                [0.0; 3],
-                [0.0; 3],
-            );
-            bound + 1
-        ];
+        let values =
+            vec![
+                powerio_prob::ThreeWindingTransformerTerminalPower::new([0.0; 3], [0.0; 3],);
+                bound + 1
+            ];
         let error = encode_three_winding_transformer_terminal_powers(&values).unwrap_err();
         assert_eq!(
             error.info().map(|info| info.code),
             Some(codes::EMIT_MODULE_RECORD_CAP.code)
         );
-        assert!(error
-            .to_string()
-            .contains("65537 three-winding transformer terminal power records"));
+        assert!(
+            error
+                .to_string()
+                .contains("65537 three-winding transformer terminal power records")
+        );
     }
 }
