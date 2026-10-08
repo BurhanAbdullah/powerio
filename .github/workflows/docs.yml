@@ -220,6 +220,7 @@ jobs:
   deploy:
     needs: build
     # PR runs build to catch doc breakage but never publish; only main / dispatch deploy.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
