@@ -496,30 +496,4 @@ jobs:
         with:
           packages-dir: dist
           skip-existing: true
-          fi
 
-  publish-pr-validation:
-    name: publish to PyPI (PR validation)
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.x"
-      - name: Build publication artifacts
-        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
-        with:
-          command: build
-          args: --release --out dist
-      - name: Build sdist
-        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
-        with:
-          command: sdist
-          args: --out dist
-      - name: Check distributions
-        run: |
-          python -m pip install twine
-          python -m twine check dist/*
