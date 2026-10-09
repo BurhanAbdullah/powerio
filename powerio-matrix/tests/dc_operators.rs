@@ -615,7 +615,6 @@ fn a_subnormal_reactance_is_refused_like_zero() {
     );
 }
 
-
 #[test]
 fn update_rejects_same_size_network_with_reordered_bus_axis() {
     let net = case9();
