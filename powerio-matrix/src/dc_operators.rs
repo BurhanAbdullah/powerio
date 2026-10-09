@@ -300,7 +300,9 @@ impl DcOperators {
     /// an operating point update goes through here and reconstructs nothing.
     ///
     /// # Errors
-    /// A specification list whose length disagrees with the built bus axis.
+    /// The source bus specification axis differs from the built axis, or the
+    /// network base, normalization state, DC formula, topology, or branch
+    /// parameters changed after the operators were built.
     pub fn update(&mut self, instance: &DcPfInstance) -> Result<(), Error> {
         let view = IndexedNetwork::new(instance.network());
         let network = view.network();
