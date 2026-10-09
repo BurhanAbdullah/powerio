@@ -616,6 +616,23 @@ fn a_subnormal_reactance_is_refused_like_zero() {
 }
 
 #[test]
+fn update_rejects_changed_branch_parameters() {
+    let net = case9();
+    let original = DcPfInstance::from_network(net.clone()).unwrap();
+    let mut operators = DcOperators::build(&original).unwrap();
+
+    let mut changed_network = net;
+    changed_network.branches_mut()[0].x *= 1.1;
+    let changed = DcPfInstance::from_network(changed_network).unwrap();
+
+    let error = operators.update(&changed).unwrap_err();
+    assert!(
+        error.to_string().contains("branch parameters"),
+        "{error}"
+    );
+}
+
+#[test]
 fn update_rejects_same_size_network_with_reordered_bus_axis() {
     let net = case9();
     let original = DcPfInstance::from_network(net.clone()).unwrap();
