@@ -610,10 +610,7 @@ fn update_rejects_changed_branch_parameters() {
     let changed = DcPfInstance::from_network(changed_network).unwrap();
 
     let error = operators.update(&changed).unwrap_err();
-    assert!(
-        error.to_string().contains("branch parameters"),
-        "{error}"
-    );
+    assert!(error.to_string().contains("branch parameters"), "{error}");
 }
 
 #[test]
