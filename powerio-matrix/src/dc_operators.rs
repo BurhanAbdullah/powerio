@@ -96,6 +96,8 @@ impl DcOperatorOptions {
 #[derive(Clone, Debug)]
 pub struct DcOperators {
     bus_ids: Vec<BusId>,
+    /// Original source bus axis; analysis buses may include synthetic transformer star buses.
+    source_bus_ids: Vec<BusId>,
     branch_identities: Vec<String>,
     /// Operator column to the analysis branch row it was built from.
     branch_rows: Vec<usize>,
@@ -152,6 +154,7 @@ impl DcOperators {
     #[expect(clippy::too_many_lines)]
     pub fn build_with(instance: &DcPfInstance, options: &DcOperatorOptions) -> Result<Self, Error> {
         let source = instance.network();
+        let source_bus_ids: Vec<BusId> = source.buses().iter().map(|bus| bus.id).collect();
         let view = IndexedNetwork::new(source);
         let network = view.network();
         let formula = instance.branch_susceptance_formula();
@@ -248,6 +251,7 @@ impl DcOperators {
         let incidence = calc_incidence(bus_ids.len(), &endpoints);
         let mut operators = Self {
             bus_ids,
+            source_bus_ids,
             branch_identities,
             branch_rows,
             skipped_branch_rows,
@@ -281,7 +285,7 @@ impl DcOperators {
         let source_buses = instance.network().buses();
         let source_bus_count = source_buses.len();
         if instance.specifications().len() != source_bus_count
-            || source_bus_count != self.bus_ids.len()
+            || source_bus_count != self.source_bus_ids.len()
         {
             return Err(Error::new(
                 &codes::BUILD_INSTANCE_SHAPE_MISMATCH,
@@ -296,7 +300,7 @@ impl DcOperators {
         if source_buses
             .iter()
             .map(|bus| bus.id)
-            .ne(self.bus_ids.iter().copied())
+            .ne(self.source_bus_ids.iter().copied())
         {
             return Err(Error::new(
                 &codes::BUILD_INSTANCE_SHAPE_MISMATCH,
