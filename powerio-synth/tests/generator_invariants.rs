@@ -125,9 +125,19 @@ fn identical_specs_produce_identical_networks() {
         let first = generate(&spec);
         let second = generate(&spec);
 
+        let first_buses: Vec<_> = first
+            .buses()
+            .iter()
+            .map(|bus| (bus.id, bus.kind))
+            .collect();
+        let second_buses: Vec<_> = second
+            .buses()
+            .iter()
+            .map(|bus| (bus.id, bus.kind))
+            .collect();
         assert_eq!(
-            first.buses().iter().map(|bus| (bus.id, bus.kind)).collect::<Vec<_>>(),
-            second.buses().iter().map(|bus| (bus.id, bus.kind)).collect::<Vec<_>>(),
+            first_buses,
+            second_buses,
             "{topology:?}: bus sequence changed for an identical spec"
         );
         assert_eq!(first.branches().len(), second.branches().len());
