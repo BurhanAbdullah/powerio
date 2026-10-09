@@ -278,9 +278,10 @@ impl DcOperators {
     }
 
     fn refresh_injections(&mut self, instance: &DcPfInstance, base: f64) -> Result<(), Error> {
-        let source_bus_count = instance.network().buses().len();
+        let source_buses = instance.network().buses();
+        let source_bus_count = source_buses.len();
         if instance.specifications().len() != source_bus_count
-            || source_bus_count > self.bus_ids.len()
+            || source_bus_count != self.bus_ids.len()
         {
             return Err(Error::new(
                 &codes::BUILD_INSTANCE_SHAPE_MISMATCH,
@@ -290,6 +291,16 @@ impl DcOperators {
                     source_bus_count,
                     self.bus_ids.len()
                 ),
+            ));
+        }
+        if source_buses
+            .iter()
+            .map(|bus| bus.id)
+            .ne(self.bus_ids.iter().copied())
+        {
+            return Err(Error::new(
+                &codes::BUILD_INSTANCE_SHAPE_MISMATCH,
+                "the instance bus IDs or bus order differ from the bus axis used to build the DC operators",
             ));
         }
         let mut net_injection = vec![0.0; self.bus_ids.len()];
