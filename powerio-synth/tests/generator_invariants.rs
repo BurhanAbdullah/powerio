@@ -36,8 +36,7 @@ fn assert_valid_connected_network(topology: Topology, requested_n: usize, seed: 
     let network = generate(&spec(topology, requested_n, seed));
     let buses = network.buses();
     let branches = network.branches();
-    let (expected_bus_count, expected_branch_count) =
-        expected_dimensions(topology, requested_n);
+    let (expected_bus_count, expected_branch_count) = expected_dimensions(topology, requested_n);
 
     assert_eq!(buses.len(), expected_bus_count, "{topology:?}: bus count");
     assert_eq!(
@@ -47,7 +46,11 @@ fn assert_valid_connected_network(topology: Topology, requested_n: usize, seed: 
     );
 
     let bus_ids: HashSet<BusId> = buses.iter().map(|bus| bus.id).collect();
-    assert_eq!(bus_ids.len(), buses.len(), "{topology:?}: duplicate bus IDs");
+    assert_eq!(
+        bus_ids.len(),
+        buses.len(),
+        "{topology:?}: duplicate bus IDs"
+    );
     assert_eq!(
         buses.iter().filter(|bus| bus.kind == BusType::Ref).count(),
         1,
@@ -125,28 +128,18 @@ fn identical_specs_produce_identical_networks() {
         let first = generate(&spec);
         let second = generate(&spec);
 
-        let first_buses: Vec<_> = first
-            .buses()
-            .iter()
-            .map(|bus| (bus.id, bus.kind))
-            .collect();
+        let first_buses: Vec<_> = first.buses().iter().map(|bus| (bus.id, bus.kind)).collect();
         let second_buses: Vec<_> = second
             .buses()
             .iter()
             .map(|bus| (bus.id, bus.kind))
             .collect();
         assert_eq!(
-            first_buses,
-            second_buses,
+            first_buses, second_buses,
             "{topology:?}: bus sequence changed for an identical spec"
         );
         assert_eq!(first.branches().len(), second.branches().len());
-        for (index, (left, right)) in first
-            .branches()
-            .iter()
-            .zip(second.branches())
-            .enumerate()
-        {
+        for (index, (left, right)) in first.branches().iter().zip(second.branches()).enumerate() {
             assert_eq!(
                 (left.from, left.to, left.r.to_bits(), left.x.to_bits()),
                 (right.from, right.to, right.r.to_bits(), right.x.to_bits()),
