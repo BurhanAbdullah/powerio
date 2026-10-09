@@ -169,16 +169,18 @@ impl DcOperators {
         let analysis_branch_signature: Vec<DcBranchSignature> = network
             .branches()
             .iter()
-            .map(|branch| (
-                branch.uid.clone(),
-                branch.from,
-                branch.to,
-                branch.r.to_bits(),
-                branch.x.to_bits(),
-                branch.tap.to_bits(),
-                branch.shift.to_bits(),
-                branch.in_service,
-            ))
+            .map(|branch| {
+                (
+                    branch.uid.clone(),
+                    branch.from,
+                    branch.to,
+                    branch.r.to_bits(),
+                    branch.x.to_bits(),
+                    branch.tap.to_bits(),
+                    branch.shift.to_bits(),
+                    branch.in_service,
+                )
+            })
             .collect();
         let network_base_mva_bits = base.to_bits();
         let network_normalized = network.is_normalized();
@@ -309,16 +311,18 @@ impl DcOperators {
         let branch_signature: Vec<DcBranchSignature> = network
             .branches()
             .iter()
-            .map(|branch| (
-                branch.uid.clone(),
-                branch.from,
-                branch.to,
-                branch.r.to_bits(),
-                branch.x.to_bits(),
-                branch.tap.to_bits(),
-                branch.shift.to_bits(),
-                branch.in_service,
-            ))
+            .map(|branch| {
+                (
+                    branch.uid.clone(),
+                    branch.from,
+                    branch.to,
+                    branch.r.to_bits(),
+                    branch.x.to_bits(),
+                    branch.tap.to_bits(),
+                    branch.shift.to_bits(),
+                    branch.in_service,
+                )
+            })
             .collect();
         if network.base_mva().to_bits() != self.network_base_mva_bits
             || network.is_normalized() != self.network_normalized
