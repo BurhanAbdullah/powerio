@@ -280,18 +280,23 @@ fn dcopf_writes_the_angle_difference_bounds_it_was_asked_for() {
         )
     };
 
-    // case9 states ±360 degrees on every branch.
-    let (stated, stated_max) = bounds(None);
+    // case9 states ±360 degrees on every branch, which PowerModels' pad, the
+    // default, replaces with ±60 degrees.
+    let pad = powerio_tx::POWER_MODELS_ANGLE_BOUND_PAD;
+    let (padded, padded_max) = bounds(None);
+    assert_eq!(padded, "power_models_pad");
+    assert!(padded_max.iter().all(|&max| (max - pad).abs() < 1e-12));
+    let (stated, stated_max) = bounds(Some("stated"));
     assert_eq!(stated, "stated");
     assert!(
         stated_max
             .iter()
             .all(|&max| (max - std::f64::consts::TAU).abs() < 1e-12)
     );
-    let (padded, padded_max) = bounds(Some("powermodels-pad"));
-    assert_eq!(padded, "power_models_pad");
-    let pad = powerio_tx::POWER_MODELS_ANGLE_BOUND_PAD;
-    assert!(padded_max.iter().all(|&max| (max - pad).abs() < 1e-12));
+    // No case9 branch shifts phase, so the centered pad is the same window.
+    let (centered, centered_max) = bounds(Some("shift-centered-pad"));
+    assert_eq!(centered, "shift_centered_pad");
+    assert_eq!(centered_max, padded_max);
     let (none, _) = bounds(Some("none"));
     assert_eq!(none, "none");
 }

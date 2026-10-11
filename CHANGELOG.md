@@ -2,34 +2,6 @@
 
 ## Unreleased
 
-- **Behavior change: the DC and AC OPF and AC power flow preparations no
-  longer pad angle difference bounds by default.** They used to apply
-  PowerModels' ±60 degree correction to every interval the source leaves
-  unconstrained, which PSS/E and other formats with no angle limits always do,
-  and a branch or lowered three winding transformer winding that shifts phase
-  by more than 60 degrees cannot meet that window, because the bound is on
-  `theta_from - theta_to` (the MATPOWER and PowerModels convention), not on the
-  difference net of the shift. The prepared `angle_min` and `angle_max` are now
-  the stated bounds, with the MATPOWER `0`/`0` spelling and any side beyond
-  ±360 degrees read as ±360 degrees (`stated_angle_difference_bounds`).
-  `AngleDifferenceBounds` on `DcOpfAssemblyOptions`, `AcOpfAssemblyOptions`,
-  and `AcPfAssemblyOptions` (`with_angle_difference_bounds`) selects `Stated`
-  (the default), `PowerModelsPad`, or `None` (±360 degrees on every branch);
-  `powerio dcopf --angle-difference-bounds stated|powermodels-pad|none` does
-  the same, and the bundle manifest records the choice in `build_options`.
-  `PowerModelsPad` centers the pad on each branch's phase shift, so an
-  unshifted branch gets exactly what it got before and a phase shifting branch
-  keeps its operating point inside the window. `correct_angle_difference_bounds`
-  on the three option structs is replaced by `angle_difference_bounds`; the
-  preparations keep their `correct_angle_difference_bounds` flag, true for
-  `PowerModelsPad`. The C ABI keeps its `correct_angle_difference_bounds`
-  argument, which now selects the centered pad. `NormalizeOptions`'
-  `clamp_angle_bounds` centers its pad on the phase shift too. On the 58
-  PGLib OPF cases checked no branch's bounds change. The MATPOWER cases in
-  `tests/data` (case9 to case2869pegase) state ±360 degrees, so every branch
-  goes from ±60 to ±360 degrees, and their DC OPF objectives agree with the
-  padded ones to 5e-15.
-
 - PSS/E switched shunt `MODSW` 1 and 2 now read as PSS/E defines them: 1 is
   discrete and 2 is continuous adjustment of the regulated voltage. The RAW
   and RAWX readers had the two swapped, so a continuously adjusted shunt, such
@@ -45,6 +17,41 @@
   earlier release wrote from a PSS/E case carries the swapped mode, so read
   the case again. The IR 2 schema keeps its published descriptions, which
   state the old mapping.
+
+### Changed results
+
+- With PowerModels' angle difference pad turned off
+  (`with_correct_angle_difference_bounds(false)` on the assembly options, or
+  `false` for the C ABI argument of that name), the DC and AC OPF and AC power
+  flow preparations read the MATPOWER `0`/`0` angle difference spelling as
+  unconstrained, ±360 degrees, instead of a zero width window that held
+  `theta_from` equal to `theta_to`, and write a side beyond ±360 degrees as
+  ±360 degrees. Every other stated bound passes through as before, and the
+  default, which pads, is unchanged.
+
+### Added
+
+- `AngleDifferenceBounds` selects the angle difference bounds the DC and AC
+  OPF and AC power flow preparations carry: `PowerModelsPad`, PowerModels'
+  ±60 degree pad and still the default; `ShiftCenteredPad`, the same pad
+  centered on each branch's phase shift; `Stated`, the bounds the source
+  states with an unconstrained side read as ±360 degrees
+  (`stated_angle_difference_bounds`); and `None`, ±360 degrees on every
+  branch. The bounds are on `theta_from - theta_to`, the MATPOWER and
+  PowerModels convention, so a branch or lowered three winding transformer
+  winding that shifts phase by more than 60 degrees cannot meet the default
+  window and a DC OPF on such a case is infeasible; `ShiftCenteredPad` and
+  `Stated` keep its operating point inside. `with_angle_difference_bounds` on
+  `DcOpfAssemblyOptions`, `AcOpfAssemblyOptions`, and `AcPfAssemblyOptions`
+  takes precedence over their `correct_angle_difference_bounds` flag, which
+  keeps its meaning, as does the C ABI argument. The preparations report the
+  choice in `angle_difference_bounds`, `powerio dcopf
+  --angle-difference-bounds powermodels-pad|shift-centered-pad|stated|none`
+  selects it, and the DC OPF bundle manifest records it in `build_options`.
+  On the 58 PGLib OPF cases checked, `Stated` and the default give every
+  branch the same bounds; the MATPOWER cases in `tests/data` (case9 to
+  case2869pegase) state ±360 degrees, and their DC OPF objectives under
+  `Stated` agree with the padded ones to 5e-15.
 
 ## 0.11.4
 

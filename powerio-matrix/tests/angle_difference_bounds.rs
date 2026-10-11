@@ -1,8 +1,8 @@
-//! A source that states no angle difference limit gets none: a phase shifting
-//! winding whose DC angle difference sits near its 150 degree shift stays
-//! inside the prepared bounds. PowerModels' pad, asked for explicitly, is
-//! centered on the shift, so it holds that difference too; centered on zero,
-//! as PowerModels itself does, it would not.
+//! A phase shifting winding whose DC angle difference sits near its 150
+//! degree shift. PowerModels' pad centered on zero, the default, cuts that
+//! operating point off, because it bounds `theta_from - theta_to` rather than
+//! the difference net of the shift. The stated bounds, and the pad centered
+//! on the shift, both selected explicitly, hold it.
 
 use std::collections::HashMap;
 
@@ -120,27 +120,45 @@ fn a_150_degree_winding_meets_the_stated_bounds_and_the_centered_pad() {
     let angles = dc_angles(&net);
     let instance = DcOpfInstance::from_network(net).unwrap();
 
-    // The DC power flow puts the shifted winding's angle difference near its
-    // shift.
-    let stated = build_dc_opf_preparation(&instance, &DcOpfAssemblyOptions::default()).unwrap();
-    assert!(!stated.correct_angle_difference_bounds);
+    // The default is PowerModels' pad centered on zero, which the DC power
+    // flow's angle difference near the 150 degree shift does not meet.
+    let default = build_dc_opf_preparation(&instance, &DcOpfAssemblyOptions::default()).unwrap();
+    assert!(default.correct_angle_difference_bounds);
     assert_eq!(
-        stated.angle_difference_bounds,
-        AngleDifferenceBounds::Stated
+        default.angle_difference_bounds,
+        Some(AngleDifferenceBounds::PowerModelsPad)
     );
-    let differences = branch_differences(&stated, &angles);
+    let differences = branch_differences(&default, &angles);
     let widest = differences.iter().fold(0.0f64, |m, d| m.max(d.abs()));
     assert!(
         widest > 140.0_f64.to_radians(),
         "the shifted winding holds about 150 degrees: {widest}"
     );
-    assert_holds(&stated, &differences);
+    let (_, zero_centered_max) = correct_angle_difference_bounds(0.0, 0.0);
+    assert!(widest > zero_centered_max);
+    assert!(
+        default
+            .branches
+            .angle_max
+            .iter()
+            .all(|&max| (max - zero_centered_max).abs() < 1e-12)
+    );
 
-    // The PowerModels pad, centered on each branch's shift, holds it too.
+    // The stated bounds, ±360 degrees here, hold it.
+    let stated = build_dc_opf_preparation(
+        &instance,
+        &DcOpfAssemblyOptions::default()
+            .with_angle_difference_bounds(AngleDifferenceBounds::Stated),
+    )
+    .unwrap();
+    assert!(!stated.correct_angle_difference_bounds);
+    assert_holds(&stated, &branch_differences(&stated, &angles));
+
+    // So does the pad centered on each branch's shift.
     let padded = build_dc_opf_preparation(
         &instance,
         &DcOpfAssemblyOptions::default()
-            .with_angle_difference_bounds(AngleDifferenceBounds::PowerModelsPad),
+            .with_angle_difference_bounds(AngleDifferenceBounds::ShiftCenteredPad),
     )
     .unwrap();
     assert!(padded.correct_angle_difference_bounds);
@@ -157,11 +175,17 @@ fn a_150_degree_winding_meets_the_stated_bounds_and_the_centered_pad() {
     }
     assert_holds(&padded, &branch_differences(&padded, &angles));
 
-    // Centered on zero, as PowerModels' correct_voltage_angle_differences!
-    // does, the pad cuts off the shifted winding's operating point: it bounds
-    // theta_from - theta_to, not the difference net of the shift.
-    let (_, zero_centered_max) = correct_angle_difference_bounds(0.0, 0.0);
-    assert!(widest > zero_centered_max);
+    // The legacy flag turned off selects the stated bounds.
+    let unpadded = build_dc_opf_preparation(
+        &instance,
+        &DcOpfAssemblyOptions::default().with_correct_angle_difference_bounds(false),
+    )
+    .unwrap();
+    assert_eq!(
+        unpadded.angle_difference_bounds,
+        Some(AngleDifferenceBounds::Stated)
+    );
+    assert_eq!(unpadded.branches.angle_min, stated.branches.angle_min);
 
     let unbounded = build_dc_opf_preparation(
         &instance,

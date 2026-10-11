@@ -228,7 +228,11 @@ fn emit_prepared(
         build_options: BuildOptionsMeta {
             skip_zero_impedance: instance.skip_zero_impedance,
             synthesize_unrated_limits: instance.synthesize_unrated_limits,
-            angle_difference_bounds: instance.angle_difference_bounds,
+            angle_difference_bounds: instance.angle_difference_bounds.unwrap_or(
+                powerio_tx::AngleDifferenceBounds::from_correct_flag(
+                    instance.correct_angle_difference_bounds,
+                ),
+            ),
         },
         zero_impedance: ZeroImpedanceMeta {
             skip: instance.skip_zero_impedance,

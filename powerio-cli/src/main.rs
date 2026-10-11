@@ -144,9 +144,11 @@ enum Command {
         #[arg(long)]
         gen_cost_csv: Option<PathBuf>,
         /// Which angle difference bounds `angle_min` and `angle_max` carry:
-        /// the stated bounds (±360 degrees where none is stated), PowerModels'
-        /// ±60 degree pad centered on each branch's phase shift, or none.
-        #[arg(long, value_enum, default_value = "stated")]
+        /// PowerModels' ±60 degree pad for a side the case leaves
+        /// unconstrained (the default), the same pad centered on each
+        /// branch's phase shift, the stated bounds (±360 degrees where none is
+        /// stated), or none.
+        #[arg(long, value_enum, default_value = "powermodels-pad")]
         angle_difference_bounds: AngleDifferenceBoundsArg,
     },
     /// Emit DC sensitivity matrices (PTDF, LODF) for one case.
@@ -792,16 +794,18 @@ impl From<UnitsArg> for Units {
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum AngleDifferenceBoundsArg {
-    Stated,
     PowermodelsPad,
+    ShiftCenteredPad,
+    Stated,
     None,
 }
 
 impl From<AngleDifferenceBoundsArg> for AngleDifferenceBounds {
     fn from(value: AngleDifferenceBoundsArg) -> Self {
         match value {
-            AngleDifferenceBoundsArg::Stated => Self::Stated,
             AngleDifferenceBoundsArg::PowermodelsPad => Self::PowerModelsPad,
+            AngleDifferenceBoundsArg::ShiftCenteredPad => Self::ShiftCenteredPad,
+            AngleDifferenceBoundsArg::Stated => Self::Stated,
             AngleDifferenceBoundsArg::None => Self::None,
         }
     }

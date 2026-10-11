@@ -14,8 +14,8 @@ use powerio_prob::{
 };
 use powerio_tx::{AngleDifferenceBounds, Impedance, Load, Shunt, Storage, Transformer3W, Winding};
 
-#[test]
-fn public_preparation_formulates_the_complete_ac_opf() {
+/// A line and a 30 degree phase shifting transformer feeding a load.
+fn ac_consumer_network() -> BalancedNetwork {
     let mut transformer = Branch::new(BusId(2), BusId(3), 0.02, 0.2);
     transformer.tap = 1.05;
     transformer.shift = 30.0;
@@ -40,7 +40,12 @@ fn public_preparation_formulates_the_complete_ac_opf() {
     generator.vg = 1.02;
     generator.cost = Some(GenCost::new(2, 0.0, 0.0, vec![0.02, 11.0, 3.0]));
     network.generators_mut().push(generator);
+    network
+}
 
+#[test]
+fn public_preparation_formulates_the_complete_ac_opf() {
+    let network = ac_consumer_network();
     let instance = AcOpfInstance::from_network(network).expect("instance");
     let prep =
         build_ac_opf_preparation(&instance, &AcOpfAssemblyOptions::default()).expect("preparation");
@@ -49,26 +54,44 @@ fn public_preparation_formulates_the_complete_ac_opf() {
     assert_eq!(prep.n_branches(), 2);
     assert_eq!(prep.n_generators(), 1);
     assert!(!prep.synthesize_unrated_limits);
-    assert!(!prep.correct_angle_difference_bounds);
+    assert!(prep.correct_angle_difference_bounds);
+    assert_eq!(
+        prep.angle_difference_bounds,
+        Some(AngleDifferenceBounds::PowerModelsPad)
+    );
     assert_eq!(
         prep.branches.angle_min,
-        vec![-2.0 * std::f64::consts::PI; 2]
+        vec![
+            -powerio_tx::POWER_MODELS_ANGLE_BOUND_PAD,
+            -powerio_tx::POWER_MODELS_ANGLE_BOUND_PAD,
+        ]
     );
-    assert_eq!(prep.branches.angle_max, vec![2.0 * std::f64::consts::PI; 2]);
+    assert_eq!(
+        prep.branches.angle_max,
+        vec![
+            powerio_tx::POWER_MODELS_ANGLE_BOUND_PAD,
+            powerio_tx::POWER_MODELS_ANGLE_BOUND_PAD,
+        ]
+    );
 
-    let padded = build_ac_opf_preparation(
+    let exact = build_ac_opf_preparation(
         &instance,
-        &AcOpfAssemblyOptions::default()
-            .with_angle_difference_bounds(AngleDifferenceBounds::PowerModelsPad),
+        &AcOpfAssemblyOptions::default().with_correct_angle_difference_bounds(false),
     )
     .unwrap();
-    assert!(padded.correct_angle_difference_bounds);
-    // The pad is centered on each branch's phase shift: zero on the line,
-    // 30 degrees on the transformer.
-    let pad = powerio_tx::POWER_MODELS_ANGLE_BOUND_PAD;
-    let shift = 30.0_f64.to_radians();
-    assert_eq!(padded.branches.angle_min, vec![-pad, shift - pad]);
-    assert_eq!(padded.branches.angle_max, vec![pad, shift + pad]);
+    assert!(!exact.correct_angle_difference_bounds);
+    assert_eq!(
+        exact.angle_difference_bounds,
+        Some(AngleDifferenceBounds::Stated)
+    );
+    assert_eq!(
+        exact.branches.angle_min,
+        vec![-2.0 * std::f64::consts::PI; 2]
+    );
+    assert_eq!(
+        exact.branches.angle_max,
+        vec![2.0 * std::f64::consts::PI; 2]
+    );
 
     // Per unit demand and the series admittance of the plain line:
     // y = 1/(0.01 + j0.1) => g = 0.01/0.0101, b = -0.1/0.0101.
@@ -114,6 +137,25 @@ fn public_preparation_formulates_the_complete_ac_opf() {
     assert_eq!(prep.calc_nodal_generator_data().unwrap(), nodal);
     assert!(nodal.has_gen[0] && !nodal.has_gen[2]);
     assert!((nodal.pmax[0] - 2.0).abs() < 1e-12);
+}
+
+#[test]
+fn the_shift_centered_pad_follows_each_branch_phase_shift() {
+    let instance = AcOpfInstance::from_network(ac_consumer_network()).expect("instance");
+
+    // Selected explicitly, the pad centers on each branch's phase shift: zero
+    // on the line, 30 degrees on the transformer.
+    let centered = build_ac_opf_preparation(
+        &instance,
+        &AcOpfAssemblyOptions::default()
+            .with_angle_difference_bounds(AngleDifferenceBounds::ShiftCenteredPad),
+    )
+    .unwrap();
+    assert!(centered.correct_angle_difference_bounds);
+    let pad = powerio_tx::POWER_MODELS_ANGLE_BOUND_PAD;
+    let shift = 30.0_f64.to_radians();
+    assert_eq!(centered.branches.angle_min, vec![-pad, shift - pad]);
+    assert_eq!(centered.branches.angle_max, vec![pad, shift + pad]);
 }
 
 #[test]
@@ -492,23 +534,19 @@ fn ac_pf_preparation_does_not_require_a_generator() {
     let prepared = build_ac_pf_preparation(&instance, &AcPfAssemblyOptions::default()).unwrap();
     assert_eq!(prepared.n_generators(), 0);
     assert_eq!(prepared.n_branches(), 1);
-    assert!(!prepared.correct_angle_difference_bounds);
+    assert!(prepared.correct_angle_difference_bounds);
     assert_eq!(
         prepared.branches.angle_min,
-        vec![-2.0 * std::f64::consts::PI]
-    );
-
-    let padded = build_ac_pf_preparation(
-        &instance,
-        &AcPfAssemblyOptions::default()
-            .with_angle_difference_bounds(AngleDifferenceBounds::PowerModelsPad),
-    )
-    .unwrap();
-    assert!(padded.correct_angle_difference_bounds);
-    assert_eq!(
-        padded.branches.angle_min,
         vec![-powerio_tx::POWER_MODELS_ANGLE_BOUND_PAD]
     );
+
+    let exact = build_ac_pf_preparation(
+        &instance,
+        &AcPfAssemblyOptions::default().with_correct_angle_difference_bounds(false),
+    )
+    .unwrap();
+    assert!(!exact.correct_angle_difference_bounds);
+    assert_eq!(exact.branches.angle_min, vec![-2.0 * std::f64::consts::PI]);
 }
 
 #[test]

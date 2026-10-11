@@ -244,35 +244,96 @@ fn an_unrated_branch_takes_a_synthesized_limit_on_request() {
 }
 
 #[test]
-fn angle_difference_bounds_are_stated_by_default_and_padded_on_request() {
+fn angle_difference_correction_matches_powermodels_and_can_be_disabled() {
+    use powerio_tx::{POWER_MODELS_ANGLE_BOUND_PAD, correct_angle_difference_bounds};
+
+    let network = small_network();
+    let raw = IndexedNetwork::new(&network);
+    let corrected = preparation_from_view(&raw, DcOpfOptions::default()).unwrap();
+    assert!(corrected.correct_angle_difference_bounds);
+    assert_close(
+        corrected.branches.angle_min[0],
+        -POWER_MODELS_ANGLE_BOUND_PAD,
+    );
+    assert_close(
+        corrected.branches.angle_max[0],
+        POWER_MODELS_ANGLE_BOUND_PAD,
+    );
+
+    let exact = preparation_from_view(
+        &raw,
+        DcOpfOptions {
+            angle_difference_bounds: powerio_tx::AngleDifferenceBounds::Stated,
+            ..DcOpfOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(!exact.correct_angle_difference_bounds);
+    assert_close(exact.branches.angle_min[0], -2.0 * std::f64::consts::PI);
+    assert_close(exact.branches.angle_max[0], 2.0 * std::f64::consts::PI);
+
+    let normalized = network.to_normalized().unwrap();
+    let normalized = IndexedNetwork::new(&normalized);
+    let normalized_corrected = preparation_from_view(&normalized, DcOpfOptions::default()).unwrap();
+    assert_close(
+        normalized_corrected.branches.angle_min[0],
+        corrected.branches.angle_min[0],
+    );
+    assert_close(
+        normalized_corrected.branches.angle_max[0],
+        corrected.branches.angle_max[0],
+    );
+
+    assert_eq!(
+        correct_angle_difference_bounds(0.0, 0.0),
+        (-POWER_MODELS_ANGLE_BOUND_PAD, POWER_MODELS_ANGLE_BOUND_PAD)
+    );
+    assert_eq!(
+        correct_angle_difference_bounds(-45.0_f64.to_radians(), 30.0_f64.to_radians()),
+        (-45.0_f64.to_radians(), 30.0_f64.to_radians())
+    );
+    assert_eq!(
+        correct_angle_difference_bounds(80.0_f64.to_radians(), 100.0_f64.to_radians()),
+        (-POWER_MODELS_ANGLE_BOUND_PAD, POWER_MODELS_ANGLE_BOUND_PAD)
+    );
+}
+
+#[test]
+fn angle_difference_bounds_select_a_pad_the_stated_bounds_or_none() {
     use powerio_tx::{
         AngleDifferenceBounds, POWER_MODELS_ANGLE_BOUND_PAD, correct_angle_difference_bounds,
         stated_angle_difference_bounds,
     };
     let full = std::f64::consts::TAU;
+    let pad = POWER_MODELS_ANGLE_BOUND_PAD;
 
+    // The legacy flag selects the zero centered pad or the stated bounds.
     let network = small_network();
     let raw = IndexedNetwork::new(&network);
-    let stated = preparation_from_view(&raw, DcOpfOptions::default()).unwrap();
-    assert!(!stated.correct_angle_difference_bounds);
+    let default = preparation_from_view(&raw, DcOpfOptions::default()).unwrap();
     assert_eq!(
-        stated.angle_difference_bounds,
+        default.angle_difference_bounds,
+        Some(AngleDifferenceBounds::PowerModelsPad)
+    );
+    assert_eq!(
+        AngleDifferenceBounds::from_correct_flag(true),
+        AngleDifferenceBounds::PowerModelsPad
+    );
+    assert_eq!(
+        AngleDifferenceBounds::from_correct_flag(false),
         AngleDifferenceBounds::Stated
     );
-    assert_close(stated.branches.angle_min[0], -full);
-    assert_close(stated.branches.angle_max[0], full);
-
-    let padded = preparation_from_view(
+    let stated = preparation_from_view(
         &raw,
         DcOpfOptions {
-            angle_difference_bounds: AngleDifferenceBounds::PowerModelsPad,
+            angle_difference_bounds: AngleDifferenceBounds::Stated,
             ..DcOpfOptions::default()
         },
     )
     .unwrap();
-    assert!(padded.correct_angle_difference_bounds);
-    assert_close(padded.branches.angle_min[0], -POWER_MODELS_ANGLE_BOUND_PAD);
-    assert_close(padded.branches.angle_max[0], POWER_MODELS_ANGLE_BOUND_PAD);
+    assert!(!stated.correct_angle_difference_bounds);
+    assert_close(stated.branches.angle_min[0], -full);
+    assert_close(stated.branches.angle_max[0], full);
 
     let mut bounded = network.clone();
     bounded.branches_mut()[0].angmin = -30.0;
@@ -289,13 +350,6 @@ fn angle_difference_bounds_are_stated_by_default_and_padded_on_request() {
     assert_close(unbounded.branches.angle_min[0], -full);
     assert_close(unbounded.branches.angle_max[0], full);
 
-    // A raw case and its normalized form prepare the same bounds.
-    let normalized = network.to_normalized().unwrap();
-    let normalized = IndexedNetwork::new(&normalized);
-    let normalized_stated = preparation_from_view(&normalized, DcOpfOptions::default()).unwrap();
-    assert_close(normalized_stated.branches.angle_min[0], -full);
-    assert_close(normalized_stated.branches.angle_max[0], full);
-
     // The MATPOWER 0/0 spelling states no constraint, which the stated form
     // reads as the widest window and PowerModels pads.
     assert_eq!(stated_angle_difference_bounds(0.0, 0.0), (-full, full));
@@ -307,45 +361,31 @@ fn angle_difference_bounds_are_stated_by_default_and_padded_on_request() {
         stated_angle_difference_bounds(-3.0 * full, 2.0 * full),
         (-full, full)
     );
-    assert_eq!(
-        correct_angle_difference_bounds(0.0, 0.0),
-        (-POWER_MODELS_ANGLE_BOUND_PAD, POWER_MODELS_ANGLE_BOUND_PAD)
-    );
-    assert_eq!(
-        correct_angle_difference_bounds(-45.0_f64.to_radians(), 30.0_f64.to_radians()),
-        (-45.0_f64.to_radians(), 30.0_f64.to_radians())
-    );
-    assert_eq!(
-        correct_angle_difference_bounds(80.0_f64.to_radians(), 100.0_f64.to_radians()),
-        (-POWER_MODELS_ANGLE_BOUND_PAD, POWER_MODELS_ANGLE_BOUND_PAD)
-    );
 
-    // The pad is centered on the phase shift: an unshifted branch gets
-    // PowerModels' interval, a shifted one keeps its operating point inside.
-    let pad = AngleDifferenceBounds::PowerModelsPad;
-    assert_eq!(
-        pad.calc_bounds(0.0, 0.0, 0.0),
-        correct_angle_difference_bounds(0.0, 0.0)
-    );
+    // PowerModelsPad ignores the phase shift, as PowerModels does; the
+    // shift centered pad follows it, and agrees on an unshifted branch.
     let shift = 150.0_f64.to_radians();
     assert_eq!(
-        pad.calc_bounds(0.0, 0.0, shift),
-        (
-            shift - POWER_MODELS_ANGLE_BOUND_PAD,
-            shift + POWER_MODELS_ANGLE_BOUND_PAD
-        )
+        AngleDifferenceBounds::PowerModelsPad.calc_bounds(0.0, 0.0, shift),
+        correct_angle_difference_bounds(0.0, 0.0)
+    );
+    let centered = AngleDifferenceBounds::ShiftCenteredPad;
+    assert_eq!(
+        centered.calc_bounds(0.0, 0.0, 0.0),
+        correct_angle_difference_bounds(0.0, 0.0)
     );
     assert_eq!(
-        pad.calc_bounds(-full, full, shift),
-        (
-            shift - POWER_MODELS_ANGLE_BOUND_PAD,
-            shift + POWER_MODELS_ANGLE_BOUND_PAD
-        )
+        centered.calc_bounds(0.0, 0.0, shift),
+        (shift - pad, shift + pad)
+    );
+    assert_eq!(
+        centered.calc_bounds(-full, full, shift),
+        (shift - pad, shift + pad)
     );
     // A usable stated side is kept.
     assert_eq!(
-        pad.calc_bounds(-full, 30.0_f64.to_radians(), 0.0),
-        (-POWER_MODELS_ANGLE_BOUND_PAD, 30.0_f64.to_radians())
+        centered.calc_bounds(-full, 30.0_f64.to_radians(), 0.0),
+        (-pad, 30.0_f64.to_radians())
     );
     assert_eq!(
         AngleDifferenceBounds::None.calc_bounds(-0.1, 0.1, shift),
@@ -1060,7 +1100,7 @@ mod matrix_tests {
         assert_eq!(manifest["build_options"]["synthesize_unrated_limits"], true);
         assert_eq!(
             manifest["build_options"]["angle_difference_bounds"],
-            "stated"
+            "power_models_pad"
         );
 
         let emitted_files: Vec<_> = manifest["files"]

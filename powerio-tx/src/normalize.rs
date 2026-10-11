@@ -77,10 +77,9 @@ pub const POWER_MODELS_ANGLE_BOUND_PAD: f64 = 1.0472;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NormalizeOptions {
     /// Clamp branch angle difference bounds to the interval PowerModels relaxations
-    /// accept, with the pad centered on each branch's phase shift. Disabled by
-    /// default so [`BalancedNetwork::to_normalized`] stays unchanged.
+    /// accept. Disabled by default so [`BalancedNetwork::to_normalized`] stays unchanged.
     pub clamp_angle_bounds: bool,
-    /// Replacement half width, in radians, for clamped angle bounds.
+    /// Replacement magnitude, in radians, for clamped angle bounds.
     pub angle_bound_pad: f64,
 }
 
@@ -419,7 +418,7 @@ fn clamp_angle_bounds(
         let mut changes = Vec::new();
 
         let (corrected_min, corrected_max) =
-            correct_angle_difference_bounds_with_pad(old_min, old_max, pad, br.shift);
+            correct_angle_difference_bounds_with_pad(old_min, old_max, pad, 0.0);
 
         if old_min != corrected_min {
             br.angmin = corrected_min;
@@ -451,7 +450,7 @@ fn clamp_angle_bounds(
 /// result is also ±60 degrees. Inputs and outputs are radians.
 ///
 /// This is the pad centered on zero, which suits an unshifted branch only;
-/// [`AngleDifferenceBounds::PowerModelsPad`] centers it on the branch's
+/// [`AngleDifferenceBounds::ShiftCenteredPad`] centers it on the branch's
 /// phase shift.
 #[must_use]
 pub fn correct_angle_difference_bounds(angle_min: f64, angle_max: f64) -> (f64, f64) {
@@ -487,40 +486,70 @@ pub fn stated_angle_difference_bounds(angle_min: f64, angle_max: f64) -> (f64, f
 ///
 /// Every bound constrains `theta_from - theta_to`, the MATPOWER and
 /// PowerModels convention, which is not net of a branch's phase shift.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+///
+/// The assembly options select one with `with_angle_difference_bounds`. Left
+/// unselected, their `correct_angle_difference_bounds` flag decides as it
+/// always has: `true`, the default, is [`Self::PowerModelsPad`] and `false`
+/// is [`Self::Stated`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AngleDifferenceBounds {
+    /// PowerModels' ±60 degree pad exactly as its
+    /// `correct_voltage_angle_differences!` applies it
+    /// ([`correct_angle_difference_bounds`]): a side the source leaves
+    /// unconstrained or unusable (at or beyond ±90 degrees, the `0`/`0`
+    /// spelling, or an inverted window) becomes ±60 degrees around zero, and
+    /// a usable stated side is kept. A branch that shifts phase by more than
+    /// 60 degrees cannot meet this window; select
+    /// [`Self::ShiftCenteredPad`] or [`Self::Stated`] for such a case.
+    PowerModelsPad,
+    /// The same pad centered on the branch's phase shift, so a phase
+    /// shifting branch keeps its operating point inside the window. An
+    /// unshifted branch gets exactly [`Self::PowerModelsPad`].
+    ShiftCenteredPad,
     /// The bounds the source states ([`stated_angle_difference_bounds`]):
     /// a side it leaves unconstrained reads as ±360 degrees and never binds.
-    #[default]
     Stated,
-    /// PowerModels' ±60 degree pad for a side the source leaves
-    /// unconstrained or unusable (at or beyond ±90 degrees, the `0`/`0`
-    /// spelling, or an inverted window), centered on the branch's phase
-    /// shift so a phase shifting branch stays feasible. An unshifted branch
-    /// gets exactly PowerModels' `correct_voltage_angle_differences!`; a
-    /// usable stated side is kept.
-    PowerModelsPad,
     /// No angle difference bound: every interval is ±360 degrees.
     None,
 }
 
 impl AngleDifferenceBounds {
+    /// The selection the legacy `correct_angle_difference_bounds` flag
+    /// stands for: [`Self::PowerModelsPad`] when `true`, [`Self::Stated`]
+    /// when `false`.
+    #[must_use]
+    pub const fn from_correct_flag(correct: bool) -> Self {
+        if correct {
+            Self::PowerModelsPad
+        } else {
+            Self::Stated
+        }
+    }
+
+    /// Whether this selection pads unconstrained sides, which is what the
+    /// preparations' `correct_angle_difference_bounds` flag reports.
+    #[must_use]
+    pub const fn is_padded(self) -> bool {
+        matches!(self, Self::PowerModelsPad | Self::ShiftCenteredPad)
+    }
+
     /// The interval for one branch, in radians, from its stated `angmin`
     /// and `angmax` and the phase shift the preparation models.
     #[must_use]
     pub fn calc_bounds(self, angle_min: f64, angle_max: f64, shift: f64) -> (f64, f64) {
         let full = std::f64::consts::TAU;
         match self {
-            Self::Stated => stated_angle_difference_bounds(angle_min, angle_max),
-            Self::None => (-full, full),
-            Self::PowerModelsPad => correct_angle_difference_bounds_with_pad(
+            Self::PowerModelsPad => correct_angle_difference_bounds(angle_min, angle_max),
+            Self::ShiftCenteredPad => correct_angle_difference_bounds_with_pad(
                 angle_min,
                 angle_max,
                 POWER_MODELS_ANGLE_BOUND_PAD,
                 shift,
             ),
+            Self::Stated => stated_angle_difference_bounds(angle_min, angle_max),
+            Self::None => (-full, full),
         }
     }
 }

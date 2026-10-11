@@ -27,7 +27,7 @@ pub use prep::{
 
 /// Assembly choices that select the numerical content derived from an
 /// instance without changing the instance itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct DcOpfAssemblyOptions {
     /// Power and cost scaling of the derived arrays.
@@ -41,9 +41,26 @@ pub struct DcOpfAssemblyOptions {
     /// [`Branch::synthesize_rate_a`](powerio_tx::Branch::synthesize_rate_a)
     /// states. If false, an absent rating reads as unlimited.
     pub synthesize_unrated_limits: bool,
-    /// Which angle difference bounds the prepared arrays carry. The default,
-    /// [`AngleDifferenceBounds::Stated`], is what the source states.
-    pub angle_difference_bounds: AngleDifferenceBounds,
+    /// Apply PowerModels' ±60 degree correction to unconstrained or unusable
+    /// branch angle difference intervals in the prepared arrays.
+    pub correct_angle_difference_bounds: bool,
+    /// The angle difference bounds selected with
+    /// `with_angle_difference_bounds`. `None`, the default, leaves the choice
+    /// to `correct_angle_difference_bounds`
+    /// ([`AngleDifferenceBounds::from_correct_flag`]).
+    pub angle_difference_bounds: Option<AngleDifferenceBounds>,
+}
+
+impl Default for DcOpfAssemblyOptions {
+    fn default() -> Self {
+        Self {
+            units: Units::default(),
+            skip_zero_impedance: false,
+            synthesize_unrated_limits: false,
+            correct_angle_difference_bounds: true,
+            angle_difference_bounds: None,
+        }
+    }
 }
 
 impl DcOpfAssemblyOptions {
@@ -65,10 +82,32 @@ impl DcOpfAssemblyOptions {
         self
     }
 
+    /// Turn PowerModels' angle difference pad on or off. This clears a
+    /// selection made with `with_angle_difference_bounds`.
+    #[must_use]
+    pub const fn with_correct_angle_difference_bounds(mut self, correct: bool) -> Self {
+        self.correct_angle_difference_bounds = correct;
+        self.angle_difference_bounds = None;
+        self
+    }
+
+    /// Select the angle difference bounds the prepared arrays carry. The
+    /// selection takes precedence over `correct_angle_difference_bounds`,
+    /// which it sets to whether the selection pads.
     #[must_use]
     pub const fn with_angle_difference_bounds(mut self, bounds: AngleDifferenceBounds) -> Self {
-        self.angle_difference_bounds = bounds;
+        self.correct_angle_difference_bounds = bounds.is_padded();
+        self.angle_difference_bounds = Some(bounds);
         self
+    }
+
+    /// The angle difference bounds these options select.
+    #[must_use]
+    pub const fn selected_angle_difference_bounds(&self) -> AngleDifferenceBounds {
+        match self.angle_difference_bounds {
+            Some(bounds) => bounds,
+            None => AngleDifferenceBounds::from_correct_flag(self.correct_angle_difference_bounds),
+        }
     }
 }
 
@@ -130,7 +169,7 @@ pub fn build_dc_opf_preparation(
             units: options.units,
             skip_zero_impedance: options.skip_zero_impedance,
             synthesize_unrated_limits: options.synthesize_unrated_limits,
-            angle_difference_bounds: options.angle_difference_bounds,
+            angle_difference_bounds: options.selected_angle_difference_bounds(),
             objective,
         },
     )?;

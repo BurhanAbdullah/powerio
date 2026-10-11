@@ -57,7 +57,7 @@ impl Units {
 }
 
 /// Options for DC OPF instance assembly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DcOpfOptions {
     /// Formula used to calculate each branch susceptance.
     pub formula: BranchSusceptanceFormula,
@@ -76,10 +76,27 @@ pub struct DcOpfOptions {
     #[serde(default)]
     pub synthesize_unrated_limits: bool,
     /// Which angle difference bounds the prepared arrays carry.
-    #[serde(default)]
+    #[serde(default = "default_angle_difference_bounds")]
     pub angle_difference_bounds: powerio_tx::AngleDifferenceBounds,
     /// The already validated instance objective to compile into the arrays.
     pub objective: PreparedObjective,
+}
+
+const fn default_angle_difference_bounds() -> powerio_tx::AngleDifferenceBounds {
+    powerio_tx::AngleDifferenceBounds::PowerModelsPad
+}
+
+impl Default for DcOpfOptions {
+    fn default() -> Self {
+        Self {
+            formula: BranchSusceptanceFormula::default(),
+            units: Units::default(),
+            skip_zero_impedance: false,
+            synthesize_unrated_limits: false,
+            angle_difference_bounds: default_angle_difference_bounds(),
+            objective: PreparedObjective::default(),
+        }
+    }
 }
 
 /// Generator parameters in generator column order.
@@ -188,15 +205,13 @@ pub struct DcOpfPreparation {
     /// their limits retain the old unsynthesized meaning.
     #[serde(default)]
     pub synthesize_unrated_limits: bool,
-    /// Whether PowerModels' angle difference pad was applied
-    /// ([`AngleDifferenceBounds::PowerModelsPad`](powerio_tx::AngleDifferenceBounds::PowerModelsPad)).
+    /// Whether PowerModels' angle difference correction was applied.
     pub correct_angle_difference_bounds: bool,
     /// Which angle difference bounds `angle_min` and `angle_max` carry.
-    /// `#[serde(default)]`: a document written before the field reads as
-    /// `Stated`, and its `correct_angle_difference_bounds` says whether the
-    /// pad was applied.
+    /// `None` only in a document written before the field existed, whose
+    /// `correct_angle_difference_bounds` says whether the pad was applied.
     #[serde(default)]
-    pub angle_difference_bounds: powerio_tx::AngleDifferenceBounds,
+    pub angle_difference_bounds: Option<powerio_tx::AngleDifferenceBounds>,
     /// Dense bus index to external bus ID.
     pub bus_ids: Vec<BusId>,
     /// Dense bus index to row in the star-lowered analysis network.
@@ -490,9 +505,8 @@ pub(crate) fn preparation_from_view(
         objective: options.objective,
         skip_zero_impedance: options.skip_zero_impedance,
         synthesize_unrated_limits: options.synthesize_unrated_limits,
-        correct_angle_difference_bounds: options.angle_difference_bounds
-            == powerio_tx::AngleDifferenceBounds::PowerModelsPad,
-        angle_difference_bounds: options.angle_difference_bounds,
+        correct_angle_difference_bounds: options.angle_difference_bounds.is_padded(),
+        angle_difference_bounds: Some(options.angle_difference_bounds),
         bus_ids: active_buses.bus_ids,
         bus_analysis_rows,
         bus_source_rows,
