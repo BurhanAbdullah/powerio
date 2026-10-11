@@ -1483,7 +1483,6 @@ mod tests {
             .to_normalized_with_options(&NormalizeOptions {
                 clamp_angle_bounds: true,
                 angle_bound_pad: std::f64::consts::FRAC_PI_2,
-                ..NormalizeOptions::default()
             })
             .unwrap_err();
         assert!(matches!(
