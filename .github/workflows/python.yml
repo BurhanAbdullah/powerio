@@ -493,6 +493,28 @@ jobs:
           name: sdist
           path: dist
 
+  # On PRs, validate the exact assembled distributions without publishing.
+  # The real PyPI upload below remains restricted to published release or an
+  # explicit recovery dispatch behind the protected pypi environment.
+  publish-validation:
+    name: publish validation (twine, no upload)
+    if: github.event_name == 'pull_request'
+    needs: [ release-preflight, lint, quality, test, test-gridfm, goc3-reference, wheels, wheel-smoke, sdist ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.x"
+      - name: Check distributions (no upload)
+        run: |
+          python -m pip install twine
+          test -n "$(find dist -maxdepth 1 -type f \( -name '*.whl' -o -name '*.tar.gz' \) -print -quit)"
+          python -m twine check dist/*
+
   publish:
     name: publish to PyPI
     # release-binaries.yml stages each release as a draft a human publishes, so
