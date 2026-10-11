@@ -78,7 +78,7 @@ Repository = "https://github.com/eigenergy/powerio"
 manifest-path = "powerio-py/Cargo.toml"
 module-name = "powerio._powerio"
 python-source = "python"
-features = ["extension-module", "gridfm"]
+features = ["extension-module", "gridfm", "mimalloc-allocator"]
 strip = true
 # maturin resolves the workspace-root license files into the wheel and the
 # package metadata, but does not copy them into the sdist on its own (the
