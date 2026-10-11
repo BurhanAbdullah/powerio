@@ -403,6 +403,19 @@ fn join(parent: &mut [usize], a: usize, b: usize) -> bool {
 /// are unsupported by this profile. This is not a claim of infeasibility.
 /// The caller owns expression compilation, differentiation and optimization.
 ///
+/// # Examples
+///
+/// ```rust
+/// use powerio_matrix::{McAcOpfAssemblyOptions, build_mc_ac_opf_preparation};
+/// use powerio_prob::McAcOpfInstance;
+/// # fn example(instance: &McAcOpfInstance) -> Result<(), powerio_core::Error> {
+/// let bases = McAcOpfAssemblyOptions::new(230.0, 1000.0);
+/// let prepared = build_mc_ac_opf_preparation(instance, &bases)?;
+/// // Global voltage indices refer to prepared.terminals, not bus rows.
+/// # Ok(())
+/// # }
+/// ```
+///
 /// # Errors
 /// Invalid shapes/units/identities, unsupported semantic fields or equipment,
 /// missing source coverage, and structurally dependent ideal conductor cycles.

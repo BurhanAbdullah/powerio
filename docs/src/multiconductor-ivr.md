@@ -8,16 +8,11 @@ and `powerio-matrix` derives indexed numerical data. The `powerio::matrix`
 facade exposes the same API. No optimizer, AD library, or expression type crosses
 this boundary.
 
-```rust
-use powerio_matrix::{McAcOpfAssemblyOptions, build_mc_ac_opf_preparation};
-use powerio_prob::McAcOpfInstance;
-# fn example(instance: &McAcOpfInstance) -> Result<(), powerio_core::Error> {
-let bases = McAcOpfAssemblyOptions::new(230.0, 1000.0);
-let prepared = build_mc_ac_opf_preparation(instance, &bases)?;
-// Global voltage indices refer to prepared.terminals, not bus rows.
-# Ok(())
-# }
-```
+Choose explicit voltage and per-coil power bases with
+`McAcOpfAssemblyOptions::new`, then pass the instance and bases to
+`build_mc_ac_opf_preparation`. The
+[API example](https://eigenergy.github.io/powerio/powerio_matrix/fn.build_mc_ac_opf_preparation.html#examples)
+shows the call and is compiled by the crate's documentation tests.
 
 ## Units and axes
 
