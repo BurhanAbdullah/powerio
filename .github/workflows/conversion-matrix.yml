@@ -22,8 +22,6 @@ concurrency:
 permissions:
   actions: read
   contents: read
-  issues: write
-  pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -49,62 +47,17 @@ jobs:
         name: conversion-matrix-warning-details
         path: ${{ env.POWERIO_CONVERSION_MATRIX_DETAILS }}
         if-no-files-found: ignore
-    - name: Comment on PR
-      if: always() && github.event.pull_request.head.repo.full_name == github.repository
-      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-      with:
-        script: |
-          const fs = require("fs");
-          const marker = "<!-- powerio-conversion-matrix-report -->";
-          const reportPath = process.env.POWERIO_CONVERSION_MATRIX_REPORT;
-          const detailsPath = process.env.POWERIO_CONVERSION_MATRIX_DETAILS;
-          let body;
-          if (fs.existsSync(reportPath)) {
-            body = fs.readFileSync(reportPath, "utf8");
-          } else {
-            body = `${marker}\n\n## Conversion Matrix\n\nMatrix generation failed before writing the report. See the workflow logs.`;
-          }
-
-          const issue_number = context.payload.pull_request.number;
-          const { owner, repo } = context.repo;
-          const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
-          if (fs.existsSync(detailsPath)) {
-            let detailsUrl = runUrl;
-            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
-              owner,
-              repo,
-              run_id: context.runId,
-              per_page: 100,
-            });
-            const detailsArtifact = artifacts.find((artifact) =>
-              artifact.name === "conversion-matrix-warning-details"
-            );
-            if (detailsArtifact) {
-              detailsUrl = `${runUrl}/artifacts/${detailsArtifact.id}`;
-            }
-            body += `\n\nFull warning details: [download \`conversion-matrix-warning-details\`](${detailsUrl}) for this workflow run.`;
-          }
-          const comments = await github.paginate(github.rest.issues.listComments, {
-            owner,
-            repo,
-            issue_number,
-            per_page: 100,
-          });
-          const existing = comments.find((comment) =>
-            comment.user?.type === "Bot" && comment.body?.includes(marker)
-          );
-          if (existing) {
-            await github.rest.issues.updateComment({
-              owner,
-              repo,
-              comment_id: existing.id,
-              body,
-            });
-          } else {
-            await github.rest.issues.createComment({
-              owner,
-              repo,
-              issue_number,
-              body,
-            });
-          }
+    - name: Add conversion matrix report to workflow summary
+      if: always()
+      shell: bash
+      run: |
+        if [ -f "$POWERIO_CONVERSION_MATRIX_REPORT" ]; then
+          cat "$POWERIO_CONVERSION_MATRIX_REPORT" >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "## Conversion Matrix" >> "$GITHUB_STEP_SUMMARY"
+          echo "Matrix generation failed before writing the report. See the workflow logs." >> "$GITHUB_STEP_SUMMARY"
+        fi
+        if [ -f "$POWERIO_CONVERSION_MATRIX_DETAILS" ]; then
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Detailed warning data is attached as the `conversion-matrix-warning-details` workflow artifact." >> "$GITHUB_STEP_SUMMARY"
+        fi
