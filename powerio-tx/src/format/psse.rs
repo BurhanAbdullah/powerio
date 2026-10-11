@@ -5104,6 +5104,13 @@ mod tests {
         close(control.band_min, 0.97);
         assert_eq!(control.ntp, 11);
         assert_eq!(control.winding_connection_angle, Some(3.5));
+        // v34 keeps TAB/CR/CX immediately after NTP, before CNXA and final NODE.
+        let extras_start = 22;
+        assert_eq!(winding[extras_start], "7");
+        assert_eq!(winding[extras_start + 1], "0.01");
+        assert_eq!(winding[extras_start + 2], "0.02");
+        assert_eq!(winding[25], "3.5");
+        assert_eq!(winding[26], "6");
         assert!(warnings.is_empty(), "{warnings:?}");
     }
 
