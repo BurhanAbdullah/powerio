@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- PSS/E switched shunt `MODSW` 1 and 2 now read as PSS/E defines them: 1 is
+  discrete and 2 is continuous adjustment of the regulated voltage. The RAW
+  and RAWX readers had the two swapped, so a continuously adjusted shunt, such
+  as 152 of the 153 switched shunts in ACTIVSg2000 (MODSW 2, half of them with
+  a BINIT between block steps), read as `discrete`, a MODSW 1 shunt read as
+  `continuous`, and PSS/E output of a discrete shunt from another format, such
+  as a regulating CGMES or XIIDM shunt compensator, stated MODSW 2. CGMES and
+  XIIDM output of a PSS/E case follow the corrected mode. Codes 3 to 6, which
+  adjust in discrete steps to control a plant, a VSC dc converter, another
+  switched shunt, or a FACTS device, still read as `discrete` and keep their
+  code in the `psse_modsw` extra for PSS/E output. A RAW or RAWX case written
+  back to PSS/E kept its codes before and still does. A PowerIO IR document an
+  earlier release wrote from a PSS/E case carries the swapped mode, so read
+  the case again. The IR 2 schema keeps its published descriptions, which
+  state the old mapping.
+
+### Changed results
+
 - PSS/E three winding transformers keep each winding's status and all
   twelve winding ratings. The three winding `STAT` codes 2, 3, and 4 take only
   winding 2, 3, or 1 out of service, but the RAW and RAWX readers read every
@@ -22,22 +40,6 @@
   so it is written as STAT 0 with a diagnostic. PSS/E revision 33, PSLF,
   XIIDM, and CGMES output report the winding detail they cannot state. A STAT
   code outside 0 to 4 reads as 1, as before, and is now reported.
-
-- PSS/E switched shunt `MODSW` 1 and 2 now read as PSS/E defines them: 1 is
-  discrete and 2 is continuous adjustment of the regulated voltage. The RAW
-  and RAWX readers had the two swapped, so a continuously adjusted shunt, such
-  as 152 of the 153 switched shunts in ACTIVSg2000 (MODSW 2, half of them with
-  a BINIT between block steps), read as `discrete`, a MODSW 1 shunt read as
-  `continuous`, and PSS/E output of a discrete shunt from another format, such
-  as a regulating CGMES or XIIDM shunt compensator, stated MODSW 2. CGMES and
-  XIIDM output of a PSS/E case follow the corrected mode. Codes 3 to 6, which
-  adjust in discrete steps to control a plant, a VSC dc converter, another
-  switched shunt, or a FACTS device, still read as `discrete` and keep their
-  code in the `psse_modsw` extra for PSS/E output. A RAW or RAWX case written
-  back to PSS/E kept its codes before and still does. A PowerIO IR document an
-  earlier release wrote from a PSS/E case carries the swapped mode, so read
-  the case again. The IR 2 schema keeps its published descriptions, which
-  state the old mapping.
 
 ## 0.11.4
 
