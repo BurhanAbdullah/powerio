@@ -385,11 +385,22 @@ jobs:
         with:
           python-version: "3.x"
       # abi3-py39 → one wheel per platform covers Python 3.9+.
-      - name: Build powerio wheels
+      # The manylinux aarch64 cross-compiler cannot build libmimalloc-sys 0.1.49.
+      # Use separate steps: an empty string in a GitHub Actions &&/|| expression is
+      # falsy and would accidentally fall through to --features mimalloc-allocator.
+      - name: Build Linux aarch64 wheel without mimalloc
+        if: matrix.platform.runner == 'ubuntu-latest' && matrix.platform.target == 'aarch64'
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist${{ matrix.platform.runner == 'ubuntu-latest' && matrix.platform.target == 'aarch64' && '' || ' --features mimalloc-allocator' }}
+          args: --release --out dist
+          manylinux: auto
+      - name: Build powerio wheels with mimalloc
+        if: matrix.platform.runner != 'ubuntu-latest' || matrix.platform.target != 'aarch64'
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --features mimalloc-allocator
           manylinux: auto
       - name: Check packaged schemas
         shell: bash
