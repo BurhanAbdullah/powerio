@@ -1,0 +1,20 @@
+name: Python Validation
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-validation-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  validate:
+    uses: ./.github/workflows/python-build.yml
+    with:
+      source_ref: ${{ github.sha }}
+      release_tag: ""
