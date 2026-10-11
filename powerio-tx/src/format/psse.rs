@@ -4035,7 +4035,7 @@ fn retain_transformer_winding_extras(
     suffix: &str,
 ) -> Result<()> {
     let start = match raw_rev {
-        34 => 22, // TAB follows NTP; NODE is the final field after CNXA.
+        34 => 22,   // TAB follows NTP; NODE is the final field after CNXA.
         35.. => 23, // NODE was moved to immediately after CONT in revision 35.
         _ => 13,
     };
