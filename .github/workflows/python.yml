@@ -42,26 +42,32 @@ env:
 
 jobs:
   release-preflight:
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request' || github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.release.outputs.tag }}
-      sha: ${{ steps.release.outputs.sha }}
+      sha: ${{ steps.release.outputs.sha || steps.pr.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.SOURCE_REF }}
           fetch-depth: 0
+      - name: Record PR source identity
+        id: pr
+        if: github.event_name == 'pull_request'
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Release identity agreement
+        if: github.event_name != 'pull_request'
         run: bash scripts/check-release-versions.sh
       - name: Verify the approved paired release
-        if: vars.PAIRED_RELEASES == 'true'
+        if: github.event_name != 'pull_request' && vars.PAIRED_RELEASES == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
         run: python3 scripts/paired_release.py verify "$TAG"
       - name: Verify the immutable published release
         id: release
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -347,7 +353,7 @@ jobs:
 
   wheels:
     name: wheels (${{ matrix.platform.target }} on ${{ matrix.platform.runner }})
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    if: always() && needs.release-preflight.result == 'success' && (github.event_name == 'pull_request' || github.event_name == 'release' || github.event_name == 'workflow_dispatch')
     needs: release-preflight
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -401,7 +407,7 @@ jobs:
   # macOS x86_64 runs the cross compiled x86_64 wheel under Rosetta.
   wheel-smoke:
     name: wheel smoke (${{ matrix.platform.target }} on ${{ matrix.platform.runner }})
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    if: always() && needs.release-preflight.result == 'success' && needs.wheels.result == 'success' && (github.event_name == 'pull_request' || github.event_name == 'release' || github.event_name == 'workflow_dispatch')
     needs: [ release-preflight, wheels ]
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -457,7 +463,7 @@ jobs:
           "$py" scripts/wheel-smoke.py
 
   sdist:
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    if: always() && needs.release-preflight.result == 'success' && (github.event_name == 'pull_request' || github.event_name == 'release' || github.event_name == 'workflow_dispatch')
     needs: release-preflight
     runs-on: ubuntu-latest
     steps:
