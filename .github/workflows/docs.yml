@@ -217,6 +217,17 @@ jobs:
       with:
         path: target/doc
 
+  # Pull-request validation of the deployment artifact. This intentionally
+  # does not touch the github-pages environment or publish a live site.
+  deploy-validation:
+    name: deploy validation (artifact only)
+    needs: build
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Confirm docs artifact build completed
+      run: echo "Documentation artifact built successfully; live deployment is restricted to main / dispatch."
+
   deploy:
     needs: build
     # PR runs build to catch doc breakage but never publish; only main / dispatch deploy.
