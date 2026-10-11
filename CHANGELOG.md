@@ -2,29 +2,41 @@
 
 ## Unreleased
 
-- `BalancedNetwork::merge_buses` merges the buses that closed switches and
-  zero impedance branches join, under an explicit `BusMergeRule`: closed
-  switches, and branches that are exact zeros (`ZeroImpedanceRule::Exact`),
-  PSS/E zero impedance lines (`PsseThreshold`: non-transformer, `r == 0`,
-  `|x|` at most the threshold; `BusMergeRule::psse` reads the `THRSHZ` the case
-  states), or under an impedance magnitude (`ImpedanceMagnitude`). One union
-  find pass joins the buses. The survivor is the reference bus, else a
-  generator bus, else a regulated bus, smallest id first, and every element
-  reference follows it. The returned `BusMerge` lists the merged buses and
-  their groups, every removed branch and switch with its source row, identity,
-  and ratings, and the source to merged row maps. A removed in-service
-  branch's line charging and line shunts become a fixed shunt at the survivor
-  (`MergedCharging::FoldToShunt`, the default, which reproduces a solved PSS/E
-  case's reactive balance at each merged group), or go with the branch under
-  `MergedCharging::Drop`. Diagnostics under
-  `CANONICALIZE.MERGE.*` report merged buses of different base voltage,
-  branches the merge shorts, and jumpers kept because they would join two
-  windings of one three winding transformer. `BusMerge::calc_removed_flows`
-  recovers the active power on the removed elements from a merged solution:
-  exactly by Kirchhoff's current law where they form a tree, by reactance on a
-  loop, and by minimum norm with a diagnostic on a loop of zero reactance
-  elements. Python has `BalancedNetwork.merge_buses` and `BusMerge`, and
-  `powerio convert`, `summary`, and `verify` take `--merge-buses SPEC`.
+- PSS/E switched shunt `MODSW` 1 and 2 now read as PSS/E defines them: 1 is
+  discrete and 2 is continuous adjustment of the regulated voltage. The RAW
+  and RAWX readers had the two swapped, so a continuously adjusted shunt, such
+  as 152 of the 153 switched shunts in ACTIVSg2000 (MODSW 2, half of them with
+  a BINIT between block steps), read as `discrete`, a MODSW 1 shunt read as
+  `continuous`, and PSS/E output of a discrete shunt from another format, such
+  as a regulating CGMES or XIIDM shunt compensator, stated MODSW 2. CGMES and
+  XIIDM output of a PSS/E case follow the corrected mode. Codes 3 to 6, which
+  adjust in discrete steps to control a plant, a VSC dc converter, another
+  switched shunt, or a FACTS device, still read as `discrete` and keep their
+  code in the `psse_modsw` extra for PSS/E output. A RAW or RAWX case written
+  back to PSS/E kept its codes before and still does. A PowerIO IR document an
+  earlier release wrote from a PSS/E case carries the swapped mode, so read
+  the case again. The IR 2 schema keeps its published descriptions, which
+  state the old mapping.
+
+### Changed results
+
+- `reduce_zero_impedance` and `merge_zero_impedance_buses` now run through
+  `merge_buses`, so they are linear rather than quadratic in the bus count and
+  rewrite every element reference: `merge_zero_impedance_buses` used to leave
+  switches, HVDC lines, storage, three winding transformer windings, and
+  control buses on the merged bus. Each keeps the survivor it always kept, the
+  from bus and the smallest id respectively, and the survivor takes the
+  strongest bus kind of its group, as `reduce_zero_impedance` already did;
+  `merge_zero_impedance_buses` promoted only a reference bus, so a PV bus
+  merged into a PQ bus left a generator on a PQ bus. Both remove a branch
+  whose two buses the merge joined through other branches instead of leaving
+  a self loop, report it in `removed_branches`, and fold a removed in-service
+  branch's line charging and line shunts onto the survivor as a fixed shunt
+  instead of dropping them. `merge_zero_impedance_buses` no longer merges
+  across an off-nominal ideal transformer. The
+  `CANONICALIZE.MERGE.ZERO_IMPEDANCE` and
+  `CANONICALIZE.MERGE.ATTRIBUTE_CONFLICT` codes moved to the `powerio-tx`
+  registry; `powerio_prob::diagnostics::codes` keeps both constants.
 
 - Closed switches count as connections. `IndexedNetwork::calc_island_labels`,
   `calc_island_count`, `check_reference_coverage`, `is_radial`, and
@@ -49,34 +61,33 @@
   component type `switch`. `PsseEquipmentIndex` gains `switch_ids` and
   `switch_rows`, using the RAW writer's switching device id allocation.
 
-- `reduce_zero_impedance` and `merge_zero_impedance_buses` now run through
-  `merge_buses`, so they are linear rather than quadratic in the bus count and
-  rewrite every element reference: `merge_zero_impedance_buses` used to leave
-  switches, HVDC lines, storage, three winding transformer windings, and
-  control buses on the merged bus. Both now keep a reference or generator bus
-  as the survivor rather than the smallest id or the from bus, remove a branch
-  whose two buses the merge joined through other branches instead of leaving a
-  self loop, and report that branch in `removed_branches`.
-  `merge_zero_impedance_buses` no longer merges across an off-nominal ideal
-  transformer. The `CANONICALIZE.MERGE.ZERO_IMPEDANCE` and
-  `CANONICALIZE.MERGE.ATTRIBUTE_CONFLICT` codes moved to the `powerio-tx`
-  registry; `powerio_prob::diagnostics::codes` re-exports them.
+### Added
 
-- PSS/E switched shunt `MODSW` 1 and 2 now read as PSS/E defines them: 1 is
-  discrete and 2 is continuous adjustment of the regulated voltage. The RAW
-  and RAWX readers had the two swapped, so a continuously adjusted shunt, such
-  as 152 of the 153 switched shunts in ACTIVSg2000 (MODSW 2, half of them with
-  a BINIT between block steps), read as `discrete`, a MODSW 1 shunt read as
-  `continuous`, and PSS/E output of a discrete shunt from another format, such
-  as a regulating CGMES or XIIDM shunt compensator, stated MODSW 2. CGMES and
-  XIIDM output of a PSS/E case follow the corrected mode. Codes 3 to 6, which
-  adjust in discrete steps to control a plant, a VSC dc converter, another
-  switched shunt, or a FACTS device, still read as `discrete` and keep their
-  code in the `psse_modsw` extra for PSS/E output. A RAW or RAWX case written
-  back to PSS/E kept its codes before and still does. A PowerIO IR document an
-  earlier release wrote from a PSS/E case carries the swapped mode, so read
-  the case again. The IR 2 schema keeps its published descriptions, which
-  state the old mapping.
+- `BalancedNetwork::merge_buses` merges the buses that closed switches and
+  zero impedance branches join, under an explicit `BusMergeRule`: closed
+  switches, and branches that are exact zeros (`ZeroImpedanceRule::Exact`),
+  PSS/E zero impedance lines (`PsseThreshold`: non-transformer, `r == 0`,
+  `|x|` at most the threshold; `BusMergeRule::psse` reads the `THRSHZ` the
+  case states), or under an impedance magnitude (`ImpedanceMagnitude`). One
+  union find pass joins the buses. The survivor is the reference bus, else a
+  generator bus, else a regulated bus, smallest id first
+  (`MergeSurvivor::Strongest`; `BusMergeRule::with_survivor` selects
+  `SmallestId` or `FromBus`), and every element reference follows it. The
+  returned `BusMerge` lists the merged buses and their groups, every removed
+  branch and switch with its source row, identity, and ratings, and the source
+  to merged row maps. A removed in-service branch's line charging and line
+  shunts become a fixed shunt at the survivor (`MergedCharging::FoldToShunt`,
+  the default, which reproduces a solved PSS/E case's reactive balance at each
+  merged group), or go with the branch under `MergedCharging::Drop`.
+  Diagnostics under `CANONICALIZE.MERGE.*` report merged buses of different
+  base voltage, branches the merge shorts, and jumpers kept because they would
+  join two windings of one three winding transformer.
+  `BusMerge::calc_removed_flows` recovers the active power on the removed
+  elements from a merged solution: exactly by Kirchhoff's current law where
+  they form a tree, by reactance on a loop, and by minimum norm with a
+  diagnostic on a loop of zero reactance elements. Python has
+  `BalancedNetwork.merge_buses` and `BusMerge`, and `powerio convert`,
+  `summary`, and `verify` take `--merge-buses SPEC`.
 
 ## 0.11.4
 
