@@ -237,14 +237,14 @@ fn write_psse(net: &BalancedNetwork) -> TextEmission {
 /// Serialize `net` to PSS/E `.raw` at `rev` (33, 34, or 35).
 ///
 /// Revisions 34 and 35 add the expanded system-wide header with its
-/// end-of-system-wide-data marker, the named 12-rating branch record, the
-/// 12-rating transformer winding line (COD at 15, NODE after CONT), and the
-/// load distributed-generation / load-type trailing columns; 35 also inserts
-/// the generator NREG/BASLOD columns and the switched shunt ID/NREG columns
-/// with (S, N, B) step triples. The reader keys each layout off the header
-/// revision. Any other `rev` falls back to the 33 layout. Same-format
-/// byte exact echo still rides the retained source (see [`crate::emit`]);
-/// this serializer is the cross format path.
+/// end-of-system-wide-data marker, the named 12-rating branch record, and the
+/// 12-rating transformer winding line. Revision 34 puts NODE at the end of
+/// the winding line (after CNXA); revision 35 moves NODE to immediately after
+/// CONT. Revision 35 also inserts the generator NREG/BASLOD columns and the
+/// switched shunt ID/NREG columns with (S, N, B) step triples. The reader keys
+/// each layout off the header revision. Any other `rev` falls back to the 33
+/// layout. Same-format byte exact echo still rides the retained source (see
+/// [`crate::emit`]); this serializer is the cross format path.
 #[must_use]
 pub fn write_psse_rev(net: &BalancedNetwork, rev: u32) -> TextEmission {
     write_psse_rev_inner(net, rev, true)
@@ -826,15 +826,43 @@ fn write_psse_rev_inner(
         let cr = extra_f64(&br.extras, "psse_cr").unwrap_or(0.0);
         let cx = extra_f64(&br.extras, "psse_cx").unwrap_or(0.0);
         let _ = writeln!(s, "{}, {}, {}", num(br.r), num(br.x), num(sbase));
-        if modern {
-            // v34+ winding line: twelve ratings (RATE4-RATE12 from extra rating
-            // sets), then COD, CONT, NODE, RMA, RMI, VMA, VMI, NTP, TAB, CR,
-            // CX, CNXA — COD at 15, matching the reader.
+        if rev >= 35 {
+            // v35 places NODE after CONT, before RMA/RMI/VMA/VMI/NTP.
             let extra_ratings = psse_extra_rating_values(br, branch_index, &mut warnings);
             let _ = writeln!(
                 s,
                 "{}, 0, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
                  {cod}, {cont}, {node}, {}, {}, {}, {}, {ntp}, {tab}, {}, {}, {}",
+                num(br.calc_effective_tap()),
+                num(br.shift),
+                num(br.rate_a),
+                num(br.rate_b),
+                num(br.rate_c),
+                num(extra_ratings[0]),
+                num(extra_ratings[1]),
+                num(extra_ratings[2]),
+                num(extra_ratings[3]),
+                num(extra_ratings[4]),
+                num(extra_ratings[5]),
+                num(extra_ratings[6]),
+                num(extra_ratings[7]),
+                num(extra_ratings[8]),
+                num(rma),
+                num(rmi),
+                num(vma),
+                num(vmi),
+                num(cr),
+                num(cx),
+                num(cnxa)
+            );
+        } else if rev == 34 {
+            // v34 has the same 12 ratings, but NODE trails CNXA rather than
+            // sitting after CONT. Keep this distinct from the v35 layout.
+            let extra_ratings = psse_extra_rating_values(br, branch_index, &mut warnings);
+            let _ = writeln!(
+                s,
+                "{}, 0, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
+                 {cod}, {cont}, {}, {}, {}, {}, {ntp}, {tab}, {}, {}, {}, {node}",
                 num(br.calc_effective_tap()),
                 num(br.shift),
                 num(br.rate_a),
@@ -1003,13 +1031,33 @@ fn write_psse_rev_inner(
             let tab = extra_i64(&t.extras, &format!("psse_tab{suffix}")).unwrap_or(0);
             let cr = extra_f64(&t.extras, &format!("psse_cr{suffix}")).unwrap_or(0.0);
             let cx = extra_f64(&t.extras, &format!("psse_cx{suffix}")).unwrap_or(0.0);
-            if modern {
-                // v34+ winding layout (twelve ratings, NODE after CONT); the
+            if rev >= 35 {
+                // v35 winding layout: NODE immediately follows CONT; the
                 // Winding model carries three ratings, so RATE4-RATE12 are 0.
                 let _ = writeln!(
                     s,
                     "{}, {}, {}, {}, {}, {}, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, \
                      {cod}, {cont}, {node}, {}, {}, {}, {}, {ntp}, {tab}, {}, {}, {}",
+                    num(w.tap),
+                    num(w.nominal_kv),
+                    num(w.shift),
+                    num(w.rate_a),
+                    num(w.rate_b),
+                    num(w.rate_c),
+                    num(rma),
+                    num(rmi),
+                    num(vma),
+                    num(vmi),
+                    num(cr),
+                    num(cx),
+                    num(cnxa)
+                );
+            } else if rev == 34 {
+                // v34 stores NODE after CNXA at the end of the winding record.
+                let _ = writeln!(
+                    s,
+                    "{}, {}, {}, {}, {}, {}, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, \
+                     {cod}, {cont}, {}, {}, {}, {}, {ntp}, {tab}, {}, {}, {}, {node}",
                     num(w.tap),
                     num(w.nominal_kv),
                     num(w.shift),
@@ -3986,7 +4034,11 @@ fn retain_transformer_winding_extras(
     raw_rev: u32,
     suffix: &str,
 ) -> Result<()> {
-    let start = if raw_rev >= 34 { 23 } else { 13 };
+    let start = match raw_rev {
+        34 => 22, // TAB follows NTP; NODE is the final field after CNXA.
+        35.. => 23, // NODE was moved to immediately after CONT in revision 35.
+        _ => 13,
+    };
     retain_integer_extra(extras, fields, start, &format!("psse_tab{suffix}"), 0)?;
     retain_float_extra(extras, fields, start + 1, &format!("psse_cr{suffix}"), 0.0)?;
     retain_float_extra(extras, fields, start + 2, &format!("psse_cx{suffix}"), 0.0)?;
@@ -4137,10 +4189,10 @@ fn read_transformer_control(
     winding_name: &str,
     warnings: &mut Diagnostics,
 ) -> Result<(Option<TransformerControl>, i32)> {
-    let (cod_i, cont_i, node_i, rma_i) = if raw_rev >= 34 {
-        (15, 16, Some(17), 18)
-    } else {
-        (6, 7, None, 8)
+    let (cod_i, cont_i, node_i, rma_i) = match raw_rev {
+        35.. => (15, 16, Some(17), 18),
+        34 => (15, 16, Some(26), 17),
+        _ => (6, 7, None, 8),
     };
     let cod = int_at(winding, cod_i, 0)?;
     let (cont, controlled_bus_on_winding_side) = signed_id_at(winding, cont_i, 0)?;
@@ -5019,6 +5071,74 @@ mod tests {
             vec!["1", "", "3"],
             "and holds under whitespace too"
         );
+    }
+
+    #[test]
+    fn revision34_transformer_winding_keeps_node_at_record_end() {
+        let winding = fields(
+            "1.0, 230.0, 0.0, 100.0, 110.0, 120.0, \
+             0, 0, 0, 0, 0, 0, 0, 0, 0, \
+             1, 2, 1.5, 0.5, 1.03, 0.97, 11, 7, 0.01, 0.02, 3.5, 6",
+        );
+        assert_eq!(winding.len(), 27);
+        let bus_base_kv = BTreeMap::from([(BusId(1), 230.0)]);
+        let mut warnings = Diagnostics::new();
+        let (control, node) = read_transformer_control(
+            &winding,
+            34,
+            100.0,
+            BusId(1),
+            1,
+            &bus_base_kv,
+            "1-2",
+            "winding 1",
+            &mut warnings,
+        )
+        .unwrap();
+
+        assert_eq!(node, 6, "v34 NODE is the final field");
+        let control = control.expect("COD=1 must create voltage control");
+        close(control.tap_max, 1.5);
+        close(control.tap_min, 0.5);
+        close(control.band_max, 1.03);
+        close(control.band_min, 0.97);
+        assert_eq!(control.ntp, 11);
+        assert_eq!(control.winding_connection_angle, Some(3.5));
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn revision35_transformer_winding_keeps_node_after_cont() {
+        let winding = fields(
+            "1.0, 230.0, 0.0, 100.0, 110.0, 120.0, \
+             0, 0, 0, 0, 0, 0, 0, 0, 0, \
+             1, 2, 6, 1.5, 0.5, 1.03, 0.97, 11, 7, 0.01, 0.02, 3.5",
+        );
+        assert_eq!(winding.len(), 27);
+        let bus_base_kv = BTreeMap::from([(BusId(1), 230.0)]);
+        let mut warnings = Diagnostics::new();
+        let (control, node) = read_transformer_control(
+            &winding,
+            35,
+            100.0,
+            BusId(1),
+            1,
+            &bus_base_kv,
+            "1-2",
+            "winding 1",
+            &mut warnings,
+        )
+        .unwrap();
+
+        assert_eq!(node, 6, "v35 NODE immediately follows CONT");
+        let control = control.expect("COD=1 must create voltage control");
+        close(control.tap_max, 1.5);
+        close(control.tap_min, 0.5);
+        close(control.band_max, 1.03);
+        close(control.band_min, 0.97);
+        assert_eq!(control.ntp, 11);
+        assert_eq!(control.winding_connection_angle, Some(3.5));
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]
