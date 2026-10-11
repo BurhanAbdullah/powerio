@@ -325,7 +325,6 @@ jobs:
 
   wheels:
     name: wheels (${{ matrix.platform.target }} on ${{ matrix.platform.runner }})
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     needs: release-preflight
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -456,7 +455,6 @@ jobs:
         with:
           ref: ${{ env.SOURCE_REF }}
       - name: Match the preflight release commit
-        if: github.event_name != 'pull_request'
         shell: bash
         env:
           EXPECTED_SHA: ${{ needs.release-preflight.outputs.sha }}
