@@ -389,7 +389,7 @@ jobs:
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist${{ matrix.platform.runner == 'ubuntu-latest' && matrix.platform.target == 'aarch64' && ' --no-default-features' || ' --features mimalloc-allocator' }}
+          args: --release --out dist${{ matrix.platform.runner == 'ubuntu-latest' && matrix.platform.target == 'aarch64' && '' || ' --features mimalloc-allocator' }}
           manylinux: auto
       - name: Check packaged schemas
         shell: bash
