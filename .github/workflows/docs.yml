@@ -4,7 +4,7 @@ on:
   pull_request:
 
 # PRs validate the full documentation build. Publishing runs in the separate
-# Docs Deploy workflow on main/dispatch, so PR validation has no deploy steps.
+# Docs Deploy workflow on pushes to main, so PR validation has no deploy steps.
 
 concurrency:
   group: docs-${{ github.ref }}
