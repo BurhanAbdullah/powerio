@@ -18,7 +18,7 @@ fn close(a: f64, b: f64) {
 #[test]
 fn unequal_capacitors_have_exact_terminal_susceptance() {
     let first = parse_bmopf_str(&cap().to_string()).unwrap();
-    assert!(first.capacitors().is_empty());
+    assert_eq!(first.capacitors().as_slice(), []);
     let sh = &first.shunts()[0];
     assert_eq!(sh.terminal_map, ["a", "b", "c", "n"]);
     for (k, q) in [13.0, 25.0, 7.0].into_iter().enumerate() {
