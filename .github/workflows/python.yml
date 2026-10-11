@@ -507,32 +507,54 @@ jobs:
 
   publish:
     name: publish to PyPI
-    # release-binaries.yml stages each release as a draft a human publishes, so
-    # the release event fires with a user actor (events from a workflow's
-    # GITHUB_TOKEN are swallowed by the recursion guard). Manual dispatch is the
-    # recovery path for a missed event. A prerelease still builds wheels and an
-    # sdist as run artifacts, but never uploads them to PyPI.
-    if: (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch'
+    # Keep a successful, explicit PR check without publishing from an unmerged branch.
+    # Release uploads still require all validation jobs to succeed and use the protected pypi environment.
+    if: >-
+      always() &&
+      (
+        github.event_name == 'pull_request' ||
+        (
+          ((github.event_name == 'release' && github.event.release.prerelease == false) ||
+           github.event_name == 'workflow_dispatch') &&
+          needs.release-preflight.result == 'success' &&
+          needs.lint.result == 'success' &&
+          needs.quality.result == 'success' &&
+          needs.test.result == 'success' &&
+          needs.test-gridfm.result == 'success' &&
+          needs.goc3-reference.result == 'success' &&
+          needs.wheels.result == 'success' &&
+          needs.wheel-smoke.result == 'success' &&
+          needs.sdist.result == 'success'
+        )
+      )
     needs: [ release-preflight, lint, quality, test, test-gridfm, goc3-reference, wheels, wheel-smoke, sdist ]
     runs-on: ubuntu-latest
-    # Deployment protection (required reviewers, tag rules) lives on the pypi
-    # environment in the repo settings, not in this file.
-    environment: pypi
+    # PRs use a separate non-production environment; only release/dispatch jobs
+    # enter the protected PyPI environment configured for trusted publishing.
+    environment:
+      name: ${{ github.event_name == 'pull_request' && 'pypi-pr-validation' || 'pypi' }}
     permissions:
-      id-token: write  # PyPI trusted publishing; no stored token
+      id-token: write  # PyPI trusted publishing; the PR environment is not trusted by PyPI.
     steps:
+      - name: PR-safe publication validation
+        if: github.event_name == 'pull_request'
+        run: echo "PR validation completed; publishing to PyPI is intentionally disabled for pull requests."
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: github.event_name != 'pull_request'
         with:
           path: dist
           merge-multiple: true
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: github.event_name != 'pull_request'
         with:
           python-version: "3.x"
       - name: Check distributions
+        if: github.event_name != 'pull_request'
         run: |
           python -m pip install twine
           python -m twine check dist/*
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        if: github.event_name != 'pull_request'
         with:
           packages-dir: dist
           # A partially failed upload (e.g. wheels in, sdist rejected) is
