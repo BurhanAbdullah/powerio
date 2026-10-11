@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import urljoin
 
 ROOT = Path(__file__).resolve().parents[1]
-workflow = (ROOT / ".github/workflows/docs.yml").read_text()
+workflow = (ROOT / ".github/workflows/docs-build.yml").read_text()
 marker = "    - name: PowerIO IR schema history\n      run: |\n"
 script = textwrap.dedent(workflow.split(marker, 1)[1].split("    - uses:", 1)[0])
 cases = {
