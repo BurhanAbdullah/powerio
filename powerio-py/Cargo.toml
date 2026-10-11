@@ -23,8 +23,8 @@ extension-module = ["pyo3/extension-module"]
 # The PyPI build enables this; custom local builds can omit it when they need
 # only parse, emit, and sparse matrices.
 gridfm = ["powerio-matrix/gridfm", "powerio/gridfm"]
-# Native builds enable mimalloc; cross-compiled Linux/aarch64 wheels omit it until
-# libmimalloc-sys supports the manylinux2014 cross-compiler warning flags.
+# Keep mimalloc opt-in: the Linux/aarch64 wheel cross-build currently omits it
+# because libmimalloc-sys 0.1.49 passes unsupported warning flags to its compiler.
 mimalloc-allocator = ["dep:mimalloc"]
 
 [dependencies]
