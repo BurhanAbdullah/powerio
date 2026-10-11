@@ -43,12 +43,23 @@ generation gets a changelog entry.
 
 ## Releasing
 
+Use the [paired release procedure](https://github.com/eigenergy/powerio/blob/main/docs/src/paired-releases.md).
+It prepares both repositories for one publication approval and registers the
+exact tested Julia commit independently of later changes to `main`.
+
+Until paired automation is explicitly activated, follow the existing
+version, changelog, release-intent, and tag workflow below. Do not mix the two
+release routes. The legacy intent is not a Julia requirement and is not used
+by paired releases.
+
+### Before activation
+
 The release version lives in `[workspace.package]` and the workspace dependency
 pins in `[workspace.dependencies]`. Update them together; the next Cargo command
 updates `Cargo.lock`. Then:
 
 1. Merge the bump with a `CHANGELOG.md` section headed exactly `## X.Y.Z`
-   and wait for main CI. Complete the paired PowerIO.jl review first: its
+   and wait for main CI. Complete the companion PowerIO.jl review first: its
    version, changelog, and ready release intent must identify this release,
    and the intent digest must match the final Julia tree. Follow
    [PowerIO.jl's release procedure](https://github.com/eigenergy/PowerIO.jl/blob/main/CONTRIBUTING.md#releasing).
