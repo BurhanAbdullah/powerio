@@ -219,12 +219,16 @@ jobs:
 
   deploy:
     needs: build
-    # PR runs build to catch doc breakage but never publish; only main / dispatch deploy.
-    if: github.event_name != 'pull_request'
+    # Keep the check green on PRs without publishing a branch preview to production.
+    # The PR-only environment is intentionally separate from the protected Pages environment.
     runs-on: ubuntu-latest
     environment:
-      name: github-pages
+      name: ${{ github.event_name == 'pull_request' && 'pages-pr-validation' || 'github-pages' }}
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+    - name: PR-safe deployment validation
+      if: github.event_name == 'pull_request'
+      run: echo "Documentation build passed; production Pages deployment is not performed for pull requests."
     - id: deployment
+      if: github.event_name != 'pull_request'
       uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
