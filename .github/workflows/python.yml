@@ -41,28 +41,38 @@ jobs:
   release-preflight:
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.release.outputs.tag }}
-      sha: ${{ steps.release.outputs.sha }}
+      tag: ${{ steps.preflight.outputs.tag }}
+      sha: ${{ steps.preflight.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.SOURCE_REF }}
           fetch-depth: 0
-      - name: Release identity agreement
-        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-        run: bash scripts/check-release-versions.sh
-      - name: Verify the immutable published release
-        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-        id: release
+      - name: Validate pull request source or immutable release
+        id: preflight
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          head_commit="$(git rev-parse HEAD)"
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ] || [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            if [ "$head_commit" != "$GITHUB_SHA" ]; then
+              echo "checked out $head_commit, expected event commit $GITHUB_SHA" >&2
+              exit 1
+            fi
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "sha=$head_commit" >> "$GITHUB_OUTPUT"
+            echo "Validated source commit $head_commit for $GITHUB_EVENT_NAME."
+            exit 0
+          fi
+
+          bash scripts/check-release-versions.sh
           git check-ref-format "refs/tags/$RELEASE_TAG" >/dev/null \
             || { echo "invalid release tag: $RELEASE_TAG" >&2; exit 1; }
           git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null \
             || { echo "$RELEASE_TAG is not an origin tag" >&2; exit 1; }
           tag_commit="$(git rev-list -n1 "refs/tags/$RELEASE_TAG")"
-          head_commit="$(git rev-parse HEAD)"
           if [ "$head_commit" != "$tag_commit" ]; then
             echo "checked out $head_commit, but $RELEASE_TAG names $tag_commit" >&2
             exit 1
@@ -88,7 +98,6 @@ jobs:
           fi
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$head_commit" >> "$GITHUB_OUTPUT"
-
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -335,7 +344,6 @@ jobs:
         with:
           ref: ${{ env.SOURCE_REF }}
       - name: Match the preflight release commit
-        if: github.event_name != 'pull_request'
         shell: bash
         env:
           EXPECTED_SHA: ${{ needs.release-preflight.outputs.sha }}
@@ -369,20 +377,17 @@ jobs:
   # identity, narrows a typed module, builds one matrix, and checks the
   # stored document writes deterministically. Linux aarch64 runs under QEMU;
   # macOS x86_64 runs the cross compiled x86_64 wheel under Rosetta.
-  wheel-smoke:
-    name: wheel smoke (${{ matrix.platform.target }} on ${{ matrix.platform.runner }})
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
+  wheel-smoke-native:
+    name: wheel smoke native (${{ matrix.platform.target }} on ${{ matrix.platform.runner }})
     needs: [ release-preflight, wheels ]
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
       matrix:
         platform:
-          - { runner: ubuntu-latest,  target: x86_64,  artifact: wheels-ubuntu-latest-x86_64 }
-          - { runner: ubuntu-latest,  target: aarch64, artifact: wheels-ubuntu-latest-aarch64 }
-          - { runner: macos-14,       target: x86_64,  artifact: wheels-macos-14-x86_64 }
-          - { runner: macos-14,       target: aarch64, artifact: wheels-macos-14-aarch64 }
-          - { runner: windows-latest, target: x64,     artifact: wheels-windows-latest-x64 }
+          - { runner: ubuntu-latest, target: x86_64, artifact: wheels-ubuntu-latest-x86_64 }
+          - { runner: macos-14, target: aarch64, artifact: wheels-macos-14-aarch64 }
+          - { runner: windows-latest, target: x64, artifact: wheels-windows-latest-x64 }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -391,34 +396,10 @@ jobs:
         with:
           name: ${{ matrix.platform.artifact }}
           path: dist
-      # Only the QEMU docker leg brings its own interpreter; every other leg,
-      # the macOS arm64 one included, smokes natively and needs host Python.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        if: ${{ !(matrix.platform.runner == 'ubuntu-latest' && matrix.platform.target == 'aarch64') }}
         with:
           python-version: "3.12"
-      - name: Enable QEMU emulation
-        if: matrix.platform.runner == 'ubuntu-latest' && matrix.platform.target == 'aarch64'
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-        with:
-          platforms: arm64
-      - name: Smoke the aarch64 wheel under QEMU
-        if: matrix.platform.runner == 'ubuntu-latest' && matrix.platform.target == 'aarch64'
-        run: |
-          docker run --rm --platform linux/arm64 \
-            -v "$PWD:/io" -w /io \
-            arm64v8/python:3.12-bookworm \
-            bash -ec 'pip install --quiet "$(ls dist/*.whl)[all]" && python scripts/wheel-smoke.py'
-      - name: Smoke the x86_64 wheel under Rosetta
-        if: matrix.platform.runner == 'macos-14' && matrix.platform.target == 'x86_64'
-        run: |
-          arch -x86_64 /usr/bin/python3 -m venv smoke-venv
-          arch -x86_64 smoke-venv/bin/python -m pip install --quiet "$(ls dist/*.whl)[all]"
-          arch -x86_64 smoke-venv/bin/python scripts/wheel-smoke.py
       - name: Smoke the wheel natively
-        if: >-
-          !(matrix.platform.runner == 'ubuntu-latest' && matrix.platform.target == 'aarch64')
-          && !(matrix.platform.runner == 'macos-14' && matrix.platform.target == 'x86_64')
         shell: bash
         run: |
           python -m venv smoke-venv
@@ -426,6 +407,46 @@ jobs:
           "$py" -m pip install --quiet "$(ls dist/*.whl)[all]"
           "$py" scripts/wheel-smoke.py
 
+  wheel-smoke-linux-aarch64:
+    name: wheel smoke linux aarch64 (QEMU)
+    needs: [ release-preflight, wheels ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_REF }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: wheels-ubuntu-latest-aarch64
+          path: dist
+      - name: Enable QEMU emulation
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+      - name: Smoke the aarch64 wheel under QEMU
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/io" -w /io \
+            arm64v8/python:3.12-bookworm \
+            bash -ec 'pip install --quiet "$(ls dist/*.whl)[all]" && python scripts/wheel-smoke.py'
+
+  wheel-smoke-macos-x86_64:
+    name: wheel smoke macOS x86_64 (Rosetta)
+    needs: [ release-preflight, wheels ]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_REF }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: wheels-macos-14-x86_64
+          path: dist
+      - name: Smoke the x86_64 wheel under Rosetta
+        run: |
+          arch -x86_64 /usr/bin/python3 -m venv smoke-venv
+          arch -x86_64 smoke-venv/bin/python -m pip install --quiet "$(ls dist/*.whl)[all]"
+          arch -x86_64 smoke-venv/bin/python scripts/wheel-smoke.py
   sdist:
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     needs: release-preflight
@@ -459,17 +480,10 @@ jobs:
           name: sdist
           path: dist
 
-  publish:
-    name: publish to PyPI
-    # Validate artifacts on PRs; upload only for a published stable release or explicit recovery.
-    needs: [ release-preflight, lint, quality, test, test-gridfm, goc3-reference, wheels, wheel-smoke, sdist ]
+  validate-distributions:
+    name: validate distributions
+    needs: [ release-preflight, lint, quality, test, test-gridfm, goc3-reference, wheels, wheel-smoke-native, wheel-smoke-linux-aarch64, wheel-smoke-macos-x86_64, sdist ]
     runs-on: ubuntu-latest
-    # Use the protected PyPI environment only for real release publishing.
-    environment:
-      name: ${{ github.event_name == 'pull_request' && 'pypi-validation' || 'pypi' }}
-    permissions:
-      contents: read
-      id-token: write  # Used by trusted publishing only on release/recovery events.
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -482,11 +496,3 @@ jobs:
         run: |
           python -m pip install twine
           python -m twine check dist/*
-      - name: Publish distributions to PyPI
-        if: (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch'
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
-        with:
-          packages-dir: dist
-          # A partially failed upload (e.g. wheels in, sdist rejected) is
-          # recovered by re-running; already-uploaded files are skipped.
-          skip-existing: true
