@@ -132,7 +132,7 @@ pub use geo::{
 };
 pub use indexed::{ConnectivityReport, IndexCore, IndexedNetwork};
 pub use merge::{
-    BusGroup, BusMerge, BusMergeRule, MergedCharging, MergedFlows,
+    BusGroup, BusMerge, BusMergeRule, MergeSurvivor, MergedCharging, MergedFlows,
     PSSE_DEFAULT_ZERO_IMPEDANCE_THRESHOLD, RemovalReason, RemovedBranch, RemovedFlow,
     RemovedFlowMethod, RemovedFlows, RemovedSwitch, ZeroImpedanceRule,
 };
