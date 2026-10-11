@@ -105,12 +105,6 @@ pub struct NormalizeOptions {
     pub clamp_angle_bounds: bool,
     /// Replacement magnitude, in radians, for clamped angle bounds.
     pub angle_bound_pad: f64,
-    /// How the reference buses of a network with several islands are chosen.
-    /// [`IslandReferencePolicy::Stated`], the default, keeps the behavior of
-    /// [`BalancedNetwork::to_normalized`];
-    /// [`IslandReferencePolicy::PerIsland`] gives every island one reference
-    /// and leaves out the islands no in-service generator supplies.
-    pub island_references: IslandReferencePolicy,
 }
 
 impl Default for NormalizeOptions {
@@ -118,7 +112,6 @@ impl Default for NormalizeOptions {
         Self {
             clamp_angle_bounds: false,
             angle_bound_pad: POWER_MODELS_ANGLE_BOUND_PAD,
-            island_references: IslandReferencePolicy::Stated,
         }
     }
 }
@@ -134,6 +127,12 @@ pub struct NormalizeSettings {
     pub options: NormalizeOptions,
     /// What happens to closed switches; by default they merge.
     pub closed_switches: ClosedSwitchPolicy,
+    /// How the reference buses of a network with several islands are chosen.
+    /// [`IslandReferencePolicy::Stated`], the default, keeps the behavior of
+    /// [`BalancedNetwork::to_normalized`];
+    /// [`IslandReferencePolicy::PerIsland`] gives every island one reference
+    /// and leaves out the islands no in-service generator supplies.
+    pub island_references: IslandReferencePolicy,
 }
 
 impl NormalizeSettings {
@@ -143,6 +142,7 @@ impl NormalizeSettings {
         Self {
             options,
             closed_switches: ClosedSwitchPolicy::Merge,
+            island_references: IslandReferencePolicy::Stated,
         }
     }
 
@@ -155,6 +155,12 @@ impl NormalizeSettings {
     #[must_use]
     pub const fn with_closed_switches(mut self, policy: ClosedSwitchPolicy) -> Self {
         self.closed_switches = policy;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_island_references(mut self, policy: IslandReferencePolicy) -> Self {
+        self.island_references = policy;
         self
     }
 }
@@ -970,7 +976,7 @@ impl BalancedNetwork {
     ///   kept, several included, and the consumer picks the slack. Only when no
     ///   reference bus survives is the largest-`pmax` in-service generator's bus
     ///   promoted to `REF`;
-    ///   [`NormalizeOptions::island_references`] applies that rule per island
+    ///   [`NormalizeSettings::island_references`] applies that rule per island
     ///   instead.
     ///
     /// This is a derived product, not a source for write-back: `source` is dropped
@@ -1068,7 +1074,7 @@ impl BalancedNetwork {
         validate_normalize_options(options)?;
         let (kept, left) = self.closed_switch_rows();
         if kept.is_empty() || settings.closed_switches == ClosedSwitchPolicy::Keep {
-            let (normalized, rows) = self.normalize_pass(options)?;
+            let (normalized, rows) = self.normalize_pass(settings)?;
             return Ok((normalized, rows, NormalizeReport::default()));
         }
         if settings.closed_switches == ClosedSwitchPolicy::Refuse {
@@ -1090,7 +1096,7 @@ impl BalancedNetwork {
             }
             eligible.merge_buses(&BusMergeRule::closed_switches())?
         };
-        let (mut normalized, rows) = merge.network.normalize_pass(options)?;
+        let (mut normalized, rows) = merge.network.normalize_pass(settings)?;
         let rows = rows.through_merge(&merge);
         let mut diagnostics = merge.diagnostics.clone();
         diagnostics.append(&mut normalized.diagnostics);
@@ -1136,8 +1142,9 @@ impl BalancedNetwork {
     /// One normalization pass over this network as it stands.
     fn normalize_pass(
         &self,
-        options: &NormalizeOptions,
+        settings: &NormalizeSettings,
     ) -> Result<(NormalizedNetwork, NormalizeSourceRows)> {
+        let options = &settings.options;
         validate_normalize_options(options)?;
         self.check_base_mva()?;
         let base = self.base_mva();
@@ -1148,7 +1155,7 @@ impl BalancedNetwork {
         // element filters below drop what sits on them. The partition follows
         // what this pass keeps: a three winding transformer with a winding on
         // an isolated bus is dropped whole, so it joins nothing.
-        let partition = (options.island_references == IslandReferencePolicy::PerIsland)
+        let partition = (settings.island_references == IslandReferencePolicy::PerIsland)
             .then(|| self.calc_islands_where(false));
         let unsupplied = partition
             .as_ref()

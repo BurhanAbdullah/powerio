@@ -934,10 +934,10 @@ impl PyBalancedNetwork {
         let options = NormalizeOptions {
             clamp_angle_bounds,
             angle_bound_pad: angle_bound_pad.unwrap_or(POWER_MODELS_ANGLE_BOUND_PAD),
-            island_references,
         };
-        let settings =
-            powerio_tx::NormalizeSettings::new(options).with_closed_switches(closed_switches);
+        let settings = powerio_tx::NormalizeSettings::new(options)
+            .with_closed_switches(closed_switches)
+            .with_island_references(island_references);
         let (normalized, _) = self
             .inner()
             .to_normalized_with(&settings)
