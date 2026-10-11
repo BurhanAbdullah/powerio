@@ -21,6 +21,10 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 use sprs::CsMat;
 
+// Keep the many short-lived parser allocations in the extension's own heap.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use powerio::{BalancedNetwork, BranchSusceptanceFormula, PwdDisplay};
 use powerio_matrix::matrix::{
     BuildOptions, Scheme, SensitivityOptions, SensitivitySolver, calc_adjacency_matrix,
@@ -601,6 +605,27 @@ impl PyBalancedNetwork {
         self.inner().branches().len()
     }
 
+    /// AC line branches in an unnormalized network, excluding transformers.
+    #[getter]
+    fn n_lines(&self) -> PyResult<usize> {
+        let network = self.inner();
+        ensure_line_classification(network)?;
+        Ok(network
+            .branches()
+            .iter()
+            .filter(|branch| !branch.is_transformer())
+            .count())
+    }
+
+    /// Substations in the retained source hierarchy.
+    #[getter]
+    fn n_substations(&self) -> usize {
+        self.inner()
+            .detailed_connectivity()
+            .as_ref()
+            .map_or(0, |details| details.substations.len())
+    }
+
     #[getter]
     fn n_generators(&self) -> usize {
         self.inner().generators().len()
@@ -650,26 +675,11 @@ impl PyBalancedNetwork {
     /// Lines exclude transformer branches; loads include equivalent injections
     /// mapped to the load table. Substations are the retained source hierarchy.
     fn component_counts<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        ensure_line_classification(self.inner())?;
-        let network = self.inner();
         let counts = PyDict::new(py);
-        counts.set_item(
-            "lines",
-            network
-                .branches()
-                .iter()
-                .filter(|branch| !branch.is_transformer())
-                .count(),
-        )?;
-        counts.set_item("generators", network.generators().len())?;
-        counts.set_item("loads", network.loads().len())?;
-        counts.set_item(
-            "substations",
-            network
-                .detailed_connectivity()
-                .as_ref()
-                .map_or(0, |details| details.substations.len()),
-        )?;
+        counts.set_item("lines", self.n_lines()?)?;
+        counts.set_item("generators", self.n_generators())?;
+        counts.set_item("loads", self.n_loads())?;
+        counts.set_item("substations", self.n_substations())?;
         Ok(counts)
     }
 

@@ -310,10 +310,12 @@ _BALANCED_DELEGATED_NAMES = frozenset(
         "n_generators",
         "n_hvdc",
         "n_islands",
+        "n_lines",
         "n_loads",
         "n_shunts",
         "n_static_var_compensators",
         "n_storage",
+        "n_substations",
         "n_switches",
         "n_transformers_3w",
         "name",
@@ -362,7 +364,12 @@ class BalancedNetwork:
             raise AttributeError(
                 f"{type(self).__name__!r} object has no attribute {name!r}"
             )
-        return getattr(self._inner, name)
+        value = getattr(self._inner, name)
+        # A native handle is immutable; scalar counts need no repeated FFI
+        # call. A collection entry update replaces the handle and clears them.
+        if name.startswith("n_"):
+            self.__dict__[name] = value
+        return value
 
     def __repr__(self) -> str:
         # The inner handle's __repr__ already renders the public ``BalancedNetwork(...)``
@@ -1603,6 +1610,10 @@ def _refresh_collection_entry(target: Any, location: _CollectionEntry) -> None:
         raise RuntimeError("a collection update changed the entry type")
     if isinstance(target, BalancedNetwork):
         target._inner = refreshed._inner
+        # Counts cached from the replaced handle may no longer hold, for
+        # example the island count after a branch status update.
+        for name in [name for name in vars(target) if name.startswith("n_")]:
+            del target.__dict__[name]
     elif isinstance(target, dist.MulticonductorNetwork):
         target._inner = refreshed._inner
     elif isinstance(target, _TypedValue):
