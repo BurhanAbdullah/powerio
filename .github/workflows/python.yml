@@ -22,10 +22,9 @@ on:
 # Only a pull request run is ever superseded, so only a pull request run is
 # cancelled. A push to `main` is a release candidate whose result must stand
 # on its own, and a release run is the release itself: `python.yml` publishes
-# wheels to PyPI from one, behind an environment whose reviewer gate can hold
-# it for a long time. Keying the switch on the ref instead would make every
-# tag run cancellable, and a re-published release or a re-run of the same tag
-# would then cancel a publish in flight.
+# wheels to PyPI through the separate Python Publish workflow, which consumes
+# artifacts only after this workflow completes successfully. A force-pushed PR
+# is cancellable; release builds are not, so an in-flight publish is not cancelled.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -447,7 +446,6 @@ jobs:
           arch -x86_64 smoke-venv/bin/python -m pip install --quiet "$(ls dist/*.whl)[all]"
           arch -x86_64 smoke-venv/bin/python scripts/wheel-smoke.py
   sdist:
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     needs: release-preflight
     runs-on: ubuntu-latest
     steps:
