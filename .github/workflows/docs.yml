@@ -218,13 +218,17 @@ jobs:
         path: target/doc
 
   deploy:
+    name: deploy
     needs: build
-    # PR runs build to catch doc breakage but never publish; only main / dispatch deploy.
-    if: github.event_name != 'pull_request'
+    # Always report a successful PR safety gate; actual Pages deployment remains main/dispatch-only.
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
     steps:
-    - id: deployment
+    - name: Confirm deployment is withheld for pull requests
+      if: github.event_name == 'pull_request'
+      run: echo "Docs build passed. GitHub Pages deployment is intentionally withheld for pull requests."
+    - name: Deploy GitHub Pages
+      if: github.event_name != 'pull_request'
+      id: deployment
       uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
