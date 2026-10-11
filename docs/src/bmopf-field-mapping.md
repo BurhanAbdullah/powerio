@@ -340,10 +340,10 @@ for a two-terminal device). A lone WYE terminal connects to ground.
 The generated name starts with `__bmopf_capacitor_` and receives a suffix if
 needed to avoid a declared shunt. `READ.BMOPF.CAPACITOR_LOWERED` records this exact
 representation change. Canonical emission writes the shunt; source-preserving
-module emission still follows the existing source-fidelity contract. Invalid
+module emission still preserves the retained source bytes. Invalid
 array shapes, negative/nonfinite ratings, nonpositive voltage, repeated terminals,
 and more than 64 terminals fail parsing rather than approximating a bank.
-Scalar bank capacitors retain the existing `DistCapacitor` contract.
+Scalar bank capacitors continue to use `DistCapacitor`.
 
 No hidden capacitor metadata carries electrical coefficients. Editing the
 canonical shunt changes the emitted electrical data directly. Y-bus assembly,
