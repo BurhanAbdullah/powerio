@@ -496,8 +496,8 @@ jobs:
   # On PRs, validate the exact assembled distributions without publishing.
   # The real PyPI upload below remains restricted to published release or an
   # explicit recovery dispatch behind the protected pypi environment.
-  publish-validation:
-    name: publish validation (twine, no upload)
+  publish:
+    name: publish to PyPI (PR validation only; no upload)
     if: github.event_name == 'pull_request'
     needs: [ release-preflight, lint, quality, test, test-gridfm, goc3-reference, wheels, wheel-smoke, sdist ]
     runs-on: ubuntu-latest
@@ -515,7 +515,7 @@ jobs:
           test -n "$(find dist -maxdepth 1 -type f \( -name '*.whl' -o -name '*.tar.gz' \) -print -quit)"
           python -m twine check dist/*
 
-  publish:
+  release-publish:
     name: publish to PyPI
     # release-binaries.yml stages each release as a draft a human publishes, so
     # the release event fires with a user actor (events from a workflow's
