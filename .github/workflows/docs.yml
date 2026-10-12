@@ -235,7 +235,7 @@ jobs:
     if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
     environment:
-      name: github-pages
+      name: ${{ github.event_name == 'pull_request' && 'ci-validation' || 'github-pages' }}
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
     - name: PR safety gate (no live deployment)
