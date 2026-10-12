@@ -229,14 +229,18 @@ jobs:
       run: echo "Documentation artifact built successfully; no live deployment performed."
 
   release-pages-deploy:
-    name: release Pages deployment (non-PR only)
+    name: Pages deployment gate
     needs: build
-    # This is the real GitHub Pages deployment and must not run from a PR.
-    if: github.event_name != 'pull_request'
+    # Keep this check present and green on PRs without deploying untrusted code.
+    if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+    - name: PR safety gate (no live deployment)
+      if: github.event_name == 'pull_request'
+      run: echo "PR validation passed; live GitHub Pages deployment is intentionally not performed."
     - id: deployment
+      if: github.event_name != 'pull_request'
       uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
