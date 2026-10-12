@@ -522,8 +522,9 @@ jobs:
     if: github.event_name == 'pull_request' || ((github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch')
     needs: [ release-preflight, lint, quality, test, test-gridfm, goc3-reference, wheels, wheel-smoke, sdist ]
     runs-on: ubuntu-latest
-    # Deployment protection (required reviewers, tag rules) lives on the pypi
-    # environment in the repo settings, not in this file.
+    # PRs use a non-publishing validation environment; real uploads retain the
+    # protected pypi environment and its required reviewer/tag rules.
+    environment: ${{ github.event_name == 'pull_request' && 'ci-validation' || 'pypi' }}
     permissions:
       id-token: write  # PyPI trusted publishing; no stored token
     steps:
