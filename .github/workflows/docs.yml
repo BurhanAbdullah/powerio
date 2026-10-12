@@ -228,7 +228,8 @@ jobs:
     - name: Confirm docs artifact build completed
       run: echo "Documentation artifact built successfully; no live deployment performed."
 
-  pages-publish:
+  release-pages-deploy:
+    name: release Pages deployment (non-PR only)
     needs: build
     # This is the real GitHub Pages deployment and must not run from a PR.
     if: github.event_name != 'pull_request'
