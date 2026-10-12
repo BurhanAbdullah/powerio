@@ -516,7 +516,7 @@ jobs:
           python -m twine check dist/*
 
   release-publish:
-    name: publish to PyPI
+    name: release upload to PyPI (release only)
     # release-binaries.yml stages each release as a draft a human publishes, so
     # the release event fires with a user actor (events from a workflow's
     # GITHUB_TOKEN are swallowed by the recursion guard). Manual dispatch is the
