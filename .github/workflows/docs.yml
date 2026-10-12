@@ -217,19 +217,21 @@ jobs:
       with:
         path: target/doc
 
-  # Pull-request validation of the deployment artifact. This intentionally
-  # does not touch the github-pages environment or publish a live site.
-  deploy-validation:
-    name: deploy validation (artifact only)
+  # The deploy check validates the generated artifact on PRs. Live Pages
+  # deployment remains restricted to main / explicit dispatch.
+  deploy:
+    name: deploy
     needs: build
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
     - name: Confirm docs artifact build completed
-      run: echo "Documentation artifact built successfully; live deployment is restricted to main / dispatch."
+      run: echo "Documentation artifact built successfully; no live deployment performed."
 
-  deploy:
+  pages-publish:
     needs: build
+    # This is the real GitHub Pages deployment and must not run from a PR.
+    if: github.event_name != 'pull_request'
     # PR runs build to catch doc breakage but never publish; only main / dispatch deploy.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
