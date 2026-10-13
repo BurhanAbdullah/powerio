@@ -1162,7 +1162,10 @@ fn resolve_branches_in_subsystem(
     }
     if low_voltage_3w {
         for (row, transformer) in net.transformers_3w().iter().enumerate() {
-            if buses.contains(&low_voltage_bus(net, index, transformer)) {
+            let low_bus = low_voltage_bus(net, index, transformer);
+            if buses.contains(&low_bus)
+                && kv_range.is_none_or(|(lo, hi)| bus_in_kv_range(net, low_bus, lo, hi))
+            {
                 out.transformer_3w_rows.insert(row);
             }
         }
