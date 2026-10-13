@@ -1342,14 +1342,15 @@ fn encode_dispatch(
 
 fn encode_three_winding_transformer_terminal_powers(
     values: &[powerio_prob::ThreeWindingTransformerTerminalPower],
-) -> Vec<dto::ThreeWindingTransformerTerminalPower> {
-    values
+) -> Result<Vec<dto::ThreeWindingTransformerTerminalPower>> {
+    check_collection_len("three-winding transformer terminal powers", values.len())?;
+    Ok(values
         .iter()
         .map(|value| dto::ThreeWindingTransformerTerminalPower {
             p_mw: value.p_mw.map(StoredF64),
             q_mvar: value.q_mvar.map(StoredF64),
         })
-        .collect()
+        .collect())
 }
 
 fn decode_three_winding_transformer_terminal_powers(
@@ -1368,13 +1369,14 @@ fn decode_three_winding_transformer_terminal_powers(
 
 fn encode_three_winding_transformer_terminal_active_powers(
     values: &[powerio_prob::ThreeWindingTransformerTerminalActivePower],
-) -> Vec<dto::ThreeWindingTransformerTerminalActivePower> {
-    values
+) -> Result<Vec<dto::ThreeWindingTransformerTerminalActivePower>> {
+    check_collection_len("three-winding transformer terminal active powers", values.len())?;
+    Ok(values
         .iter()
         .map(|value| dto::ThreeWindingTransformerTerminalActivePower {
             p_mw: value.p_mw.map(StoredF64),
         })
-        .collect()
+        .collect())
 }
 
 fn decode_three_winding_transformer_terminal_active_powers(
@@ -1404,7 +1406,7 @@ fn encode_dc_pf_solution(solution: &powerio_prob::DcPfSolution) -> Result<dto::D
         three_winding_transformer_terminal_active_powers:
             encode_three_winding_transformer_terminal_active_powers(
                 solution.three_winding_transformer_terminal_active_powers(),
-            ),
+            )?,
         generator_dispatch: encode_dispatch(solution.generator_dispatch())?,
     })
 }
@@ -1428,7 +1430,7 @@ fn encode_ac_pf_solution(solution: &powerio_prob::AcPfSolution) -> Result<dto::A
         branch_to_reactive_flow: branch_column(network, |id| solution.branch_to_reactive_flow(id))?,
         three_winding_transformer_terminal_powers: encode_three_winding_transformer_terminal_powers(
             solution.three_winding_transformer_terminal_powers(),
-        ),
+        )?,
         generator_dispatch: encode_dispatch(solution.generator_dispatch())?,
     })
 }
@@ -1450,7 +1452,7 @@ fn encode_dc_opf_solution(solution: &powerio_prob::DcOpfSolution) -> Result<dto:
         three_winding_transformer_terminal_active_powers:
             encode_three_winding_transformer_terminal_active_powers(
                 solution.three_winding_transformer_terminal_active_powers(),
-            ),
+            )?,
         objective: StoredF64(solution.objective()),
         bus_active_power_marginal: optional_column(solution.bus_active_power_marginals())?,
         branch_from_limit_multiplier: optional_column(solution.branch_from_limit_multipliers())?,
@@ -1483,7 +1485,7 @@ fn encode_ac_opf_solution(solution: &powerio_prob::AcOpfSolution) -> Result<dto:
         })?,
         three_winding_transformer_terminal_powers: encode_three_winding_transformer_terminal_powers(
             solution.three_winding_transformer_terminal_powers(),
-        ),
+        )?,
         objective: StoredF64(solution.objective()),
         bus_active_power_marginal: optional_column(solution.bus_active_power_marginals())?,
         bus_reactive_power_marginal: optional_column(solution.bus_reactive_power_marginals())?,
@@ -1517,7 +1519,7 @@ fn encode_socwr_opf_solution(
             three_winding_transformer_terminal_powers:
                 encode_three_winding_transformer_terminal_powers(
                     &values.three_winding_transformer_terminal_powers,
-                ),
+                )?,
         },
         duals: dto::SocwrOpfDuals {
             bus_active_power_marginal: duals
