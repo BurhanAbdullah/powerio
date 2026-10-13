@@ -710,6 +710,7 @@ fn encode_multiconductor_operating_point_series(
 fn encode_balanced_point_scenarios(
     set: &PioScenarioSet,
 ) -> Result<dto::StoredOperatingPointScenarioSet<crate::BalancedNetwork>> {
+    check_collection_len("scenario entries", set.values().len())?;
     let first = set.values().iter().next().map(|scenario| {
         let PioValue::BalancedOperatingPoint(point) = scenario.value() else {
             return Err(collection_element_mismatch(
@@ -761,6 +762,7 @@ fn encode_balanced_point_scenarios(
 fn encode_multiconductor_point_scenarios(
     set: &PioScenarioSet,
 ) -> Result<dto::StoredOperatingPointScenarioSet<powerio_dist::MulticonductorNetwork>> {
+    check_collection_len("scenario entries", set.values().len())?;
     let first = set.values().iter().next().map(|scenario| {
         let PioValue::MulticonductorOperatingPoint(point) = scenario.value() else {
             return Err(collection_element_mismatch(
