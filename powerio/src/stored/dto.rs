@@ -1868,6 +1868,9 @@ fn validate_monitor_scope(index: usize, scope: &powerio_tx::MonitorScope) -> Res
                 "monitor statement {index} states a scope that names no subsystem"
             ))
         }
+        powerio_tx::MonitorScope::SubsystemKv { kv, .. } if !kv.is_finite() => Err(format!(
+            "monitor statement {index} states a subsystem scope whose base kV is not finite"
+        )),
         powerio_tx::MonitorScope::Kv { kv } if !kv.is_finite() => Err(format!(
             "monitor statement {index} states a scope whose base kV is not finite"
         )),
@@ -1918,11 +1921,25 @@ fn validate_monitored_set(set: &powerio_tx::MonitoredSet) -> Result<(), String> 
                 validate_monitor_scope(index, scope)?;
             }
             powerio_tx::MonitorStatement::BranchesInSubsystem { subsystem, .. }
-            | powerio_tx::MonitorStatement::BranchesInSubsystemKvRange { subsystem, .. }
-            | powerio_tx::MonitorStatement::TiesFromSubsystem { subsystem }
-            | powerio_tx::MonitorStatement::TiesFromSubsystemKvRange { subsystem, .. } => {
+            | powerio_tx::MonitorStatement::TiesFromSubsystem { subsystem } => {
                 if subsystem.trim().is_empty() {
                     return Err(format!("monitor statement {index} names no subsystem"));
+                }
+            }
+            powerio_tx::MonitorStatement::BranchesInSubsystemKvRange {
+                subsystem, kv_range, ..
+            }
+            | powerio_tx::MonitorStatement::TiesFromSubsystemKvRange {
+                subsystem, kv_range
+            } => {
+                if subsystem.trim().is_empty() {
+                    return Err(format!("monitor statement {index} names no subsystem"));
+                }
+                let (lo, hi) = kv_range;
+                if !(lo.is_finite() && hi.is_finite() && lo <= hi) {
+                    return Err(format!(
+                        "monitor statement {index} states a kV range that does not run low to high on finite ends"
+                    ));
                 }
             }
             powerio_tx::MonitorStatement::Interface {
