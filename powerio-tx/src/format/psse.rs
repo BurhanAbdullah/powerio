@@ -6167,11 +6167,10 @@ Q
 
     #[test]
     fn v34_transformer_reads_float_k_and_modern_winding_columns() {
-        // v34/35 exporters write K in float form: "0.00" must classify the
+        // v34 exporters write K in float form: "0.00" must classify the
         // record as 2-winding (4 lines), or the reader consumes a fifth line and
-        // desynchronizes every later section. The winding line uses the v34
-        // layout (twelve ratings, NODE after CONT), putting COD at 15 and
-        // RMA..NTP at 18..22.
+        // desynchronizes every later section. The v34 winding line keeps twelve
+        // ratings, then COD/CONT, with NODE at the final field after CNXA.
         let raw = r"0, 100.00, 34, 0, 0, 60.00 / synthetic v34 export
 CASE
 COMMENT
@@ -6185,7 +6184,7 @@ COMMENT
 0 / END OF BRANCH DATA, BEGIN TRANSFORMER DATA
 1, 2, 0.00, '1', 1, 1, 1, 0.0, 0.0, 1, 'T1          ', 1, 7, 0.6, 8, 0.4, 0, 1, 0, 1, 'YNd1'
 0.01, 0.10, 100.0
-1.05, 0.0, 0.0, 100.0, 90.0, 80.0, 70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1, 2, 0, 1.08, 0.92, 1.05, 0.98, 17, 9, 0.01, 0.02, 0
+1.05, 0.0, 0.0, 100.0, 90.0, 80.0, 70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1, 2, 1.08, 0.92, 1.05, 0.98, 17, 9, 0.01, 0.02, 0.0, 0
 1.0, 0.0
 0 / END OF TRANSFORMER DATA, BEGIN AREA DATA
 1, 1, 0.0, 0.0, 'AREA        '
