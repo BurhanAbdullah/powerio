@@ -850,6 +850,8 @@ pub struct ResolvedVoltageScope {
     pub bus_rows: BTreeSet<usize>,
     pub low: f64,
     pub high: Option<f64>,
+    /// Optional pre-contingency voltage band.
+    pub pre: Option<(f64, f64)>,
 }
 
 /// One statement that named nothing, kept with the reason.
@@ -899,7 +901,7 @@ impl MonitoredResolution {
 fn describe(statement: &MonitorStatement, reason: &UnresolvedMonitorReason) -> String {
     let what = match statement {
         MonitorStatement::BranchesInSubsystem { subsystem, .. }
-        | MonitorStatement::TiesFromSubsystem { subsystem } => {
+        | MonitorStatement::TiesFromSubsystem { subsystem, .. } => {
             format!("monitored subsystem '{subsystem}'")
         }
         MonitorStatement::Branches { .. } => "monitored branches".to_owned(),
