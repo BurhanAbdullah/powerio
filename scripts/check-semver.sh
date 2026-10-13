@@ -35,7 +35,13 @@ fi
 
 echo "comparing the publishable crates at $version against $baseline"
 # powerio-py and powerio-capi are publish = false; name them anyway so the
-# crate set reads the same as the msrv and archive jobs.
+# crate set reads the same as the msrv and archive jobs. A newly introduced
+# publishable crate has no baseline package to compare until its first release;
+# exclude it only while the selected baseline truly predates that crate.
+excludes=(--exclude powerio-py --exclude powerio-capi)
+if ! git cat-file -e "$baseline:powerio-synth/Cargo.toml" 2>/dev/null; then
+    excludes+=(--exclude powerio-synth)
+fi
 cargo semver-checks check-release --workspace \
-    --exclude powerio-py --exclude powerio-capi \
+    "${excludes[@]}" \
     --baseline-rev "$baseline" "$@"
