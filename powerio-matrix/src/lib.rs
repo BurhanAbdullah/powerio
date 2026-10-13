@@ -69,9 +69,8 @@ mod lindist3flow_standard;
 pub mod matrix;
 mod opf;
 pub mod pipeline;
-// Keep the historical public path working while the implementation lives in
-// the standalone crate. New code should depend on `powerio-synth` directly.
-pub use powerio_synth as synth;
+// Preserve the original public module path; new code can depend on `powerio-synth` directly.
+pub mod synth;
 
 pub use ac_jacobian::{PowerFlowJacobian, VoltageCoordinates, calc_power_flow_jacobian};
 pub use acopf::{
