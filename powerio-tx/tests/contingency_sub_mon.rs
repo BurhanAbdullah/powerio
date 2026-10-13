@@ -1312,23 +1312,16 @@ END\n",
     assert_eq!(
         parsed.set.statements,
         vec![
-            MonitorStatement::BranchesInSubsystem {
-                subsystem: "A1".into(),
-                low_voltage_3w: false,
-                kv_range: Some((200.0, 240.0)),
+            MonitorStatement::BranchesInSubsystemKvRange {
+                subsystem: "A1".into(), low_voltage_3w: false, kv_range: (200.0, 240.0),
             },
-            MonitorStatement::TiesFromSubsystem {
-                subsystem: "A1".into(),
-                kv_range: Some((200.0, 240.0)),
+            MonitorStatement::TiesFromSubsystemKvRange {
+                subsystem: "A1".into(), kv_range: (200.0, 240.0),
             },
             MonitorStatement::VoltageRange {
-                scope: MonitorScope::Subsystem {
-                    name: "A1".into(),
-                    kv: Some(230.0),
-                },
-                vmin: 0.95,
-                vmax: 1.05,
-                },
+                scope: MonitorScope::SubsystemKv { name: "A1".into(), kv: 230.0 },
+                vmin: 0.95, vmax: 1.05,
+            },
         ]
     );
 
@@ -1416,14 +1409,12 @@ fn monitored_four_value_voltage_range_round_trips_and_resolves() {
     let net = select_network();
     let subsystems = parse_sub("selectors.sub").set;
     let resolution = parsed.set.resolve(&net, &subsystems);
-    assert_eq!(resolution.voltage_ranges.len(), 1);
-    assert_eq!(
-        resolution.voltage_ranges[0].bus_rows,
-        [0, 1].into_iter().collect()
-    );
-    assert_eq!(resolution.voltage_ranges[0].low, 0.9);
-    assert_eq!(resolution.voltage_ranges[0].high, Some(1.05));
-    assert_eq!(resolution.voltage_ranges[0].pre, Some((0.95, 1.05)));
+    assert!(resolution.voltage_ranges.is_empty());
+    assert_eq!(resolution.voltage_ranges_with_pre.len(), 1);
+    assert_eq!(resolution.voltage_ranges_with_pre[0].0.bus_rows, [0, 1].into_iter().collect());
+    assert_eq!(resolution.voltage_ranges_with_pre[0].0.low, 0.9);
+    assert_eq!(resolution.voltage_ranges_with_pre[0].0.high, Some(1.05));
+    assert_eq!(resolution.voltage_ranges_with_pre[0].1, (0.95, 1.05));
 }
 
 #[test]
