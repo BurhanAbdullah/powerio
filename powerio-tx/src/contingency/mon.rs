@@ -1003,6 +1003,7 @@ impl MonitoredSet {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn resolve_statement(
     statement: &MonitorStatement,
     net: &BalancedNetwork,
@@ -1039,13 +1040,13 @@ fn resolve_statement(
             out,
         ),
         MonitorStatement::TiesFromSubsystem { subsystem } => {
-            resolve_ties_from_subsystem(statement, subsystem, None, net, subsystems, out)
+            resolve_ties_from_subsystem(statement, subsystem, None, net, subsystems, out);
         }
         MonitorStatement::TiesFromSubsystemKvRange {
             subsystem,
             kv_range,
         } => {
-            resolve_ties_from_subsystem(statement, subsystem, Some(*kv_range), net, subsystems, out)
+            resolve_ties_from_subsystem(statement, subsystem, Some(*kv_range), net, subsystems, out);
         }
         MonitorStatement::Branches { branches, .. } => {
             for branch in branches {
