@@ -169,6 +169,7 @@ fn the_generation_two_catalog_preserves_published_shapes() {
     for earlier in [
         "pio-ir/2/schema.json",
         "pio-ir/2/0.11.1/schema.json",
+        "pio-ir/2/0.11.4/schema.json",
         "pio-ir/2/0.11.3/schema.json",
     ] {
         let mut published: serde_json::Value =
