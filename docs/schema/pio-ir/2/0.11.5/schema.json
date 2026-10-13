@@ -9268,6 +9268,26 @@
             },
             "name": {
               "type": "string"
+            },
+            "kv": {
+              "anyOf": [
+                {
+                  "format": "double",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                {
+                  "enum": [
+                    "Infinity",
+                    "-Infinity",
+                    "NaN"
+                  ],
+                  "type": "string"
+                }
+              ],
+              "description": "Optional base-kV filter on the subsystem's buses."
             }
           },
           "required": [
@@ -9394,6 +9414,49 @@
             },
             "subsystem": {
               "type": "string"
+            },
+            "kv_range": {
+              "description": "Optional inclusive base-kV filter on both branch terminals.",
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ],
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ],
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "type": [
+                "array",
+                "null"
+              ]
             }
           },
           "required": [
@@ -9412,6 +9475,49 @@
             },
             "subsystem": {
               "type": "string"
+            },
+            "kv_range": {
+              "description": "Optional inclusive base-kV filter. The terminal inside the\nsubsystem must have a base kV in this range.",
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ],
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ],
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "type": [
+                "array",
+                "null"
+              ]
             }
           },
           "required": [
@@ -9536,6 +9642,49 @@
                   ],
                   "type": "string"
                 }
+              ]
+            },
+            "pre": {
+              "description": "Optional pre-contingency voltage band. The two-value form is\npost-contingency only; the four-value form adds this band.",
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ],
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ],
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "type": [
+                "array",
+                "null"
               ]
             }
           },
