@@ -634,9 +634,7 @@ fn a_generated_monitored_element_file_reads_every_statement() {
     assert_eq!(
         statements[1],
         MonitorStatement::VoltageDeviation {
-            scope: MonitorScope::Subsystem {
-                name: "A1".into(),
-            },
+            scope: MonitorScope::Subsystem { name: "A1".into() },
             down: 0.03,
             up: Some(0.06),
         }
