@@ -9,6 +9,18 @@ use powerio_core::{
 };
 
 use super::dto::{self, StoredF64, StoredModule, StoredQuantity};
+
+/// Refuse outer IR collections that exceed the reader's bounded-vector limit.
+fn check_collection_len(what: &str, len: usize) -> Result<()> {
+    if len > dto::MAX_STORED_COLLECTION_ENTRIES {
+        return Err(powerio_core::Error::new(
+            &codes::EMIT_MODULE_RECORD_CAP,
+            format!("a stored {what} would carry {len} entries; PowerIO IR reads at most {}", dto::MAX_STORED_COLLECTION_ENTRIES),
+        ));
+    }
+    Ok(())
+}
+
 use crate::codes;
 use crate::value::{PioScenarioSet, PioTimeSeries, PioValue};
 use powerio_prob::{
@@ -251,6 +263,8 @@ const MULTICONDUCTOR_POINT_SERIES_TYPE: &str =
     "powerio.TimeSeries<powerio.OperatingPoint<powerio.MulticonductorNetwork>>";
 
 fn encode_time_series(series: &PioTimeSeries) -> Result<dto::StoredValue> {
+    check_collection_len("time points", series.time_points().len())?;
+    check_collection_len("time-series values", series.values().len())?;
     Ok(match series.element_type() {
         BALANCED_NETWORK_TYPE => {
             dto::StoredValue::BalancedNetworkTimeSeries(encode_balanced_network_series(series)?)
@@ -346,6 +360,7 @@ fn encode_scenario_entries<T>(
     set: &PioScenarioSet,
     mut encode: impl FnMut(&PioValue) -> Result<T>,
 ) -> Result<dto::StoredScenarioSet<T>> {
+    check_collection_len("scenario entries", set.values().len())?;
     let scenarios = set
         .values()
         .iter()
@@ -3199,6 +3214,27 @@ mod write_bound_tests {
     /// The writer refuses a vector at the reader's bound plus one, so
     /// `serialize` returns an error instead of a document `deserialize`
     /// refuses.
+    #[test]
+    fn time_series_writer_refuses_collections_past_reader_bound() {
+        let bound = dto::MAX_STORED_COLLECTION_ENTRIES;
+        assert!(check_collection_len("time points", bound).is_ok());
+        assert!(check_collection_len("time-series values", bound).is_ok());
+        for (what, len) in [("time points", bound + 1), ("time-series values", bound + 1)] {
+            let error = check_collection_len(what, len).unwrap_err();
+            assert_eq!(error.info().map(|info| info.code), Some(codes::EMIT_MODULE_RECORD_CAP.code));
+            assert!(error.to_string().contains("reads at most 65536"), "{error}");
+        }
+    }
+
+    #[test]
+    fn scenario_writer_refuses_entries_past_reader_bound() {
+        let bound = dto::MAX_STORED_COLLECTION_ENTRIES;
+        assert!(check_collection_len("scenario entries", bound).is_ok());
+        let error = check_collection_len("scenario entries", bound + 1).unwrap_err();
+        assert_eq!(error.info().map(|info| info.code), Some(codes::EMIT_MODULE_RECORD_CAP.code));
+        assert!(error.to_string().contains("reads at most 65536"), "{error}");
+    }
+
     #[test]
     fn a_vector_past_the_reader_bound_is_refused_at_write() {
         let bound = dto::MAX_STORED_OPERATING_POINT_VALUES;
