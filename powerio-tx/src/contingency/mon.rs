@@ -1104,7 +1104,6 @@ fn resolve_statement(
                 bus_rows,
                 low: *down,
                 high: *up,
-                pre: None,
             });
         }
     }
