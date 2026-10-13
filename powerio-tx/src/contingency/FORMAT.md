@@ -415,42 +415,6 @@ file `END` are written after the `END` the writer states.
 
 `mon.rs` reads `.mon` into `MonitoredSet` and writes it back with `to_mon`.
 
-### Four-value voltage ranges
-
-A `MONITOR VOLTAGE RANGE` statement may optionally add the pre-contingency
-low/high band after the post-contingency low/high values:
-
-```text
-MONITOR VOLTAGE RANGE SUBSYSTEM 'AREA1' KV 230 0.9000 1.0500 0.9500 1.0500
-```
-
-The first pair is the post-contingency band and the second pair is the
-pre-contingency band. The two-value form remains unchanged and has no
-pre-contingency band. Both bands must have their lower value no greater than
-their upper value; invalid bands remain retained source text and are reported
-as unrecognized statements. The writer preserves the canonical four-value
-form, and resolution exposes the pre-contingency pair alongside the
-post-contingency limits.
-
-### kV-qualified monitor statements
-
-The reader accepts an inclusive base-kV filter on subsystem branch and tie monitors:
-
-| Statement | Reads as |
-| --- | --- |
-| `MONITOR BRANCHES IN SUBSYSTEM name KVRANGE lo hi` | `BranchesInSubsystem { ..., kv_range: Some((lo, hi)) }` |
-| `MONITOR TIES FROM SUBSYSTEM name KVRANGE lo hi` | `TiesFromSubsystem { ..., kv_range: Some((lo, hi)) }` |
-
-For `BRANCHES`, both branch terminals must lie in the kV band in addition to being in the named subsystem. For `TIES`, exactly one terminal must be in the subsystem and that inside terminal must lie in the band. The bounds are inclusive and use the same `KV_TOLERANCE` as ordinary kV scope selection. Reversed or non-finite bounds remain retained text rather than becoming a typed statement.
-
-A voltage scope may qualify a subsystem by one base-kV value:
-
-```text
-MONITOR VOLTAGE RANGE SUBSYSTEM 'AREA1' KV 138 0.9000 1.0500
-```
-
-This reads as `MonitorScope::Subsystem { name: "AREA1", kv: Some(138.0) }`. Resolution first selects the subsystem's buses and then keeps only buses at the requested base kV, using `KV_TOLERANCE`. Existing unqualified subsystem scopes remain unchanged.
-
 ```text
 /PSS(R)E 34
 COM MONITORED element file entry created by PSS(R)E Config File Builder
@@ -464,7 +428,8 @@ END
 | --- | --- | --- |
 | `MONITOR BRANCHES IN SUBSYSTEM name [3WLOWVOLTAGE]` | `BRANCHES`, `LINES`; `IN`, `FROM` | `BranchesInSubsystem { subsystem, low_voltage_3w }` |
 | `MONITOR TIES FROM SUBSYSTEM name` | `IN`, `FROM` | `TiesFromSubsystem { subsystem }` |
-| `MONITOR BRANCHES` ... `END`, holding `i j [ckt]` | `BRANCHES`, `LINES` | `Branches(Vec<BranchRef>)` |
+| `MONITOR BRANCHES` ... `END`, holding `i j [ckt]` or `[BRANCH] FROM BUS i TO BUS j [CIRCUIT c]` | `BRANCHES`, `LINES`; `LINE` | `Branches(Vec<BranchRef>)` |
+| `MONITOR BRANCH FROM BUS i TO BUS j [CIRCUIT c]` | `LINE`; `BUS` optional; `CKT` | `Branches` holding that one branch |
 | `MONITOR INTERFACE name [RATING x [MW]]` ... `END` | | `Interface { name, rating_mw, branches }` |
 | `MONITOR VOLTAGE RANGE scope lo hi` | | `VoltageRange { scope, vmin, vmax }` |
 | `MONITOR VOLTAGE DEVIATION scope down [up]` | | `VoltageDeviation { scope, down, up }` |
@@ -475,7 +440,13 @@ finite, so a value that is not keeps its line the same way.
 
 A `MONITOR BRANCHES` line with nothing after it opens a block of branch lines
 that runs to the next `END`, and `MONITOR INTERFACE` always opens one. Inside a
-block, `i j` names circuit `1` and `i j ckt` names that circuit. A scope is one
+block, `i j` names circuit `1` and `i j ckt` names that circuit, and a line in
+the contingency file spelling, `[BRANCH | LINE] FROM BUS i TO BUS j [CIRCUIT
+c]`, names the same branch, with or without a leading `MONITOR`. A `MONITOR
+BRANCH` line in that spelling outside a block is a block of one branch, and
+the writer states it as one. A third `TO BUS k`, which names
+a three winding transformer, has no `BranchRef`, so the line is kept as text. A
+scope is one
 of `ALL BUSES`, `SUBSYSTEM name`, `BUS n`, `AREA n`, `ZONE n`, `OWNER n`, and
 `KV x`.
 

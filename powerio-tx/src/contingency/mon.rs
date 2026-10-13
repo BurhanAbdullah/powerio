@@ -466,6 +466,13 @@ impl Reader {
                 Some(Read::OpenedBlock)
             }
             "VOLTAGE" => parse_voltage(upper, words).map(Read::Statement),
+            // Preserve the contingency spelling already merged through #587.
+            "BRANCH" | "LINE" => parse_branch_ref(&words[1..]).map(|branch| {
+                Read::Statement(MonitorStatement::Branches {
+                    branches: vec![branch],
+                    retained: Vec::new(),
+                })
+            }),
             _ => None,
         }
     }
@@ -640,8 +647,32 @@ fn parse_scope(upper: &[String], words: &[&str], at: usize) -> Option<(MonitorSc
     }
 }
 
-/// `i j [ckt]` inside a monitored block.
+/// `i j [ckt]` inside a monitored block, or the contingency file spelling
+/// `[BRANCH | LINE] FROM BUS i TO BUS j [CIRCUIT c]` there, with or without a
+/// leading `MONITOR`, and after `MONITOR` on its own line. A third `TO BUS k` names a three winding
+/// transformer, which a [`BranchRef`] cannot hold, so such a line stays text.
 fn parse_branch_ref(words: &[&str]) -> Option<BranchRef> {
+    // A block line may also repeat the standalone statement whole, `MONITOR`
+    // included.
+    let words = match words {
+        [monitor, noun, ..]
+            if monitor.eq_ignore_ascii_case("MONITOR")
+                && (noun.eq_ignore_ascii_case("BRANCH") || noun.eq_ignore_ascii_case("LINE")) =>
+        {
+            &words[1..]
+        }
+        _ => words,
+    };
+    if words.first()?.parse::<usize>().is_err() {
+        let upper: Vec<String> = words.iter().map(|word| word.to_ascii_uppercase()).collect();
+        let mut at = usize::from(matches!(upper[0].as_str(), "BRANCH" | "LINE"));
+        super::take_keyword(&upper, &mut at, "FROM")?;
+        let from = super::take_bus(&upper, &mut at)?;
+        super::take_keyword(&upper, &mut at, "TO")?;
+        let to = super::take_bus(&upper, &mut at)?;
+        let circuit = super::take_circuit(&upper, words, &mut at)?;
+        return Some(BranchRef { from, to, circuit });
+    }
     if words.len() > 3 {
         return None;
     }
@@ -717,10 +748,7 @@ fn write_statement(statement: &MonitorStatement) -> String {
             };
             format!("MONITOR BRANCHES IN SUBSYSTEM '{subsystem}'{low}{kv}\n")
         }
-        MonitorStatement::TiesFromSubsystem {
-            subsystem,
-            kv_range,
-        } => {
+        MonitorStatement::TiesFromSubsystem { subsystem, kv_range } => {
             let kv = match kv_range {
                 Some((lo, hi)) => format!(" KVRANGE {} {}", decimal(*lo), decimal(*hi)),
                 None => String::new(),
@@ -744,23 +772,16 @@ fn write_statement(statement: &MonitorStatement) -> String {
             };
             write_branch_block(&head, branches, retained)
         }
-        MonitorStatement::VoltageRange {
-            scope,
-            vmin,
-            vmax,
-            pre,
-        } => {
-            let pre = match pre {
-                Some((low, high)) => format!(" {} {}", decimal(*low), decimal(*high)),
+        MonitorStatement::VoltageRange { scope, vmin, vmax, pre } => {
+            let suffix = match pre {
+                Some((lo, hi)) => format!(" {} {}", decimal(*lo), decimal(*hi)),
                 None => String::new(),
             };
             format!(
-                "MONITOR VOLTAGE RANGE {} {} {}{pre}\n",
-                write_scope(scope),
-                decimal(*vmin),
-                decimal(*vmax)
+                "MONITOR VOLTAGE RANGE {} {} {}{suffix}\n",
+                write_scope(scope), decimal(*vmin), decimal(*vmax)
             )
-        }
+        },
         MonitorStatement::VoltageDeviation { scope, down, up } => {
             let tail = match up {
                 Some(up) => format!(" {}", decimal(*up)),
@@ -829,8 +850,6 @@ pub struct ResolvedVoltageScope {
     pub bus_rows: BTreeSet<usize>,
     pub low: f64,
     pub high: Option<f64>,
-    /// Optional pre-contingency voltage band.
-    pub pre: Option<(f64, f64)>,
 }
 
 /// One statement that named nothing, kept with the reason.
@@ -880,7 +899,7 @@ impl MonitoredResolution {
 fn describe(statement: &MonitorStatement, reason: &UnresolvedMonitorReason) -> String {
     let what = match statement {
         MonitorStatement::BranchesInSubsystem { subsystem, .. }
-        | MonitorStatement::TiesFromSubsystem { subsystem, .. } => {
+        | MonitorStatement::TiesFromSubsystem { subsystem } => {
             format!("monitored subsystem '{subsystem}'")
         }
         MonitorStatement::Branches { .. } => "monitored branches".to_owned(),
@@ -1103,15 +1122,6 @@ fn unresolved_subsystem(statement: &MonitorStatement, out: &mut MonitoredResolut
 
 fn select(subsystems: &SubsystemSet, name: &str, net: &BalancedNetwork) -> Option<BTreeSet<BusId>> {
     Some(subsystems.get(name)?.select_buses(net))
-}
-
-fn bus_in_kv_range(net: &BalancedNetwork, bus: BusId, lo: f64, hi: f64) -> bool {
-    net.buses()
-        .iter()
-        .find(|candidate| candidate.id == bus)
-        .is_some_and(|candidate| {
-            candidate.base_kv >= lo - KV_TOLERANCE && candidate.base_kv <= hi + KV_TOLERANCE
-        })
 }
 
 /// One bound branch with its orientation against the stored row. A statement
