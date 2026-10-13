@@ -3238,6 +3238,21 @@ mod write_bound_tests {
     }
 
     #[test]
+    fn three_winding_transformer_power_writers_refuse_entries_past_reader_bound() {
+        let bound = dto::MAX_STORED_COLLECTION_ENTRIES;
+        check_collection_len("three-winding transformer terminal powers", bound).unwrap();
+        check_collection_len("three-winding transformer terminal active powers", bound).unwrap();
+        for (what, len) in [
+            ("three-winding transformer terminal powers", bound + 1),
+            ("three-winding transformer terminal active powers", bound + 1),
+        ] {
+            let error = check_collection_len(what, len).unwrap_err();
+            assert_eq!(error.info().map(|info| info.code), Some(codes::EMIT_MODULE_RECORD_CAP.code));
+            assert!(error.to_string().contains("reads at most 65536"), "{error}");
+        }
+    }
+
+    #[test]
     fn a_vector_past_the_reader_bound_is_refused_at_write() {
         let bound = dto::MAX_STORED_OPERATING_POINT_VALUES;
         assert!(check_operating_point_len(bound).is_ok());
