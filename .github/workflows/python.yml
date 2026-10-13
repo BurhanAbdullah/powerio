@@ -435,7 +435,7 @@ jobs:
   # compiled x86_64 wheel under Rosetta; every other leg runs natively.
   wheel-smoke:
     name: wheel smoke (${{ matrix.platform.target }} on ${{ matrix.platform.runner }})
-    if: needs.release-preflight.outputs.wheels == 'true'
+    if: always() && needs.release-preflight.outputs.wheels == 'true'
     needs: [ release-preflight, wheels ]
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -477,7 +477,7 @@ jobs:
 
 
   sdist:
-    if: needs.release-preflight.outputs.wheels == 'true'
+    if: always() && needs.release-preflight.outputs.wheels == 'true'
     needs: release-preflight
     runs-on: ubuntu-latest
     steps:

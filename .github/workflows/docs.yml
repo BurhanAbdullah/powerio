@@ -219,6 +219,7 @@ jobs:
 
   deploy:
     needs: build
+    if: always()
     # Keep the check visible on PRs, but never create a production deployment
     # or request the protected github-pages environment from an unmerged branch.
     runs-on: ubuntu-latest
@@ -226,6 +227,14 @@ jobs:
       name: ${{ github.event_name == 'pull_request' && 'pr-validation' || 'github-pages' }}
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+    - name: Require the documentation build to pass
+      env:
+        BUILD_RESULT: ${{ needs.build.result }}
+      run: |
+        if [ "$BUILD_RESULT" != success ]; then
+          echo "Docs build did not pass: $BUILD_RESULT" >&2
+          exit 1
+        fi
     - name: Report production deployment disabled for pull requests
       if: github.event_name == 'pull_request'
       run: echo "Production Pages deployment is intentionally disabled for PR validation; the full docs build above is the validation gate."
