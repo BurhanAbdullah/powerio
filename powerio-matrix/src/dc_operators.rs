@@ -357,7 +357,11 @@ impl DcOperators {
                 ),
             ));
         }
-        if source_buses.iter().map(|bus| bus.id).ne(self.source_bus_ids.iter().copied()) {
+        if source_buses
+            .iter()
+            .map(|bus| bus.id)
+            .ne(self.source_bus_ids.iter().copied())
+        {
             return Err(Error::new(
                 &codes::BUILD_INSTANCE_SHAPE_MISMATCH,
                 "the instance bus IDs or bus order differ from the bus axis used to build the DC operators",
