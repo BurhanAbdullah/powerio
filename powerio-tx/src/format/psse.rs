@@ -8434,4 +8434,79 @@ Q
             "an out-of-range bus id should be refused: {err}"
         );
     }
+
+    #[test]
+    fn revision34_transformer_winding_keeps_node_at_record_end() {
+        let winding = fields(
+            "1.0, 230.0, 0.0, 100.0, 110.0, 120.0, \
+             0, 0, 0, 0, 0, 0, 0, 0, 0, \
+             1, 2, 1.5, 0.5, 1.03, 0.97, 11, 7, 0.01, 0.02, 3.5, 6",
+        );
+        assert_eq!(winding.len(), 27);
+        let bus_base_kv = BTreeMap::from([(BusId(1), 230.0)]);
+        let mut warnings = Diagnostics::new();
+        let (control, node) = read_transformer_control(
+            &winding,
+            34,
+            100.0,
+            BusId(1),
+            1,
+            &bus_base_kv,
+            "1-2",
+            "winding 1",
+            &mut warnings,
+        )
+        .unwrap();
+
+        assert_eq!(node, 6, "v34 NODE is the final field");
+        let control = control.expect("COD=1 must create voltage control");
+        close(control.tap_max, 1.5);
+        close(control.tap_min, 0.5);
+        close(control.band_max, 1.03);
+        close(control.band_min, 0.97);
+        assert_eq!(control.ntp, 11);
+        assert_eq!(control.winding_connection_angle, Some(3.5));
+        // v34 keeps TAB/CR/CX immediately after NTP, before CNXA and final NODE.
+        let extras_start = 22;
+        assert_eq!(winding[extras_start], "7");
+        assert_eq!(winding[extras_start + 1], "0.01");
+        assert_eq!(winding[extras_start + 2], "0.02");
+        assert_eq!(winding[25], "3.5");
+        assert_eq!(winding[26], "6");
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn revision35_transformer_winding_keeps_node_after_cont() {
+        let winding = fields(
+            "1.0, 230.0, 0.0, 100.0, 110.0, 120.0, \
+             0, 0, 0, 0, 0, 0, 0, 0, 0, \
+             1, 2, 6, 1.5, 0.5, 1.03, 0.97, 11, 7, 0.01, 0.02, 3.5",
+        );
+        assert_eq!(winding.len(), 27);
+        let bus_base_kv = BTreeMap::from([(BusId(1), 230.0)]);
+        let mut warnings = Diagnostics::new();
+        let (control, node) = read_transformer_control(
+            &winding,
+            35,
+            100.0,
+            BusId(1),
+            1,
+            &bus_base_kv,
+            "1-2",
+            "winding 1",
+            &mut warnings,
+        )
+        .unwrap();
+
+        assert_eq!(node, 6, "v35 NODE immediately follows CONT");
+        let control = control.expect("COD=1 must create voltage control");
+        close(control.tap_max, 1.5);
+        close(control.tap_min, 0.5);
+        close(control.band_max, 1.03);
+        close(control.band_min, 0.97);
+        assert_eq!(control.ntp, 11);
+        assert_eq!(control.winding_connection_angle, Some(3.5));
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
 }
