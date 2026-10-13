@@ -627,20 +627,17 @@ fn a_generated_monitored_element_file_reads_every_statement() {
         statements[0],
         MonitorStatement::VoltageRange {
             scope: MonitorScope::Subsystem {
-                name: "A1".into(),
-                kv: None
+                name: "A1".into()
             },
             vmin: 0.95,
             vmax: 1.05,
-            pre: None,
         }
     );
     assert_eq!(
         statements[1],
         MonitorStatement::VoltageDeviation {
             scope: MonitorScope::Subsystem {
-                name: "A1".into(),
-                kv: None
+                name: "A1".into()
             },
             down: 0.03,
             up: Some(0.06),
@@ -651,7 +648,6 @@ fn a_generated_monitored_element_file_reads_every_statement() {
         MonitorStatement::BranchesInSubsystem {
             subsystem: "A1".into(),
             low_voltage_3w: true,
-            kv_range: None,
         }
     );
     // LINES is the BRANCHES synonym.
@@ -660,14 +656,12 @@ fn a_generated_monitored_element_file_reads_every_statement() {
         MonitorStatement::BranchesInSubsystem {
             subsystem: "A2".into(),
             low_voltage_3w: false,
-            kv_range: None,
         }
     );
     assert_eq!(
         statements[4],
         MonitorStatement::TiesFromSubsystem {
             subsystem: "A1".into(),
-            kv_range: None,
         }
     );
     assert_eq!(
@@ -676,7 +670,6 @@ fn a_generated_monitored_element_file_reads_every_statement() {
             scope: MonitorScope::AllBuses,
             vmin: 0.94,
             vmax: 1.06,
-            pre: None,
         }
     );
     // A deviation statement may name one value.
@@ -789,7 +782,6 @@ fn the_block_forms_read_their_branches() {
         MonitorStatement::BranchesInSubsystem {
             subsystem: "NOSUCH".into(),
             low_voltage_3w: false,
-            kv_range: None,
         }
     );
     assert_eq!(parsed.set.retained.len(), 1);
@@ -850,7 +842,6 @@ fn a_voltage_range_stated_high_to_low_is_kept_as_text() {
             scope: MonitorScope::AllBuses,
             vmin: 0.95,
             vmax: 1.05,
-            pre: None,
         }]
     );
     assert_eq!(
@@ -1337,8 +1328,7 @@ END\n",
                 },
                 vmin: 0.95,
                 vmax: 1.05,
-                pre: None,
-            },
+                },
         ]
     );
 
@@ -1414,14 +1404,9 @@ fn monitored_four_value_voltage_range_round_trips_and_resolves() {
     assert!(parsed.diagnostics.is_empty(), "{:?}", mon_codes(&parsed));
     assert_eq!(
         parsed.set.statements,
-        vec![MonitorStatement::VoltageRange {
-            scope: MonitorScope::Subsystem {
-                name: "A1".into(),
-                kv: Some(230.0),
-            },
-            vmin: 0.9,
-            vmax: 1.05,
-            pre: Some((0.95, 1.05)),
+        vec![MonitorStatement::VoltageRangeWithPre {
+            scope: MonitorScope::SubsystemKv { name: "A1".into(), kv: 230.0 },
+            vmin: 0.9, vmax: 1.05, pre_min: 0.95, pre_max: 1.05,
         }]
     );
 
