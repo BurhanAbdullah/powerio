@@ -2188,4 +2188,42 @@ mod decode_bound_tests {
             "{error}"
         );
     }
+
+
+    #[test]
+    fn monitored_kv_scopes_and_ranges_reject_nonfinite_or_reversed_values() {
+        let invalid_scope = powerio_tx::MonitoredSet {
+            statements: vec![powerio_tx::MonitorStatement::VoltageRange {
+                scope: powerio_tx::MonitorScope::SubsystemKv {
+                    name: "A1".to_owned(),
+                    kv: f64::NAN,
+                },
+                vmin: 0.9,
+                vmax: 1.1,
+            }],
+            ..Default::default()
+        };
+        assert!(
+            validate_monitored_set(&invalid_scope)
+                .unwrap_err()
+                .contains("base kV is not finite")
+        );
+
+        for kv_range in [(f64::NAN, 240.0), (240.0, f64::INFINITY), (240.0, 200.0)] {
+            let invalid_range = powerio_tx::MonitoredSet {
+                statements: vec![powerio_tx::MonitorStatement::BranchesInSubsystemKvRange {
+                    subsystem: "A1".to_owned(),
+                    low_voltage_3w: false,
+                    kv_range,
+                }],
+                ..Default::default()
+            };
+            assert!(
+                validate_monitored_set(&invalid_range)
+                    .unwrap_err()
+                    .contains("kV range that does not run low to high on finite ends")
+            );
+        }
+    }
+}
 }
