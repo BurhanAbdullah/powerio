@@ -1126,6 +1126,15 @@ fn select(subsystems: &SubsystemSet, name: &str, net: &BalancedNetwork) -> Optio
     Some(subsystems.get(name)?.select_buses(net))
 }
 
+fn bus_in_kv_range(net: &BalancedNetwork, bus: BusId, lo: f64, hi: f64) -> bool {
+    net.buses()
+        .iter()
+        .find(|candidate| candidate.id == bus)
+        .is_some_and(|candidate| {
+            candidate.base_kv >= lo - KV_TOLERANCE && candidate.base_kv <= hi + KV_TOLERANCE
+        })
+}
+
 /// One bound branch with its orientation against the stored row. A statement
 /// naming the stored `to` terminal first states the flow the other way round.
 fn member(index: &PsseEquipmentIndex<'_>, branch: &BranchRef, row: usize) -> InterfaceMember {
