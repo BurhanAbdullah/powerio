@@ -1420,7 +1420,7 @@ fn monitored_four_value_voltage_range_round_trips_and_resolves() {
     let net = select_network();
     let subsystems = parse_sub("selectors.sub").set;
     let resolution = parsed.set.resolve(&net, &subsystems);
-    assert!(resolution.voltage_ranges.is_empty());
+    assert_eq!(resolution.voltage_ranges.len(), 0);
     assert_eq!(resolution.voltage_ranges_with_pre.len(), 1);
     assert_eq!(
         resolution.voltage_ranges_with_pre[0].0.bus_rows,
