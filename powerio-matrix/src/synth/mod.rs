@@ -41,7 +41,10 @@ impl Default for SynthSpec {
     }
 }
 
-fn implementation_spec(spec: &SynthSpec, topology: powerio_synth::Topology) -> powerio_synth::SynthSpec {
+fn implementation_spec(
+    spec: &SynthSpec,
+    topology: powerio_synth::Topology,
+) -> powerio_synth::SynthSpec {
     powerio_synth::SynthSpec {
         topology,
         n: spec.n,
@@ -67,7 +70,10 @@ pub fn generate_tree(spec: &SynthSpec) -> BalancedNetwork {
 
 /// Generate a two-dimensional lattice network.
 pub fn generate_lattice(spec: &SynthSpec) -> BalancedNetwork {
-    powerio_synth::generate_lattice(&implementation_spec(spec, powerio_synth::Topology::Lattice2D))
+    powerio_synth::generate_lattice(&implementation_spec(
+        spec,
+        powerio_synth::Topology::Lattice2D,
+    ))
 }
 
 /// Generate a PEGASE-like synthetic network.
