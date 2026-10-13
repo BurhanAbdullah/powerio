@@ -579,24 +579,31 @@ jobs:
 
   upload:
     name: upload to PyPI
-    # Only stable release/recovery events can reach the protected PyPI
-    # environment. Every prerequisite is repeated here as a fail-closed guard.
-    if: always() && ((github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch') && needs.publish.result == 'success' && needs.release-preflight.result == 'success' && needs.lint.result == 'success' && needs.quality.result == 'success' && needs.test.result == 'success' && needs.test-gridfm.result == 'success' && needs.goc3-reference.result == 'success' && needs.wheels.result == 'success' && needs.wheel-smoke.result == 'success' && needs.sdist.result == 'success' && needs.validate-distributions.result == 'success'
+    # Run a visible successful no-op on PRs so this check is not skipped.
+    # Only stable release/recovery events can reach the protected PyPI environment.
+    if: always() && (github.event_name == 'pull_request' || (((github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch') && needs.publish.result == 'success' && needs.release-preflight.result == 'success' && needs.lint.result == 'success' && needs.quality.result == 'success' && needs.test.result == 'success' && needs.test-gridfm.result == 'success' && needs.goc3-reference.result == 'success' && needs.wheels.result == 'success' && needs.wheel-smoke.result == 'success' && needs.sdist.result == 'success' && needs.validate-distributions.result == 'success')
     needs: [ release-preflight, lint, quality, test, test-gridfm, goc3-reference, wheels, wheel-smoke, sdist, validate-distributions, publish ]
     runs-on: ubuntu-latest
-    environment: pypi
+    environment:
+      name: ${{ github.event_name == 'pull_request' && 'ci-no-publish' || 'pypi' }}
     permissions:
       contents: read
       id-token: write
     steps:
+      - name: PR-safe no-op (never publish from a pull request)
+        if: github.event_name == 'pull_request'
+        run: echo "PR validation only; PyPI upload is intentionally disabled."
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: github.event_name != 'pull_request'
         with:
           path: dist
           merge-multiple: true
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: github.event_name != 'pull_request'
         with:
           python-version: "3.x"
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        if: github.event_name != 'pull_request'
         with:
           packages-dir: dist
           # A partially failed upload (e.g. wheels in, sdist rejected) is
