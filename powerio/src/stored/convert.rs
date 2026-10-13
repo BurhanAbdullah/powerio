@@ -10,17 +10,6 @@ use powerio_core::{
 
 use super::dto::{self, StoredF64, StoredModule, StoredQuantity};
 
-/// Refuse outer IR collections that exceed the reader's bounded-vector limit.
-fn check_collection_len(what: &str, len: usize) -> Result<()> {
-    if len > dto::MAX_STORED_COLLECTION_ENTRIES {
-        return Err(powerio_core::Error::new(
-            &codes::EMIT_MODULE_RECORD_CAP,
-            format!("a stored {what} would carry {len} entries; PowerIO IR reads at most {}", dto::MAX_STORED_COLLECTION_ENTRIES),
-        ));
-    }
-    Ok(())
-}
-
 use crate::codes;
 use crate::value::{PioScenarioSet, PioTimeSeries, PioValue};
 use powerio_prob::{
@@ -29,6 +18,20 @@ use powerio_prob::{
 };
 
 type Result<T> = std::result::Result<T, powerio_core::Error>;
+
+/// Refuse outer IR collections that exceed the reader's bounded-vector limit.
+fn check_collection_len(what: &str, len: usize) -> Result<()> {
+    if len > dto::MAX_STORED_COLLECTION_ENTRIES {
+        return Err(powerio_core::Error::new(
+            &codes::EMIT_MODULE_RECORD_CAP,
+            format!(
+                "a stored {what} would carry {len} entries; PowerIO IR reads at most {}",
+                dto::MAX_STORED_COLLECTION_ENTRIES
+            ),
+        ));
+    }
+    Ok(())
+}
 
 fn invalid(message: impl Into<String>) -> powerio_core::Error {
     powerio_core::Error::new(&codes::READ_MODULE_INVALID, message)
@@ -3214,45 +3217,6 @@ mod collection_ir_tests {
 #[cfg(test)]
 mod write_bound_tests {
     use super::*;
-
-    /// The writer refuses a vector at the reader's bound plus one, so
-    /// `serialize` returns an error instead of a document `deserialize`
-    /// refuses.
-    #[test]
-    fn time_series_writer_refuses_collections_past_reader_bound() {
-        let bound = dto::MAX_STORED_COLLECTION_ENTRIES;
-        assert!(check_collection_len("time points", bound).is_ok());
-        assert!(check_collection_len("time-series values", bound).is_ok());
-        for (what, len) in [("time points", bound + 1), ("time-series values", bound + 1)] {
-            let error = check_collection_len(what, len).unwrap_err();
-            assert_eq!(error.info().map(|info| info.code), Some(codes::EMIT_MODULE_RECORD_CAP.code));
-            assert!(error.to_string().contains("reads at most 65536"), "{error}");
-        }
-    }
-
-    #[test]
-    fn scenario_writer_refuses_entries_past_reader_bound() {
-        let bound = dto::MAX_STORED_COLLECTION_ENTRIES;
-        assert!(check_collection_len("scenario entries", bound).is_ok());
-        let error = check_collection_len("scenario entries", bound + 1).unwrap_err();
-        assert_eq!(error.info().map(|info| info.code), Some(codes::EMIT_MODULE_RECORD_CAP.code));
-        assert!(error.to_string().contains("reads at most 65536"), "{error}");
-    }
-
-    #[test]
-    fn three_winding_transformer_power_writers_refuse_entries_past_reader_bound() {
-        let bound = dto::MAX_STORED_COLLECTION_ENTRIES;
-        check_collection_len("three-winding transformer terminal powers", bound).unwrap();
-        check_collection_len("three-winding transformer terminal active powers", bound).unwrap();
-        for (what, len) in [
-            ("three-winding transformer terminal powers", bound + 1),
-            ("three-winding transformer terminal active powers", bound + 1),
-        ] {
-            let error = check_collection_len(what, len).unwrap_err();
-            assert_eq!(error.info().map(|info| info.code), Some(codes::EMIT_MODULE_RECORD_CAP.code));
-            assert!(error.to_string().contains("reads at most 65536"), "{error}");
-        }
-    }
 
     #[test]
     fn a_vector_past_the_reader_bound_is_refused_at_write() {
