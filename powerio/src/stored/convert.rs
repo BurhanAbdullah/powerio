@@ -1375,7 +1375,10 @@ fn decode_three_winding_transformer_terminal_powers(
 fn encode_three_winding_transformer_terminal_active_powers(
     values: &[powerio_prob::ThreeWindingTransformerTerminalActivePower],
 ) -> Result<Vec<dto::ThreeWindingTransformerTerminalActivePower>> {
-    check_collection_len("three-winding transformer terminal active powers", values.len())?;
+    check_collection_len(
+        "three-winding transformer terminal active powers",
+        values.len(),
+    )?;
     Ok(values
         .iter()
         .map(|value| dto::ThreeWindingTransformerTerminalActivePower {
@@ -1489,9 +1492,10 @@ fn encode_ac_opf_solution(solution: &powerio_prob::AcOpfSolution) -> Result<dto:
         generator_reactive_power: generator_column(network, |id| {
             solution.generator_reactive_power(id)
         })?,
-        three_winding_transformer_terminal_powers: encode_three_winding_transformer_terminal_powers(
-            solution.three_winding_transformer_terminal_powers(),
-        )?,
+        three_winding_transformer_terminal_powers:
+            encode_three_winding_transformer_terminal_powers(
+                solution.three_winding_transformer_terminal_powers(),
+            )?,
         objective: StoredF64(solution.objective()),
         bus_active_power_marginal: optional_column(solution.bus_active_power_marginals())?,
         bus_reactive_power_marginal: optional_column(solution.bus_reactive_power_marginals())?,
