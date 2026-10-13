@@ -1308,7 +1308,6 @@ fn a_block_line_may_repeat_the_monitor_keyword() {
     );
 }
 
-
 #[test]
 fn monitored_kv_qualified_forms_parse_and_round_trip() {
     let parsed = MonitoredSet::parse(
