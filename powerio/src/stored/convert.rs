@@ -648,6 +648,8 @@ fn ensure_same_network<'a, N: serde::Serialize + 'a>(
 fn encode_balanced_operating_point_series(
     series: &TimeSeries<powerio_prob::OperatingPoint<crate::BalancedNetwork>>,
 ) -> Result<dto::StoredOperatingPointTimeSeries<crate::BalancedNetwork>> {
+    check_collection_len("time-series time points", series.time_points().len())?;
+    check_collection_len("time-series values", series.values().len())?;
     let Some(first) = series.values().first() else {
         return Ok(dto::StoredOperatingPointTimeSeries {
             network: None,
@@ -684,6 +686,8 @@ fn encode_balanced_operating_point_series(
 fn encode_multiconductor_operating_point_series(
     series: &TimeSeries<powerio_prob::OperatingPoint<powerio_dist::MulticonductorNetwork>>,
 ) -> Result<dto::StoredOperatingPointTimeSeries<powerio_dist::MulticonductorNetwork>> {
+    check_collection_len("time-series time points", series.time_points().len())?;
+    check_collection_len("time-series values", series.values().len())?;
     let Some(first) = series.values().first() else {
         return Ok(dto::StoredOperatingPointTimeSeries {
             network: None,
