@@ -1015,19 +1015,36 @@ fn resolve_statement(
             subsystem,
             low_voltage_3w,
         } => resolve_branches_in_subsystem(
-            statement, subsystem, *low_voltage_3w, None, net, subsystems, index, out,
+            statement,
+            subsystem,
+            *low_voltage_3w,
+            None,
+            net,
+            subsystems,
+            index,
+            out,
         ),
         MonitorStatement::BranchesInSubsystemKvRange {
             subsystem,
             low_voltage_3w,
             kv_range,
         } => resolve_branches_in_subsystem(
-            statement, subsystem, *low_voltage_3w, Some(*kv_range), net, subsystems, index, out,
+            statement,
+            subsystem,
+            *low_voltage_3w,
+            Some(*kv_range),
+            net,
+            subsystems,
+            index,
+            out,
         ),
         MonitorStatement::TiesFromSubsystem { subsystem } => {
             resolve_ties_from_subsystem(statement, subsystem, None, net, subsystems, out)
         }
-        MonitorStatement::TiesFromSubsystemKvRange { subsystem, kv_range } => {
+        MonitorStatement::TiesFromSubsystemKvRange {
+            subsystem,
+            kv_range,
+        } => {
             resolve_ties_from_subsystem(statement, subsystem, Some(*kv_range), net, subsystems, out)
         }
         MonitorStatement::Branches { branches, .. } => {
@@ -1084,7 +1101,8 @@ fn resolve_statement(
             pre_max,
         } => {
             let Some(bus_rows) = scope_rows(scope, net, subsystems, index) else {
-                unresolved_subsystem(statement, out); return;
+                unresolved_subsystem(statement, out);
+                return;
             };
             out.voltage_ranges_with_pre.push((
                 ResolvedVoltageScope {
