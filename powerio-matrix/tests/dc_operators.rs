@@ -628,3 +628,21 @@ fn a_subnormal_reactance_is_refused_like_zero() {
         "{error}"
     );
 }
+
+#[test]
+fn update_rejects_same_size_network_with_reordered_bus_axis() {
+    let net = case9();
+    let original = DcPfInstance::from_network(net.clone()).unwrap();
+    let mut operators = DcOperators::build(&original).unwrap();
+
+    // Equal dimensions do not imply equal bus axes: rows must retain their BusId identity.
+    let mut reordered = net;
+    reordered.buses_mut().swap(0, 1);
+    let changed = DcPfInstance::from_network(reordered).unwrap();
+
+    let error = operators.update(&changed).unwrap_err();
+    assert!(
+        error.to_string().contains("bus IDs or bus order"),
+        "{error}"
+    );
+}
