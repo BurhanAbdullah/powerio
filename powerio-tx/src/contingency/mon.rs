@@ -62,19 +62,8 @@ pub enum MonitorStatement {
         /// voltage winding sits in the subsystem.
         low_voltage_3w: bool,
     },
-    /// Every branch with both terminals in a subsystem and an inclusive kV band.
-    BranchesInSubsystemKvRange {
-        subsystem: String,
-        low_voltage_3w: bool,
-        kv_range: (f64, f64),
-    },
     /// Every branch with exactly one terminal in the subsystem.
     TiesFromSubsystem { subsystem: String },
-    /// Every tie from a subsystem where the inside terminal is within an inclusive kV band.
-    TiesFromSubsystemKvRange {
-        subsystem: String,
-        kv_range: (f64, f64),
-    },
     /// The branches a `MONITOR BRANCHES` block lists by terminal pair.
     Branches {
         branches: Vec<BranchRef>,
@@ -101,14 +90,6 @@ pub enum MonitorStatement {
         vmin: f64,
         vmax: f64,
     },
-    /// A four-value voltage range with distinct pre-contingency limits.
-    VoltageRangeWithPre {
-        scope: MonitorScope,
-        vmin: f64,
-        vmax: f64,
-        pre_min: f64,
-        pre_max: f64,
-    },
     /// A voltage deviation band over a scope of buses. A statement naming one
     /// value states the downward limit alone.
     VoltageDeviation {
@@ -116,6 +97,25 @@ pub enum MonitorStatement {
         down: f64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         up: Option<f64>,
+    },
+    /// Every branch with both terminals in a subsystem and an inclusive kV band.
+    BranchesInSubsystemKvRange {
+        subsystem: String,
+        low_voltage_3w: bool,
+        kv_range: (f64, f64),
+    },
+    /// Every tie from a subsystem where the inside terminal is within an inclusive kV band.
+    TiesFromSubsystemKvRange {
+        subsystem: String,
+        kv_range: (f64, f64),
+    },
+    /// A four-value voltage range with distinct pre-contingency limits.
+    VoltageRangeWithPre {
+        scope: MonitorScope,
+        vmin: f64,
+        vmax: f64,
+        pre_min: f64,
+        pre_max: f64,
     },
 }
 
@@ -139,11 +139,6 @@ pub enum MonitorScope {
     Subsystem {
         name: String,
     },
-    /// Subsystem buses filtered to a single base-kV level.
-    SubsystemKv {
-        name: String,
-        kv: f64,
-    },
     Bus {
         bus: BusId,
     },
@@ -158,6 +153,11 @@ pub enum MonitorScope {
     },
     /// Every bus at this base kV.
     Kv {
+        kv: f64,
+    },
+    /// Subsystem buses filtered to a single base-kV level.
+    SubsystemKv {
+        name: String,
         kv: f64,
     },
 }
