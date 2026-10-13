@@ -833,15 +833,42 @@ fn write_psse_rev_inner(
         let cr = extra_f64(&br.extras, "psse_cr").unwrap_or(0.0);
         let cx = extra_f64(&br.extras, "psse_cx").unwrap_or(0.0);
         let _ = writeln!(s, "{}, {}, {}", num(br.r), num(br.x), num(sbase));
-        if modern {
-            // v34+ winding line: twelve ratings (RATE4-RATE12 from extra rating
-            // sets), then COD, CONT, NODE, RMA, RMI, VMA, VMI, NTP, TAB, CR,
-            // CX, CNXA — COD at 15, matching the reader.
+        if rev >= 35 {
+            // Revision 35 places NODE immediately after CONT.
             let extra_ratings = psse_extra_rating_values(br, branch_index, &mut warnings);
             let _ = writeln!(
                 s,
                 "{}, 0, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
                  {cod}, {cont}, {node}, {}, {}, {}, {}, {ntp}, {tab}, {}, {}, {}",
+                num(br.calc_effective_tap()),
+                num(br.shift),
+                num(br.rate_a),
+                num(br.rate_b),
+                num(br.rate_c),
+                num(extra_ratings[0]),
+                num(extra_ratings[1]),
+                num(extra_ratings[2]),
+                num(extra_ratings[3]),
+                num(extra_ratings[4]),
+                num(extra_ratings[5]),
+                num(extra_ratings[6]),
+                num(extra_ratings[7]),
+                num(extra_ratings[8]),
+                num(rma),
+                num(rmi),
+                num(vma),
+                num(vmi),
+                num(cr),
+                num(cx),
+                num(cnxa)
+            );
+        } else if rev == 34 {
+            // Revision 34 places NODE after CNXA at the end of the winding line.
+            let extra_ratings = psse_extra_rating_values(br, branch_index, &mut warnings);
+            let _ = writeln!(
+                s,
+                "{}, 0, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, \
+                 {cod}, {cont}, {}, {}, {}, {}, {ntp}, {tab}, {}, {}, {}, {node}",
                 num(br.calc_effective_tap()),
                 num(br.shift),
                 num(br.rate_a),
@@ -1010,13 +1037,32 @@ fn write_psse_rev_inner(
             let tab = extra_i64(&t.extras, &format!("psse_tab{suffix}")).unwrap_or(0);
             let cr = extra_f64(&t.extras, &format!("psse_cr{suffix}")).unwrap_or(0.0);
             let cx = extra_f64(&t.extras, &format!("psse_cx{suffix}")).unwrap_or(0.0);
-            if modern {
-                // v34+ winding layout (twelve ratings, NODE after CONT); the
-                // Winding model carries three ratings, so RATE4-RATE12 are 0.
+            if rev >= 35 {
+                // Revision 35 places NODE immediately after CONT.
                 let _ = writeln!(
                     s,
                     "{}, {}, {}, {}, {}, {}, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, \
                      {cod}, {cont}, {node}, {}, {}, {}, {}, {ntp}, {tab}, {}, {}, {}",
+                    num(w.tap),
+                    num(w.nominal_kv),
+                    num(w.shift),
+                    num(w.rate_a),
+                    num(w.rate_b),
+                    num(w.rate_c),
+                    num(rma),
+                    num(rmi),
+                    num(vma),
+                    num(vmi),
+                    num(cr),
+                    num(cx),
+                    num(cnxa)
+                );
+            } else if rev == 34 {
+                // Revision 34 puts NODE after CNXA at the end of each winding record.
+                let _ = writeln!(
+                    s,
+                    "{}, {}, {}, {}, {}, {}, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, \
+                     {cod}, {cont}, {}, {}, {}, {}, {ntp}, {tab}, {}, {}, {}, {node}",
                     num(w.tap),
                     num(w.nominal_kv),
                     num(w.shift),
@@ -4018,7 +4064,11 @@ fn retain_transformer_winding_extras(
     raw_rev: u32,
     suffix: &str,
 ) -> Result<()> {
-    let start = if raw_rev >= 34 { 23 } else { 13 };
+    let start = match raw_rev {
+        34 => 22,   // TAB follows NTP; NODE is the final field after CNXA.
+        35.. => 23, // Revision 35 moved NODE to immediately after CONT.
+        _ => 13,
+    };
     retain_integer_extra(extras, fields, start, &format!("psse_tab{suffix}"), 0)?;
     retain_float_extra(extras, fields, start + 1, &format!("psse_cr{suffix}"), 0.0)?;
     retain_float_extra(extras, fields, start + 2, &format!("psse_cx{suffix}"), 0.0)?;
@@ -4183,10 +4233,10 @@ fn read_transformer_control(
     winding_name: &str,
     warnings: &mut Diagnostics,
 ) -> Result<(Option<TransformerControl>, i32)> {
-    let (cod_i, cont_i, node_i, rma_i) = if raw_rev >= 34 {
-        (15, 16, Some(17), 18)
-    } else {
-        (6, 7, None, 8)
+    let (cod_i, cont_i, node_i, rma_i) = match raw_rev {
+        35.. => (15, 16, Some(17), 18),
+        34 => (15, 16, Some(26), 17),
+        _ => (6, 7, None, 8),
     };
     let cod = int_at(winding, cod_i, 0)?;
     let (cont, controlled_bus_on_winding_side) = signed_id_at(winding, cont_i, 0)?;
