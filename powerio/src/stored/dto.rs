@@ -1901,12 +1901,11 @@ fn validate_monitored_set(set: &powerio_tx::MonitoredSet) -> Result<(), String> 
                 if let powerio_tx::MonitorStatement::VoltageRangeWithPre {
                     pre_min, pre_max, ..
                 } = statement
+                    && !(pre_min.is_finite() && pre_max.is_finite() && pre_min <= pre_max)
                 {
-                    if !(pre_min.is_finite() && pre_max.is_finite() && pre_min <= pre_max) {
-                        return Err(format!(
-                            "monitor statement {index} states a pre-contingency voltage range that does not run low to high"
-                        ));
-                    }
+                    return Err(format!(
+                        "monitor statement {index} states a pre-contingency voltage range that does not run low to high"
+                    ));
                 }
                 validate_monitor_scope(index, scope)?;
             }
