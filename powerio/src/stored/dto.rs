@@ -1927,10 +1927,13 @@ fn validate_monitored_set(set: &powerio_tx::MonitoredSet) -> Result<(), String> 
                 }
             }
             powerio_tx::MonitorStatement::BranchesInSubsystemKvRange {
-                subsystem, kv_range, ..
+                subsystem,
+                kv_range,
+                ..
             }
             | powerio_tx::MonitorStatement::TiesFromSubsystemKvRange {
-                subsystem, kv_range
+                subsystem,
+                kv_range,
             } => {
                 if subsystem.trim().is_empty() {
                     return Err(format!("monitor statement {index} names no subsystem"));
@@ -2188,7 +2191,6 @@ mod decode_bound_tests {
             "{error}"
         );
     }
-
 
     #[test]
     fn monitored_kv_scopes_and_ranges_reject_nonfinite_or_reversed_values() {
