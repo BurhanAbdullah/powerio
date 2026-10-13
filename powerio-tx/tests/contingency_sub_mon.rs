@@ -1352,7 +1352,7 @@ fn monitored_kv_range_filters_low_voltage_three_winding_selection() {
     )
     .expect("parse low-voltage filter");
     let low_resolution = low_voltage.set.resolve(&net, &subsystems);
-    assert_eq!(rows(&low_resolution.branch_rows), [2]);
+    assert!(low_resolution.branch_rows.is_empty());
     assert_eq!(rows(&low_resolution.transformer_3w_rows), [0]);
 }
 
