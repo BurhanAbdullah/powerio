@@ -61,10 +61,15 @@ jobs:
         if: github.event_name == 'push' || github.event_name == 'pull_request'
         run: |
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          # Always build the wheel matrix and source distribution on PRs so
-          # the packaging checks are exercised for every change, not just
-          # source paths. Publish/deploy gates below remain event-restricted.
-          echo "wheels=true" >> "$GITHUB_OUTPUT"
+          wheels=true
+          # A pull request checks out its merge commit, whose first parent is
+          # the base branch.
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] \
+            && ! git diff --name-only HEAD^1 HEAD \
+              | grep -qE '^(\.github/workflows/python\.yml|Cargo\.(toml|lock)|pyproject\.toml|rust-toolchain(\.toml)?|powerio-py/)'; then
+            wheels=false
+          fi
+          echo "wheels=$wheels" >> "$GITHUB_OUTPUT"
       - name: Release identity agreement
         if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
         run: bash scripts/check-release-versions.sh
