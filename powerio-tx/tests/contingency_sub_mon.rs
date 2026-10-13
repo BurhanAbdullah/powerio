@@ -1444,8 +1444,8 @@ fn monitored_four_value_voltage_range_round_trips_and_resolves() {
 #[test]
 fn monitored_four_value_voltage_range_rejects_invalid_bands() {
     for line in [
-        "MONITOR VOLTAGE RANGE ALL BUSES 1.05 0.95 0.95 1.05\\nEND\\n",
-        "MONITOR VOLTAGE RANGE ALL BUSES 0.95 1.05 1.05 0.95\\nEND\\n",
+        "MONITOR VOLTAGE RANGE ALL BUSES 1.05 0.95 0.95 1.05\nEND\n",
+        "MONITOR VOLTAGE RANGE ALL BUSES 0.95 1.05 1.05 0.95\nEND\n",
     ] {
         let parsed = MonitoredSet::parse(line).expect("parse invalid range");
         assert_eq!(mon_codes(&parsed), vec!["READ.MON.STATEMENT_UNRECOGNIZED"]);
