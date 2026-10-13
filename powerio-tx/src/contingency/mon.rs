@@ -748,7 +748,10 @@ fn write_statement(statement: &MonitorStatement) -> String {
             };
             format!("MONITOR BRANCHES IN SUBSYSTEM '{subsystem}'{low}{kv}\n")
         }
-        MonitorStatement::TiesFromSubsystem { subsystem, kv_range } => {
+        MonitorStatement::TiesFromSubsystem {
+            subsystem,
+            kv_range,
+        } => {
             let kv = match kv_range {
                 Some((lo, hi)) => format!(" KVRANGE {} {}", decimal(*lo), decimal(*hi)),
                 None => String::new(),
@@ -772,16 +775,23 @@ fn write_statement(statement: &MonitorStatement) -> String {
             };
             write_branch_block(&head, branches, retained)
         }
-        MonitorStatement::VoltageRange { scope, vmin, vmax, pre } => {
+        MonitorStatement::VoltageRange {
+            scope,
+            vmin,
+            vmax,
+            pre,
+        } => {
             let suffix = match pre {
                 Some((lo, hi)) => format!(" {} {}", decimal(*lo), decimal(*hi)),
                 None => String::new(),
             };
             format!(
                 "MONITOR VOLTAGE RANGE {} {} {}{suffix}\n",
-                write_scope(scope), decimal(*vmin), decimal(*vmax)
+                write_scope(scope),
+                decimal(*vmin),
+                decimal(*vmax)
             )
-        },
+        }
         MonitorStatement::VoltageDeviation { scope, down, up } => {
             let tail = match up {
                 Some(up) => format!(" {}", decimal(*up)),

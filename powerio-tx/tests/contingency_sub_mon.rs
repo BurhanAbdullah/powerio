@@ -626,7 +626,10 @@ fn a_generated_monitored_element_file_reads_every_statement() {
     assert_eq!(
         statements[0],
         MonitorStatement::VoltageRange {
-            scope: MonitorScope::Subsystem { name: "A1".into() , kv: None },
+            scope: MonitorScope::Subsystem {
+                name: "A1".into(),
+                kv: None
+            },
             vmin: 0.95,
             vmax: 1.05,
             pre: None,
@@ -635,7 +638,10 @@ fn a_generated_monitored_element_file_reads_every_statement() {
     assert_eq!(
         statements[1],
         MonitorStatement::VoltageDeviation {
-            scope: MonitorScope::Subsystem { name: "A1".into() , kv: None },
+            scope: MonitorScope::Subsystem {
+                name: "A1".into(),
+                kv: None
+            },
             down: 0.03,
             up: Some(0.06),
         }
