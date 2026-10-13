@@ -850,7 +850,7 @@
               "type": "string"
             }
           ],
-          "default": 60.0,
+          "default": 60,
           "description": "System base frequency in hertz (50 or 60). Threaded through the formats\nthat record it (PSS/E `BASFRQ`, pandapower `f_hz`) and defaulted to\n[`DEFAULT_BASE_FREQUENCY`] for the rest. Load-bearing for any\nreactance↔henry conversion (pandapower line charging) and reported as a\nfidelity loss when a non-default value writes to a format with no\nfrequency field."
         },
         "base_mva": {
@@ -9266,9 +9266,6 @@
               "const": "subsystem",
               "type": "string"
             },
-            "name": {
-              "type": "string"
-            },
             "kv": {
               "anyOf": [
                 {
@@ -9288,6 +9285,9 @@
                 }
               ],
               "description": "Optional base-kV filter on the subsystem's buses."
+            },
+            "name": {
+              "type": "string"
             }
           },
           "required": [
@@ -9408,13 +9408,6 @@
               "const": "branches_in_subsystem",
               "type": "string"
             },
-            "low_voltage_3w": {
-              "description": "`3WLOWVOLTAGE`: also the three winding transformers whose lowest\nvoltage winding sits in the subsystem.",
-              "type": "boolean"
-            },
-            "subsystem": {
-              "type": "string"
-            },
             "kv_range": {
               "description": "Optional inclusive base-kV filter on both branch terminals.",
               "maxItems": 2,
@@ -9457,6 +9450,13 @@
                 "array",
                 "null"
               ]
+            },
+            "low_voltage_3w": {
+              "description": "`3WLOWVOLTAGE`: also the three winding transformers whose lowest\nvoltage winding sits in the subsystem.",
+              "type": "boolean"
+            },
+            "subsystem": {
+              "type": "string"
             }
           },
           "required": [
@@ -9471,9 +9471,6 @@
           "properties": {
             "kind": {
               "const": "ties_from_subsystem",
-              "type": "string"
-            },
-            "subsystem": {
               "type": "string"
             },
             "kv_range": {
@@ -9518,6 +9515,9 @@
                 "array",
                 "null"
               ]
+            },
+            "subsystem": {
+              "type": "string"
             }
           },
           "required": [
@@ -9609,41 +9609,6 @@
               "const": "voltage_range",
               "type": "string"
             },
-            "scope": {
-              "$ref": "#/$defs/MonitorScope"
-            },
-            "vmax": {
-              "anyOf": [
-                {
-                  "format": "double",
-                  "type": "number"
-                },
-                {
-                  "enum": [
-                    "Infinity",
-                    "-Infinity",
-                    "NaN"
-                  ],
-                  "type": "string"
-                }
-              ]
-            },
-            "vmin": {
-              "anyOf": [
-                {
-                  "format": "double",
-                  "type": "number"
-                },
-                {
-                  "enum": [
-                    "Infinity",
-                    "-Infinity",
-                    "NaN"
-                  ],
-                  "type": "string"
-                }
-              ]
-            },
             "pre": {
               "description": "Optional pre-contingency voltage band. The two-value form is\npost-contingency only; the four-value form adds this band.",
               "maxItems": 2,
@@ -9685,6 +9650,41 @@
               "type": [
                 "array",
                 "null"
+              ]
+            },
+            "scope": {
+              "$ref": "#/$defs/MonitorScope"
+            },
+            "vmax": {
+              "anyOf": [
+                {
+                  "format": "double",
+                  "type": "number"
+                },
+                {
+                  "enum": [
+                    "Infinity",
+                    "-Infinity",
+                    "NaN"
+                  ],
+                  "type": "string"
+                }
+              ]
+            },
+            "vmin": {
+              "anyOf": [
+                {
+                  "format": "double",
+                  "type": "number"
+                },
+                {
+                  "enum": [
+                    "Infinity",
+                    "-Infinity",
+                    "NaN"
+                  ],
+                  "type": "string"
+                }
               ]
             }
           },
