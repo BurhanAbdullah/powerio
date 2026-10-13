@@ -9277,40 +9277,6 @@
           "type": "object"
         },
         {
-          "description": "Subsystem buses filtered to a single base-kV level.",
-          "properties": {
-            "kind": {
-              "const": "subsystem_kv",
-              "type": "string"
-            },
-            "kv": {
-              "anyOf": [
-                {
-                  "format": "double",
-                  "type": "number"
-                },
-                {
-                  "enum": [
-                    "Infinity",
-                    "-Infinity",
-                    "NaN"
-                  ],
-                  "type": "string"
-                }
-              ]
-            },
-            "name": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "name",
-            "kv"
-          ],
-          "type": "object"
-        },
-        {
           "properties": {
             "bus": {
               "$ref": "#/$defs/BusId"
@@ -9409,6 +9375,40 @@
             "kv"
           ],
           "type": "object"
+        },
+        {
+          "description": "Subsystem buses filtered to a single base-kV level.",
+          "properties": {
+            "kind": {
+              "const": "subsystem_kv",
+              "type": "string"
+            },
+            "kv": {
+              "anyOf": [
+                {
+                  "format": "double",
+                  "type": "number"
+                },
+                {
+                  "enum": [
+                    "Infinity",
+                    "-Infinity",
+                    "NaN"
+                  ],
+                  "type": "string"
+                }
+              ]
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "kv"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -9438,67 +9438,6 @@
           "type": "object"
         },
         {
-          "description": "Every branch with both terminals in a subsystem and an inclusive kV band.",
-          "properties": {
-            "kind": {
-              "const": "branches_in_subsystem_kv_range",
-              "type": "string"
-            },
-            "kv_range": {
-              "maxItems": 2,
-              "minItems": 2,
-              "prefixItems": [
-                {
-                  "anyOf": [
-                    {
-                      "format": "double",
-                      "type": "number"
-                    },
-                    {
-                      "enum": [
-                        "Infinity",
-                        "-Infinity",
-                        "NaN"
-                      ],
-                      "type": "string"
-                    }
-                  ]
-                },
-                {
-                  "anyOf": [
-                    {
-                      "format": "double",
-                      "type": "number"
-                    },
-                    {
-                      "enum": [
-                        "Infinity",
-                        "-Infinity",
-                        "NaN"
-                      ],
-                      "type": "string"
-                    }
-                  ]
-                }
-              ],
-              "type": "array"
-            },
-            "low_voltage_3w": {
-              "type": "boolean"
-            },
-            "subsystem": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "subsystem",
-            "low_voltage_3w",
-            "kv_range"
-          ],
-          "type": "object"
-        },
-        {
           "description": "Every branch with exactly one terminal in the subsystem.",
           "properties": {
             "kind": {
@@ -9512,63 +9451,6 @@
           "required": [
             "kind",
             "subsystem"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "Every tie from a subsystem where the inside terminal is within an inclusive kV band.",
-          "properties": {
-            "kind": {
-              "const": "ties_from_subsystem_kv_range",
-              "type": "string"
-            },
-            "kv_range": {
-              "maxItems": 2,
-              "minItems": 2,
-              "prefixItems": [
-                {
-                  "anyOf": [
-                    {
-                      "format": "double",
-                      "type": "number"
-                    },
-                    {
-                      "enum": [
-                        "Infinity",
-                        "-Infinity",
-                        "NaN"
-                      ],
-                      "type": "string"
-                    }
-                  ]
-                },
-                {
-                  "anyOf": [
-                    {
-                      "format": "double",
-                      "type": "number"
-                    },
-                    {
-                      "enum": [
-                        "Infinity",
-                        "-Infinity",
-                        "NaN"
-                      ],
-                      "type": "string"
-                    }
-                  ]
-                }
-              ],
-              "type": "array"
-            },
-            "subsystem": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "subsystem",
-            "kv_range"
           ],
           "type": "object"
         },
@@ -9700,6 +9582,177 @@
           "type": "object"
         },
         {
+          "description": "A voltage deviation band over a scope of buses. A statement naming one\nvalue states the downward limit alone.",
+          "properties": {
+            "down": {
+              "anyOf": [
+                {
+                  "format": "double",
+                  "type": "number"
+                },
+                {
+                  "enum": [
+                    "Infinity",
+                    "-Infinity",
+                    "NaN"
+                  ],
+                  "type": "string"
+                }
+              ]
+            },
+            "kind": {
+              "const": "voltage_deviation",
+              "type": "string"
+            },
+            "scope": {
+              "$ref": "#/$defs/MonitorScope"
+            },
+            "up": {
+              "anyOf": [
+                {
+                  "format": "double",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                {
+                  "enum": [
+                    "Infinity",
+                    "-Infinity",
+                    "NaN"
+                  ],
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "scope",
+            "down"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Every branch with both terminals in a subsystem and an inclusive kV band.",
+          "properties": {
+            "kind": {
+              "const": "branches_in_subsystem_kv_range",
+              "type": "string"
+            },
+            "kv_range": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ],
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ],
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "type": "array"
+            },
+            "low_voltage_3w": {
+              "type": "boolean"
+            },
+            "subsystem": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "subsystem",
+            "low_voltage_3w",
+            "kv_range"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Every tie from a subsystem where the inside terminal is within an inclusive kV band.",
+          "properties": {
+            "kind": {
+              "const": "ties_from_subsystem_kv_range",
+              "type": "string"
+            },
+            "kv_range": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ],
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "anyOf": [
+                    {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    {
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ],
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "type": "array"
+            },
+            "subsystem": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "subsystem",
+            "kv_range"
+          ],
+          "type": "object"
+        },
+        {
           "description": "A four-value voltage range with distinct pre-contingency limits.",
           "properties": {
             "kind": {
@@ -9781,59 +9834,6 @@
             "vmax",
             "pre_min",
             "pre_max"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "A voltage deviation band over a scope of buses. A statement naming one\nvalue states the downward limit alone.",
-          "properties": {
-            "down": {
-              "anyOf": [
-                {
-                  "format": "double",
-                  "type": "number"
-                },
-                {
-                  "enum": [
-                    "Infinity",
-                    "-Infinity",
-                    "NaN"
-                  ],
-                  "type": "string"
-                }
-              ]
-            },
-            "kind": {
-              "const": "voltage_deviation",
-              "type": "string"
-            },
-            "scope": {
-              "$ref": "#/$defs/MonitorScope"
-            },
-            "up": {
-              "anyOf": [
-                {
-                  "format": "double",
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                {
-                  "enum": [
-                    "Infinity",
-                    "-Infinity",
-                    "NaN"
-                  ],
-                  "type": "string"
-                }
-              ]
-            }
-          },
-          "required": [
-            "kind",
-            "scope",
-            "down"
           ],
           "type": "object"
         }
