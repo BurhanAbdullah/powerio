@@ -581,7 +581,7 @@ jobs:
     name: upload to PyPI
     # Run a visible successful no-op on PRs so this check is not skipped.
     # Only stable release/recovery events can reach the protected PyPI environment.
-    if: always() && (github.event_name == 'pull_request' || (((github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch') && needs.publish.result == 'success' && needs.release-preflight.result == 'success' && needs.lint.result == 'success' && needs.quality.result == 'success' && needs.test.result == 'success' && needs.test-gridfm.result == 'success' && needs.goc3-reference.result == 'success' && needs.wheels.result == 'success' && needs.wheel-smoke.result == 'success' && needs.sdist.result == 'success' && needs.validate-distributions.result == 'success')
+    if: always() && (github.event_name == 'pull_request' || (((github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch') && needs.publish.result == 'success' && needs.release-preflight.result == 'success' && needs.lint.result == 'success' && needs.quality.result == 'success' && needs.test.result == 'success' && needs.test-gridfm.result == 'success' && needs.goc3-reference.result == 'success' && needs.wheels.result == 'success' && needs.wheel-smoke.result == 'success' && needs.sdist.result == 'success' && needs.validate-distributions.result == 'success'))
     needs: [ release-preflight, lint, quality, test, test-gridfm, goc3-reference, wheels, wheel-smoke, sdist, validate-distributions, publish ]
     runs-on: ubuntu-latest
     environment:
