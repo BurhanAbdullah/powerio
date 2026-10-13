@@ -1046,7 +1046,14 @@ fn resolve_statement(
             subsystem,
             kv_range,
         } => {
-            resolve_ties_from_subsystem(statement, subsystem, Some(*kv_range), net, subsystems, out);
+            resolve_ties_from_subsystem(
+                statement,
+                subsystem,
+                Some(*kv_range),
+                net,
+                subsystems,
+                out,
+            );
         }
         MonitorStatement::Branches { branches, .. } => {
             for branch in branches {
