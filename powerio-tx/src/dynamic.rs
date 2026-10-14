@@ -199,6 +199,9 @@ pub fn parse_dyr(text: &str) -> Result<DynamicCase, DyrError> {
     while index < bytes.len() {
         match bytes[index] {
             b'\n' => {
+                if uncommented[start..index].trim().is_empty() {
+                    start_line = line + 1;
+                }
                 line += 1;
                 index += 1;
             }
@@ -411,6 +414,13 @@ mod tests {
     fn preserves_empty_parameter_slots() {
         let case = parse_dyr("1, 'MODEL', '1', 1.0, , 3.0 /\n").unwrap();
         assert_eq!(case.records()[0].parameters(), ["1.0", "", "3.0"]);
+    }
+
+    #[test]
+    fn reports_record_start_lines_after_blank_lines() {
+        let case = parse_dyr("\n1, 'GENCLS', '1', 3.5 /\n\n2, 'EXDC1', '1', 1.0 /\n").unwrap();
+        assert_eq!(case.records()[0].line(), 2);
+        assert_eq!(case.records()[1].line(), 4);
     }
 
     #[test]
