@@ -558,7 +558,7 @@ jobs:
     environment:
       name: ${{ github.event_name == 'pull_request' && 'pr-validation' || 'pypi' }}
     permissions:
-      id-token: ${{ github.event_name == 'pull_request' && 'none' || 'write' }}  # OIDC is unavailable to PR guard runs
+      id-token: write  # The PR guard uses the pr-validation environment; the upload step is release-only.
     steps:
       - name: Require all publishing prerequisites to pass
         if: always()
