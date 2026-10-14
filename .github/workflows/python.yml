@@ -131,7 +131,7 @@ jobs:
       - name: Stage verified publication metadata
         if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
         env:
-          RELEASE_PRERELEASE: \${{ github.event_name == 'release' && github.event.release.prerelease || false }}
+          RELEASE_PRERELEASE: ${{ github.event_name == 'release' && github.event.release.prerelease || false }}
         run: |
           mkdir -p "$RUNNER_TEMP/publish-metadata"
           printf '%s\n' "$RELEASE_TAG" > "$RUNNER_TEMP/publish-metadata/tag"
@@ -142,7 +142,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: publish-metadata
-          path: \${{ runner.temp }}/publish-metadata/
+          path: ${{ runner.temp }}/publish-metadata/
           if-no-files-found: error
           retention-days: 1
 
@@ -561,23 +561,23 @@ jobs:
 
 
   publication-gate:
-    name: \${{ github.event_name == 'pull_request' && 'PR publishing guard' || 'publication validation gate' }}
+    name: ${{ github.event_name == 'pull_request' && 'PR publishing guard' || 'publication validation gate' }}
     if: always()
     needs: [ release-preflight, lint, quality, test, test-gridfm, goc3-reference, wheels, wheel-smoke, sdist, validate-distributions ]
     runs-on: ubuntu-latest
     steps:
       - name: Require all publishing prerequisites to pass
         env:
-          PREFLIGHT_RESULT: \${{ needs.release-preflight.result }}
-          LINT_RESULT: \${{ needs.lint.result }}
-          QUALITY_RESULT: \${{ needs.quality.result }}
-          TEST_RESULT: \${{ needs.test.result }}
-          GRIDFM_RESULT: \${{ needs.test-gridfm.result }}
-          GOC3_RESULT: \${{ needs.goc3-reference.result }}
-          WHEELS_RESULT: \${{ needs.wheels.result }}
-          SMOKE_RESULT: \${{ needs.wheel-smoke.result }}
-          SDIST_RESULT: \${{ needs.sdist.result }}
-          DISTRIBUTIONS_RESULT: \${{ needs.validate-distributions.result }}
+          PREFLIGHT_RESULT: ${{ needs.release-preflight.result }}
+          LINT_RESULT: ${{ needs.lint.result }}
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          GRIDFM_RESULT: ${{ needs.test-gridfm.result }}
+          GOC3_RESULT: ${{ needs.goc3-reference.result }}
+          WHEELS_RESULT: ${{ needs.wheels.result }}
+          SMOKE_RESULT: ${{ needs.wheel-smoke.result }}
+          SDIST_RESULT: ${{ needs.sdist.result }}
+          DISTRIBUTIONS_RESULT: ${{ needs.validate-distributions.result }}
         shell: bash
         run: |
           for result in "$PREFLIGHT_RESULT" "$LINT_RESULT" "$QUALITY_RESULT" "$TEST_RESULT" "$GRIDFM_RESULT" "$GOC3_RESULT" "$WHEELS_RESULT" "$SMOKE_RESULT" "$SDIST_RESULT" "$DISTRIBUTIONS_RESULT"; do
