@@ -542,16 +542,19 @@ jobs:
           python -m pip install twine
           python -m twine check dist/*
 
-
-  # This is an always-run required check, including for pull requests.
-  # Actual publication is handled by publish-python.yml, which runs only after
-  # a successful release/workflow_dispatch Python workflow and revalidates the
-  # immutable tag metadata before requesting OIDC from the protected pypi environment.
+  
+  # Always report a real validation result on PRs. The protected pypi
+  # environment and OIDC are selected only for eligible release/recovery runs.
   publish:
     name: publish to PyPI
     if: always()
     needs: [ release-preflight, lint, quality, test, test-gridfm, goc3-reference, wheels, wheel-smoke, sdist, validate-distributions ]
     runs-on: ubuntu-latest
+    environment:
+      name: ${{ ((github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch') && 'pypi' || 'pr-validation' }}
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Require the full validation matrix to pass
         env:
@@ -565,7 +568,6 @@ jobs:
           SMOKE_RESULT: ${{ needs.wheel-smoke.result }}
           SDIST_RESULT: ${{ needs.sdist.result }}
           DISTRIBUTIONS_RESULT: ${{ needs.validate-distributions.result }}
-          EVENT_NAME: ${{ github.event_name }}
         shell: bash
         run: |
           set -euo pipefail
@@ -575,12 +577,21 @@ jobs:
               exit 1
             fi
           done
-          if [ "$EVENT_NAME" = pull_request ]; then
-            echo "Validation passed. Publishing is intentionally not performed for pull requests."
-          elif [ "$EVENT_NAME" = push ]; then
-            echo "Validation passed for a main-branch push. A published release event is required before package publication."
-          elif [ "$EVENT_NAME" = release ] || [ "$EVENT_NAME" = workflow_dispatch ]; then
-            echo "Validation passed for a release/recovery event. The isolated publisher will revalidate the immutable release and artifacts."
-          else
-            echo "Validation passed; publication is not applicable to this event."
-          fi
+          echo "Every required validation job passed."
+      - name: Report that publication is not applicable
+        if: ${{ !((github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch') }}
+        run: echo "Validation passed. PyPI publication is not applicable to this event; no package was uploaded."
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: ${{ (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch' }}
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: ${{ (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch' }}
+        with:
+          python-version: "3.x"
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        if: ${{ (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch' }}
+        with:
+          packages-dir: dist
+          skip-existing: true
