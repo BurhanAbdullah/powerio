@@ -8,7 +8,7 @@ use powerio_matrix::{AnalysisBranchSource, DcOperators};
 use powerio_prob::{DcPfInstance, merge_zero_impedance_buses};
 use powerio_tx::{
     BalancedNetwork, Branch, BranchSusceptanceFormula, Bus, BusId, BusType, Impedance,
-    Transformer3W, Winding,
+    SourceFormat, Transformer3W, Winding,
 };
 
 fn case9() -> BalancedNetwork {
@@ -645,4 +645,64 @@ fn update_rejects_same_size_network_with_reordered_bus_axis() {
         error.to_string().contains("bus IDs or bus order"),
         "{error}"
     );
+}
+
+
+#[test]
+fn update_rejects_changed_network_base() {
+    let net = case9();
+    let original = DcPfInstance::from_network(net.clone()).unwrap();
+    let mut operators = DcOperators::build(&original).unwrap();
+
+    let mut changed_network = net;
+    *changed_network.base_mva_mut() *= 1.1;
+    let changed = DcPfInstance::from_network(changed_network).unwrap();
+
+    let error = operators.update(&changed).unwrap_err();
+    assert!(error.to_string().contains("network base"), "{error}");
+}
+
+#[test]
+fn update_rejects_changed_normalization_state() {
+    let net = case9();
+    let original = DcPfInstance::from_network(net.clone()).unwrap();
+    let mut operators = DcOperators::build(&original).unwrap();
+
+    // Isolate the representation-state guard: preserve all electrical values
+    // and flip only the metadata that changes the interpretation of phase shifts.
+    let mut changed_network = net;
+    *changed_network.source_format_mut() = SourceFormat::Normalized;
+    let changed = DcPfInstance::from_network(changed_network).unwrap();
+
+    let error = operators.update(&changed).unwrap_err();
+    assert!(error.to_string().contains("normalization"), "{error}");
+}
+
+#[test]
+fn update_rejects_changed_branch_susceptance_formula() {
+    let net = case9();
+    let original = DcPfInstance::from_network(net.clone()).unwrap();
+    let mut operators = DcOperators::build(&original).unwrap();
+
+    let changed = DcPfInstance::from_network(net)
+        .unwrap()
+        .with_branch_susceptance_formula(BranchSusceptanceFormula::ReactanceOnly);
+
+    let error = operators.update(&changed).unwrap_err();
+    assert!(error.to_string().contains("DC formula"), "{error}");
+}
+
+#[test]
+fn update_rejects_changed_branch_topology() {
+    let net = case9();
+    let original = DcPfInstance::from_network(net.clone()).unwrap();
+    let mut operators = DcOperators::build(&original).unwrap();
+
+    let mut changed_network = net;
+    // Keep matrix dimensions fixed but change which buses this branch joins.
+    changed_network.branches_mut()[0].to = BusId(5);
+    let changed = DcPfInstance::from_network(changed_network).unwrap();
+
+    let error = operators.update(&changed).unwrap_err();
+    assert!(error.to_string().contains("topology"), "{error}");
 }
