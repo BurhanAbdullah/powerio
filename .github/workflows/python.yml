@@ -128,6 +128,23 @@ jobs:
           fi
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$head_commit" >> "$GITHUB_OUTPUT"
+      - name: Stage verified publication metadata
+        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+        env:
+          RELEASE_PRERELEASE: \${{ github.event_name == 'release' && github.event.release.prerelease || false }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/publish-metadata"
+          printf '%s\n' "$RELEASE_TAG" > "$RUNNER_TEMP/publish-metadata/tag"
+          printf '%s\n' "$(git rev-parse HEAD)" > "$RUNNER_TEMP/publish-metadata/sha"
+          printf '%s\n' "$RELEASE_PRERELEASE" > "$RUNNER_TEMP/publish-metadata/prerelease"
+      - name: Upload verified publication metadata
+        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: publish-metadata
+          path: \${{ runner.temp }}/publish-metadata/
+          if-no-files-found: error
+          retention-days: 1
 
   lint:
     runs-on: ubuntu-latest
@@ -543,36 +560,24 @@ jobs:
           python -m twine check dist/*
 
 
-  publish:
-    name: ${{ github.event_name == 'pull_request' && 'PR publishing guard' || 'publish to PyPI' }}
-    # release-binaries.yml stages each release as a draft a human publishes, so
-    # the release event fires with a user actor (events from a workflow's
-    # GITHUB_TOKEN are swallowed by the recursion guard). Manual dispatch is the
-    # recovery path for a missed event. A prerelease still builds wheels and an
-    # sdist as run artifacts, but never uploads them to PyPI.
-    if: always() && (github.event_name == 'pull_request' || (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch')
+  publication-gate:
+    name: \${{ github.event_name == 'pull_request' && 'PR publishing guard' || 'publication validation gate' }}
+    if: always()
     needs: [ release-preflight, lint, quality, test, test-gridfm, goc3-reference, wheels, wheel-smoke, sdist, validate-distributions ]
     runs-on: ubuntu-latest
-    # Deployment protection (required reviewers, tag rules) lives on the pypi
-    # environment in the repo settings, not in this file.
-    environment:
-      name: ${{ github.event_name == 'pull_request' && 'pr-validation' || 'pypi' }}
-    permissions:
-      id-token: write  # The PR guard uses the pr-validation environment; the upload step is release-only.
     steps:
       - name: Require all publishing prerequisites to pass
-        if: always()
         env:
-          PREFLIGHT_RESULT: ${{ needs.release-preflight.result }}
-          LINT_RESULT: ${{ needs.lint.result }}
-          QUALITY_RESULT: ${{ needs.quality.result }}
-          TEST_RESULT: ${{ needs.test.result }}
-          GRIDFM_RESULT: ${{ needs.test-gridfm.result }}
-          GOC3_RESULT: ${{ needs.goc3-reference.result }}
-          WHEELS_RESULT: ${{ needs.wheels.result }}
-          SMOKE_RESULT: ${{ needs.wheel-smoke.result }}
-          SDIST_RESULT: ${{ needs.sdist.result }}
-          DISTRIBUTIONS_RESULT: ${{ needs.validate-distributions.result }}
+          PREFLIGHT_RESULT: \${{ needs.release-preflight.result }}
+          LINT_RESULT: \${{ needs.lint.result }}
+          QUALITY_RESULT: \${{ needs.quality.result }}
+          TEST_RESULT: \${{ needs.test.result }}
+          GRIDFM_RESULT: \${{ needs.test-gridfm.result }}
+          GOC3_RESULT: \${{ needs.goc3-reference.result }}
+          WHEELS_RESULT: \${{ needs.wheels.result }}
+          SMOKE_RESULT: \${{ needs.wheel-smoke.result }}
+          SDIST_RESULT: \${{ needs.sdist.result }}
+          DISTRIBUTIONS_RESULT: \${{ needs.validate-distributions.result }}
         shell: bash
         run: |
           for result in "$PREFLIGHT_RESULT" "$LINT_RESULT" "$QUALITY_RESULT" "$TEST_RESULT" "$GRIDFM_RESULT" "$GOC3_RESULT" "$WHEELS_RESULT" "$SMOKE_RESULT" "$SDIST_RESULT" "$DISTRIBUTIONS_RESULT"; do
@@ -581,22 +586,9 @@ jobs:
               exit 1
             fi
           done
-      - name: Verify PR validation cannot publish packages
+      - name: Verify package upload is disabled on pull requests
         if: github.event_name == 'pull_request'
-        run: echo "All validation prerequisites passed. PyPI upload is disabled for pull-request events."
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        if: github.event_name != 'pull_request'
-        with:
-          path: dist
-          merge-multiple: true
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        if: github.event_name != 'pull_request'
-        with:
-          python-version: "3.x"
-      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
-        if: github.event_name != 'pull_request'
-        with:
-          packages-dir: dist
-          # A partially failed upload (e.g. wheels in, sdist rejected) is
-          # recovered by re-running; already-uploaded files are skipped.
-          skip-existing: true
+        run: echo "Validation succeeded; the trusted release publisher cannot be invoked by a pull-request event."
+      - name: Stage release artifacts for the trusted publisher
+        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+        run: echo "Verified release metadata and artifacts are available to the separate trusted publication workflow."
