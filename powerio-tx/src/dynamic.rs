@@ -358,7 +358,10 @@ fn split_fields(raw: &str, line: usize) -> Result<Vec<String>, DyrError> {
     }
     fields.push(decode_field(&raw[start..], line)?);
     if fields.len() > MAX_FIELDS_PER_RECORD {
-        return Err(DyrError::TooManyFields { line, maximum: MAX_FIELDS_PER_RECORD });
+        return Err(DyrError::TooManyFields {
+            line,
+            maximum: MAX_FIELDS_PER_RECORD,
+        });
     }
     Ok(fields)
 }
