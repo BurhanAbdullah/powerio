@@ -146,7 +146,10 @@ impl fmt::Display for DyrError {
                 write!(f, "unterminated quoted field starting at line {line}")
             }
             Self::UnterminatedRecord { line } => {
-                write!(f, "DYR record starting at line {line} has no terminating slash")
+                write!(
+                    f,
+                    "DYR record starting at line {line} has no terminating slash"
+                )
             }
             Self::MissingModelName { line } => {
                 write!(f, "DYR record at line {line} has no model name")
@@ -211,7 +214,9 @@ pub fn parse_dyr(text: &str) -> Result<DynamicCase, DyrError> {
                 let raw = uncommented[start..index].trim();
                 if !raw.is_empty() {
                     if records.len() >= MAX_RECORDS {
-                        return Err(DyrError::TooManyRecords { maximum: MAX_RECORDS });
+                        return Err(DyrError::TooManyRecords {
+                            maximum: MAX_RECORDS,
+                        });
                     }
                     records.push(parse_record(raw, start_line)?);
                 }
@@ -286,7 +291,9 @@ fn strip_comments(text: &str) -> Result<String, DyrError> {
     }
 
     if in_quote {
-        return Err(DyrError::UnterminatedQuote { line: quote_start_line });
+        return Err(DyrError::UnterminatedQuote {
+            line: quote_start_line,
+        });
     }
     Ok(output)
 }
@@ -296,10 +303,12 @@ fn parse_record(raw: &str, line: usize) -> Result<DynamicRecord, DyrError> {
     if fields.len() < 2 || fields[1].is_empty() {
         return Err(DyrError::MissingModelName { line });
     }
-    let bus_id = fields[0].parse::<u32>().map_err(|_| DyrError::InvalidBusId {
-        line,
-        token: fields[0].clone(),
-    })?;
+    let bus_id = fields[0]
+        .parse::<u32>()
+        .map_err(|_| DyrError::InvalidBusId {
+            line,
+            token: fields[0].clone(),
+        })?;
     let model_name = fields[1].clone();
     let device_id = fields.get(2).cloned().filter(|value| !value.is_empty());
     let parameters = fields.into_iter().skip(3).collect();
@@ -331,7 +340,10 @@ fn split_fields(raw: &str, line: usize) -> Result<Vec<String>, DyrError> {
         } else if bytes[index] == b',' && !in_quote {
             fields.push(decode_field(&raw[start..index], line)?);
             if fields.len() > MAX_FIELDS_PER_RECORD {
-                return Err(DyrError::TooManyFields { line, maximum: MAX_FIELDS_PER_RECORD });
+                return Err(DyrError::TooManyFields {
+                    line,
+                    maximum: MAX_FIELDS_PER_RECORD,
+                });
             }
             start = index + 1;
         }
@@ -351,7 +363,10 @@ fn split_fields(raw: &str, line: usize) -> Result<Vec<String>, DyrError> {
 fn decode_field(raw: &str, line: usize) -> Result<String, DyrError> {
     let token = raw.trim();
     if token.len() > MAX_FIELD_BYTES {
-        return Err(DyrError::FieldTooLong { line, maximum: MAX_FIELD_BYTES });
+        return Err(DyrError::FieldTooLong {
+            line,
+            maximum: MAX_FIELD_BYTES,
+        });
     }
     if token.len() >= 2 && token.starts_with('\'') && token.ends_with('\'') {
         Ok(token[1..token.len() - 1].replace("''", "'"))
