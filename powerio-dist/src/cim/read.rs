@@ -23,6 +23,7 @@ use crate::model::{
     DistSwitch, DistTransformer, DistWinding, DistWindingConn, MulticonductorNetwork,
     MulticonductorNetworkTables, VoltageSource,
 };
+use crate::readiness::UNRESOLVED_IMPEDANCE_KEY;
 use crate::{Error, Result};
 
 const FMT: &str = "distribution CIM";
@@ -933,7 +934,7 @@ impl<'a> Mapper<'a> {
             };
             self.check_in_service("ACLineSegment", &id);
             let name = self.unique_name("line", "ACLineSegment", &id);
-            let code = self.line_code_for(
+            let (code, resolved) = self.line_code_for(
                 &id,
                 &name,
                 &rows,
@@ -944,6 +945,14 @@ impl<'a> Mapper<'a> {
             );
             let mut line = DistLine::new(name, from, to, map.clone(), map, code, length);
             line.extras.insert("cim_mrid".into(), id.clone().into());
+            if !resolved {
+                // Conversion refuses the segment: its zero placeholder
+                // impedance would be a short circuit.
+                line.extras.insert(
+                    UNRESOLVED_IMPEDANCE_KEY.into(),
+                    serde_json::Value::Bool(true),
+                );
+            }
             lines.push(line);
         }
         (line_codes, lines)
@@ -1007,7 +1016,8 @@ impl<'a> Mapper<'a> {
     /// The line code for a segment: shared per impedance object and matrix
     /// rows, or the segment's own from its series totals. Only the first code
     /// an impedance object yields carries its mRID, so a projection onto
-    /// other rows writes as an object of its own.
+    /// other rows writes as an object of its own. The flag is false when the
+    /// segment states no impedance and the code is a zero placeholder.
     #[allow(clippy::too_many_arguments)]
     fn line_code_for(
         &mut self,
@@ -1018,13 +1028,13 @@ impl<'a> Mapper<'a> {
         impedance_data: &HashMap<String, Vec<String>>,
         line_codes: &mut Vec<DistLineCode>,
         seen: &mut HashMap<(String, Vec<usize>), String>,
-    ) -> String {
+    ) -> (String, bool) {
         let n = rows.len();
         let mut unusable = None;
         if let Some(pli) = self.target("ACLineSegment", line, "ACLineSegment.PerLengthImpedance") {
             let key = (pli.clone(), rows.to_vec());
             if let Some(name) = seen.get(&key) {
-                return name.clone();
+                return (name.clone(), true);
             }
             let matrices = if self.dropped.contains(&pli) {
                 None
@@ -1043,7 +1053,7 @@ impl<'a> Mapper<'a> {
                 }
                 line_codes.push(code);
                 seen.insert(key, name.clone());
-                return name;
+                return (name, true);
             }
             unusable = Some(pli);
         }
@@ -1051,7 +1061,8 @@ impl<'a> Mapper<'a> {
         let total = |key: &str| self.store.f(line, key);
         let (r1, x1) = (total("ACLineSegment.r"), total("ACLineSegment.x"));
         let name = self.unique_line_code_name(&format!("{line_name}_lc"));
-        if r1.is_none() && x1.is_none() {
+        let resolved = r1.is_some() || x1.is_some();
+        if !resolved {
             let label = self.label(line);
             let why = match &unusable {
                 Some(pli) => format!(
@@ -1090,7 +1101,7 @@ impl<'a> Mapper<'a> {
             &sequence_to_phase(per(b0), per(b1), n),
         );
         line_codes.push(code);
-        name
+        (name, resolved)
     }
 
     /// A line code name no earlier line code holds.

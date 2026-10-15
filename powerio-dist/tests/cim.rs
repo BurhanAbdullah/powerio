@@ -547,6 +547,38 @@ fn a_segment_without_impedance_is_flagged() {
     assert_eq!(errors[0].severity(), DiagnosticSeverity::Error);
 }
 
+/// Conversion refuses a segment with no impedance, whose zero placeholder
+/// would be a short circuit. Reading it and echoing the source still work.
+#[test]
+fn a_segment_without_impedance_is_not_converted() {
+    let text = feeder("").replace(
+        "<cim:ACLineSegment.r>0.1</cim:ACLineSegment.r>\n    <cim:ACLineSegment.x>0.2</cim:ACLineSegment.x>",
+        "",
+    );
+    let net = parse_str(&text, "cim-dist").unwrap();
+    assert!(
+        powerio_dist::audit_electrical_readiness(&net)
+            .blockers()
+            .any(|f| f.code == "READINESS.CIM_DIST.IMPEDANCE_UNRESOLVED")
+    );
+    for target in [
+        DistTargetFormat::Dss,
+        DistTargetFormat::PmdJson,
+        DistTargetFormat::BmopfJson,
+        DistTargetFormat::CimDist,
+    ] {
+        let error = powerio_dist::emit_with_options(
+            &powerio_core::PioModule::new((*net).clone()),
+            target,
+            &powerio_dist::EmitOptions::default(),
+            powerio_core::Destination::memory("out").unwrap(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("l1"), "{error}");
+    }
+    assert_eq!(net.emit(DistTargetFormat::CimDist).text, text);
+}
+
 /// `feeder` with segment `l1` described by impedance object `_pli` instead
 /// of its own series totals, plus `extra`.
 fn feeder_on_pli(extra: &str) -> String {
