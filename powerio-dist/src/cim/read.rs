@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::f64::consts::PI;
 
 use super::xml::{CimDocument, CimObject, PropValue, parse_cimxml};
+use super::{sequence_to_phase, wrap_angle, z_base};
 use crate::diagnostics::{Diagnostic, DiagnosticInfo, attach_target, codes as C};
 use crate::model::{
     ConductorMatrix, Configuration, DistBus, DistLine, DistLineCode, DistLoad, DistShunt,
@@ -177,6 +178,8 @@ struct Merged {
     class: String,
     defined: bool,
     props: Vec<(String, PropValue)>,
+    /// Properties stated with nested elements instead of a value.
+    nested: Vec<String>,
 }
 
 /// Every object of the document set, merged by id, with a record of which
@@ -212,6 +215,7 @@ impl Store {
             id,
             definition,
             props,
+            nested,
         } in doc.objects
         {
             if id.is_empty() {
@@ -226,6 +230,7 @@ impl Store {
                     class,
                     defined: definition,
                     props,
+                    nested,
                 });
                 continue;
             };
@@ -242,6 +247,7 @@ impl Store {
                 )));
             }
             existing.defined |= definition;
+            existing.nested.extend(nested);
             for (key, value) in props {
                 match existing.props.iter().find(|(k, _)| *k == key) {
                     Some((_, first)) if *first == value => {}
@@ -2146,7 +2152,7 @@ impl<'a> Mapper<'a> {
         meshes_of: &HashMap<String, Vec<String>>,
     ) -> Vec<f64> {
         let s_base = windings.first().map_or(0.0, |w| w.s_rating);
-        let per_unit = |x: f64, v_ref: f64| z_base_on(v_ref, s_base).map(|base| x / base);
+        let per_unit = |x: f64, v_ref: f64| z_base(v_ref, s_base).map(|base| x / base);
         let mut star = Vec::with_capacity(ends.len());
         for (end, winding) in ends.iter().zip(windings) {
             let x = self.store.f(end, "PowerTransformerEnd.x").unwrap_or(0.0);
@@ -2343,6 +2349,7 @@ impl<'a> Mapper<'a> {
         }
         let mut classes: BTreeMap<&str, usize> = BTreeMap::new();
         let mut fields: BTreeMap<(&str, &str), usize> = BTreeMap::new();
+        let mut nested: BTreeMap<(&str, &str), usize> = BTreeMap::new();
         let read = store.read.borrow();
         for (at, object) in store.objects.iter().enumerate() {
             let class = object.class.as_str();
@@ -2359,6 +2366,9 @@ impl<'a> Mapper<'a> {
                     continue;
                 }
                 *fields.entry((class, key.as_str())).or_default() += 1;
+            }
+            for key in &object.nested {
+                *nested.entry((class, key.as_str())).or_default() += 1;
             }
         }
         drop(read);
@@ -2388,6 +2398,20 @@ impl<'a> Mapper<'a> {
             let mut diagnostic = Diagnostic::of(
                 info,
                 format!("{key} on {count} {class} object(s) is not carried"),
+            );
+            let _ = diagnostic.insert_detail("class", serde_json::Value::from(class));
+            let _ = diagnostic.insert_detail("property", serde_json::Value::from(key));
+            let _ = diagnostic.insert_detail("count", serde_json::Value::from(count));
+            attach_target(&mut diagnostic, format!("{class}.{key}"));
+            self.diags.record(diagnostic);
+        }
+        for ((class, key), count) in nested {
+            let mut diagnostic = Diagnostic::of(
+                &C::READ_CIM_DIST_FIELD_UNMAPPED,
+                format!(
+                    "{key} on {count} {class} object(s) holds nested RDF/XML elements instead of \
+                     a value and is not carried"
+                ),
             );
             let _ = diagnostic.insert_detail("class", serde_json::Value::from(class));
             let _ = diagnostic.insert_detail("property", serde_json::Value::from(key));
@@ -2459,45 +2483,12 @@ fn set_shunt_halves(code: &mut DistLineCode, g: &ConductorMatrix, b: &ConductorM
     code.b_to = half(b);
 }
 
-/// Impedance base `V²/S` (ohm) of a winding, or None when degenerate.
-fn z_base(v_ref: f64, s_rating: f64) -> Option<f64> {
-    (v_ref > 0.0 && s_rating > 0.0).then_some(v_ref * v_ref / s_rating)
-}
-
-/// Impedance base `V²/S` on a common power base.
-fn z_base_on(v_ref: f64, s_base: f64) -> Option<f64> {
-    z_base(v_ref, s_base)
-}
-
-/// Expand zero and positive sequence scalars into an `n×n` phase matrix:
-/// self `(z0 + 2·z1)/3` on the diagonal, mutual `(z0 − z1)/3` off it.
-fn sequence_to_phase(z0: f64, z1: f64, n: usize) -> ConductorMatrix {
-    let self_z = (z0 + 2.0 * z1) / 3.0;
-    let mutual = (z0 - z1) / 3.0;
-    let mut m = vec![vec![mutual; n]; n];
-    for (i, row) in m.iter_mut().enumerate() {
-        row[i] = self_z;
-    }
-    m
-}
-
 fn matrix_value(m: &ConductorMatrix) -> serde_json::Value {
     serde_json::Value::from(
         m.iter()
             .map(|row| serde_json::Value::from(row.clone()))
             .collect::<Vec<_>>(),
     )
-}
-
-/// An angle in radians wrapped to `(-π, π]`.
-fn wrap_angle(angle: f64) -> f64 {
-    let mut a = angle % (2.0 * PI);
-    if a <= -PI {
-        a += 2.0 * PI;
-    } else if a > PI {
-        a -= 2.0 * PI;
-    }
-    a
 }
 
 #[cfg(test)]
@@ -2514,22 +2505,5 @@ mod tests {
         assert_eq!(expand("s12N"), ["1", "2", "4"]);
         assert_eq!(expand("C"), ["3"]);
         assert_eq!(expand_phase_code("XY"), None);
-    }
-
-    #[test]
-    #[allow(clippy::float_cmp)]
-    fn sequence_expands_to_a_symmetric_phase_matrix() {
-        let m = sequence_to_phase(6.0, 3.0, 3);
-        // self = (6 + 6)/3 = 4, mutual = (6 - 3)/3 = 1.
-        assert_eq!(m[0][0], 4.0);
-        assert_eq!(m[0][1], 1.0);
-        assert_eq!(m[1][0], 1.0);
-    }
-
-    #[test]
-    fn angles_wrap_into_the_half_open_interval() {
-        assert!((wrap_angle(-4.0 * PI / 3.0) - 2.0 * PI / 3.0).abs() < 1e-12);
-        assert!((wrap_angle(PI) - PI).abs() < 1e-12);
-        assert!((wrap_angle(-PI) - PI).abs() < 1e-12);
     }
 }

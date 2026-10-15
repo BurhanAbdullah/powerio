@@ -53,14 +53,15 @@ impl PropValue {
 
 /// One object element: class name (`eu:`/`entsoe:`-prefixed when not in the
 /// `cim` namespace), normalized id, whether it was an `rdf:ID` definition
-/// rather than an `rdf:about` extension, and its properties in document
-/// order.
+/// rather than an `rdf:about` extension, its properties in document order,
+/// and the names of properties that hold nested elements instead of a value.
 #[derive(Debug)]
 pub(crate) struct CimObject {
     pub class: String,
     pub id: String,
     pub definition: bool,
     pub props: Vec<(String, PropValue)>,
+    pub nested: Vec<String>,
 }
 
 /// The `md:FullModel` header fields the distribution mapping reads: the
@@ -150,7 +151,9 @@ pub(crate) fn parse_cimxml(text: &str) -> Result<CimDocument> {
     let mut objects: Vec<CimObject> = Vec::new();
 
     // Depth 1 is `rdf:RDF`, depth 2 the object elements, depth 3 their
-    // properties. Deeper nesting (rare vendor extensions) is skipped.
+    // properties. A property holding nested elements (rare vendor
+    // extensions) has no literal value: its text is discarded and the
+    // property is recorded as nested on its object.
     let mut current: Option<CimObject> = None;
     let mut current_prop: Option<String> = None;
     let mut prop_text = String::new();
@@ -197,7 +200,7 @@ pub(crate) fn parse_cimxml(text: &str) -> Result<CimDocument> {
                         }
                     }
                     _ => {
-                        if in_header && current_prop.as_deref().is_some_and(|p| !p.is_empty()) {
+                        if current_prop.as_deref().is_some_and(|p| !p.is_empty()) {
                             current_prop_nested = true;
                         }
                     }
@@ -218,7 +221,7 @@ pub(crate) fn parse_cimxml(text: &str) -> Result<CimDocument> {
                         None => PropValue::Text(String::new()),
                     };
                     push_prop(in_header, &mut header, &mut current, name, value);
-                } else if depth >= 3 && in_header {
+                } else if depth >= 3 && current_prop.as_deref().is_some_and(|p| !p.is_empty()) {
                     current_prop_nested = true;
                 }
             }
@@ -255,8 +258,9 @@ pub(crate) fn parse_cimxml(text: &str) -> Result<CimDocument> {
                         {
                             let value = prop_text.trim().to_string();
                             prop_text.clear();
-                            // A header property holding nested RDF has no
-                            // literal value the header fields could take.
+                            // A property holding nested elements has no
+                            // literal value. The header fields cannot take
+                            // one; an object records it for reporting.
                             if !current_prop_nested {
                                 push_prop(
                                     in_header,
@@ -265,6 +269,8 @@ pub(crate) fn parse_cimxml(text: &str) -> Result<CimDocument> {
                                     prop,
                                     PropValue::Text(value),
                                 );
+                            } else if !in_header && let Some(object) = current.as_mut() {
+                                object.nested.push(prop);
                             }
                         }
                         current_prop_nested = false;
@@ -356,6 +362,7 @@ fn read_object<R>(
         id,
         definition,
         props: Vec::new(),
+        nested: Vec::new(),
     })
 }
 
@@ -425,6 +432,24 @@ mod tests {
   </c:Terminal>
   <c:BaseFrequency rdf:ID="_f"/>
 </rdf:RDF>"##;
+
+    #[test]
+    fn a_property_holding_nested_elements_has_no_value() {
+        let doc = parse_cimxml(
+            r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:c="http://iec.ch/TC57/CIM100#" xmlns:v="http://vendor.example/ext#">
+  <c:EnergyConsumer rdf:ID="_load1">
+    <c:EnergyConsumer.p><v:A>12</v:A><v:B>3</v:B></c:EnergyConsumer.p>
+    <c:EnergyConsumer.q><v:C/></c:EnergyConsumer.q>
+    <c:IdentifiedObject.name>load1</c:IdentifiedObject.name>
+  </c:EnergyConsumer>
+</rdf:RDF>"#,
+        )
+        .unwrap();
+        let load = &doc.objects[0];
+        assert_eq!(load.nested, ["EnergyConsumer.p", "EnergyConsumer.q"]);
+        assert_eq!(load.props.len(), 1);
+        assert_eq!(load.props[0].0, "IdentifiedObject.name");
+    }
 
     #[test]
     fn parses_header_objects_props_and_references() {

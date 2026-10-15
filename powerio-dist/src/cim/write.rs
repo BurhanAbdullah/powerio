@@ -24,6 +24,7 @@ use crate::model::{
 };
 
 use super::read::SWITCH_CLASSES;
+use super::{sequence_to_phase, wrap_angle, z_base};
 
 const CIM_NS: &str = "http://iec.ch/TC57/CIM100#";
 const RDF_NS: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
@@ -1218,18 +1219,8 @@ fn stated_sequence(source: &VoltageSource) -> Option<(f64, f64, f64, f64)> {
             })
             .collect()
     };
-    let expand = |z0: f64, z1: f64| {
-        let self_z = (z0 + 2.0 * z1) / 3.0;
-        let mutual = (z0 - z1) / 3.0;
-        (0..n)
-            .map(|i| {
-                (0..n)
-                    .map(|j| if i == j { self_z } else { mutual })
-                    .collect()
-            })
-            .collect::<Vec<Vec<f64>>>()
-    };
-    (matrix("rs")? == expand(r0, r1) && matrix("xs")? == expand(x0, x1)).then_some((r1, x1, r0, x0))
+    (matrix("rs")? == sequence_to_phase(r0, r1, n) && matrix("xs")? == sequence_to_phase(x0, x1, n))
+        .then_some((r1, x1, r0, x0))
 }
 
 /// The branch conductance and susceptance of a balanced three phase delta
@@ -1293,21 +1284,4 @@ fn exact_preimage(target: f64, forward: f64, inverse: impl Fn(f64) -> f64) -> f6
         }
     }
     forward
-}
-
-/// Impedance base `V²/S` (ohm), or None when degenerate.
-fn z_base(v_ref: f64, s_rating: f64) -> Option<f64> {
-    (v_ref > 0.0 && s_rating > 0.0).then_some(v_ref * v_ref / s_rating)
-}
-
-/// An angle in radians wrapped to `(-π, π]`.
-fn wrap_angle(angle: f64) -> f64 {
-    use std::f64::consts::PI;
-    let mut a = angle % (2.0 * PI);
-    if a <= -PI {
-        a += 2.0 * PI;
-    } else if a > PI {
-        a -= 2.0 * PI;
-    }
-    a
 }

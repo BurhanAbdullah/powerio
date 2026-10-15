@@ -449,6 +449,30 @@ fn a_directory_reads_only_its_top_level_documents() {
     assert!(error.to_string().contains("top level"), "{error}");
 }
 
+/// A property holding nested elements has no value: its inner text is not
+/// read as a number, and the property is reported.
+#[test]
+fn a_property_with_nested_elements_is_reported_not_read() {
+    let text = feeder(
+        r##"<cim:EnergySource rdf:about="#_src">
+    <cim:EnergySource.voltageAngle><v:A xmlns:v="http://vendor.example/ext#">1</v:A><v:B xmlns:v="http://vendor.example/ext#">2</v:B></cim:EnergySource.voltageAngle>
+  </cim:EnergySource>"##,
+    );
+    let net = parse_str(&text, "cim-dist").unwrap();
+    assert!(
+        close(net.sources()[0].v_angle[0], 0.0),
+        "{:?}",
+        net.sources()[0].v_angle
+    );
+    assert!(
+        findings(&net.warnings, "READ.CIM_DIST.FIELD_UNMAPPED")
+            .iter()
+            .any(|f| f.contains("EnergySource.voltageAngle") && f.contains("nested")),
+        "{:#?}",
+        net.warnings
+    );
+}
+
 /// What the July reader dropped silently is mapped or reported.
 #[test]
 fn unmapped_and_partial_content_is_reported() {
