@@ -3,6 +3,7 @@
 //! converts to OpenDSS, PMD, and BMOPF through the shared distribution
 //! machinery, and every distribution source writes CIM.
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use powerio_dist::{Configuration, DiagnosticSeverity, DistTargetFormat, DistWindingConn};
@@ -544,6 +545,285 @@ fn a_segment_without_impedance_is_flagged() {
         .collect();
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0].severity(), DiagnosticSeverity::Error);
+}
+
+/// `feeder` with segment `l1` described by impedance object `_pli` instead
+/// of its own series totals, plus `extra`.
+fn feeder_on_pli(extra: &str) -> String {
+    feeder(extra).replace(
+        "<cim:ACLineSegment.r>0.1</cim:ACLineSegment.r>\n    <cim:ACLineSegment.x>0.2</cim:ACLineSegment.x>",
+        r##"<cim:ACLineSegment.PerLengthImpedance rdf:resource="#_pli"/>"##,
+    )
+}
+
+/// One `PhaseImpedanceData` entry of `_pli`.
+fn impedance_entry(row: usize, col: usize, r: f64, x: f64) -> String {
+    format!(
+        r##"<cim:PhaseImpedanceData rdf:ID="_d{row}{col}">
+    <cim:PhaseImpedanceData.PerLengthPhaseImpedance rdf:resource="#_pli"/>
+    <cim:PhaseImpedanceData.row>{row}</cim:PhaseImpedanceData.row>
+    <cim:PhaseImpedanceData.column>{col}</cim:PhaseImpedanceData.column>
+    <cim:PhaseImpedanceData.r>{r}</cim:PhaseImpedanceData.r>
+    <cim:PhaseImpedanceData.x>{x}</cim:PhaseImpedanceData.x>
+  </cim:PhaseImpedanceData>"##
+    )
+}
+
+/// A three conductor `_pli` whose entry (i, j) has r = i + j/10 and
+/// x = 10 r, so every entry is distinct.
+fn three_conductor_pli() -> String {
+    let mut out = String::from(
+        r#"<cim:PerLengthPhaseImpedance rdf:ID="_pli">
+    <cim:IdentifiedObject.name>pli</cim:IdentifiedObject.name>
+    <cim:PerLengthPhaseImpedance.conductorCount>3</cim:PerLengthPhaseImpedance.conductorCount>
+  </cim:PerLengthPhaseImpedance>"#,
+    );
+    for row in 1..=3 {
+        for col in 1..=row {
+            let r = row as f64 + col as f64 / 10.0;
+            out.push_str(&impedance_entry(row, col, r, 10.0 * r));
+        }
+    }
+    out
+}
+
+/// Segment `l2` from n2 to a new node n3 on `_pli`, with one
+/// `ACLineSegmentPhase` per `(phase, sequenceNumber)`.
+fn segment_on_pli(phases: &[(&str, usize)]) -> String {
+    let code: String = phases.iter().map(|(p, _)| *p).collect();
+    let mut out = format!(
+        r##"<cim:ConnectivityNode rdf:ID="_n3"><cim:IdentifiedObject.name>n3</cim:IdentifiedObject.name></cim:ConnectivityNode>
+  <cim:ACLineSegment rdf:ID="_l2">
+    <cim:IdentifiedObject.name>l2</cim:IdentifiedObject.name>
+    <cim:Conductor.length>50</cim:Conductor.length>
+    <cim:ACLineSegment.PerLengthImpedance rdf:resource="#_pli"/>
+  </cim:ACLineSegment>
+  <cim:Terminal rdf:ID="_l2_t1">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_l2"/>
+    <cim:Terminal.ConnectivityNode rdf:resource="#_n2"/>
+    <cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode.{code}"/>
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="_l2_t2">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_l2"/>
+    <cim:Terminal.ConnectivityNode rdf:resource="#_n3"/>
+    <cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode.{code}"/>
+    <cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>"##
+    );
+    for (phase, seq) in phases {
+        let _ = write!(
+            out,
+            r##"<cim:ACLineSegmentPhase rdf:ID="_l2p{phase}">
+    <cim:ACLineSegmentPhase.ACLineSegment rdf:resource="#_l2"/>
+    <cim:ACLineSegmentPhase.phase rdf:resource="http://iec.ch/TC57/CIM100#SinglePhaseKind.{phase}"/>
+    <cim:ACLineSegmentPhase.sequenceNumber>{seq}</cim:ACLineSegmentPhase.sequenceNumber>
+  </cim:ACLineSegmentPhase>"##
+        );
+    }
+    out
+}
+
+/// A conductor count far beyond any real line drops the impedance object
+/// with a finding instead of sizing matrices from it.
+#[test]
+fn an_oversized_conductor_count_is_dropped() {
+    for pli in [
+        r#"<cim:PerLengthPhaseImpedance rdf:ID="_pli">
+    <cim:PerLengthPhaseImpedance.conductorCount>1e9</cim:PerLengthPhaseImpedance.conductorCount>
+  </cim:PerLengthPhaseImpedance>"#
+            .to_owned()
+            + &impedance_entry(1, 1, 0.1, 0.2),
+        r#"<cim:PerLengthPhaseImpedance rdf:ID="_pli"/>"#.to_owned()
+            + &impedance_entry(1_000_000, 1, 0.1, 0.2),
+    ] {
+        let net = parse_str(&feeder_on_pli(&pli), "cim-dist").unwrap();
+        assert!(
+            findings(&net.warnings, "READ.CIM_DIST.RECORD_DROPPED")
+                .iter()
+                .any(|f| f.contains("supported maximum of 64")),
+            "{:#?}",
+            net.warnings
+        );
+        assert_eq!(
+            findings(&net.warnings, "READ.CIM_DIST.IMPEDANCE_UNRESOLVED").len(),
+            1,
+            "{:#?}",
+            net.warnings
+        );
+    }
+}
+
+/// A segment phase takes the matrix row its sequence number names, so a
+/// phase A and C segment on a three conductor matrix gets rows 1 and 3.
+#[test]
+fn a_segment_phase_takes_its_numbered_impedance_row() {
+    let text = feeder(&format!(
+        "{}\n{}",
+        three_conductor_pli(),
+        segment_on_pli(&[("A", 1), ("C", 3)])
+    ));
+    let net = parse_str(&text, "cim-dist").unwrap();
+    let line = net.lines().iter().find(|l| l.name == "l2").unwrap();
+    let code = net
+        .line_codes()
+        .iter()
+        .find(|c| c.name == line.linecode)
+        .unwrap();
+    let r = |i: usize, j: usize| {
+        let (row, col) = (i.max(j), i.min(j));
+        row as f64 + col as f64 / 10.0
+    };
+    assert_eq!(code.n_conductors, 2);
+    assert!(close(code.r_series[0][0], r(1, 1)), "{:?}", code.r_series);
+    assert!(close(code.r_series[0][1], r(1, 3)), "{:?}", code.r_series);
+    assert!(close(code.r_series[1][1], r(3, 3)), "{:?}", code.r_series);
+    assert!(
+        close(code.x_series[1][1], 10.0 * r(3, 3)),
+        "{:?}",
+        code.x_series
+    );
+}
+
+/// Sequence numbers that cannot name distinct rows fall back to phase
+/// order, with a finding.
+#[test]
+fn unusable_sequence_numbers_fall_back_to_phase_order() {
+    let text = feeder(&format!(
+        "{}\n{}",
+        three_conductor_pli(),
+        segment_on_pli(&[("A", 2), ("C", 2)])
+    ));
+    let net = parse_str(&text, "cim-dist").unwrap();
+    assert!(
+        findings(&net.warnings, "READ.CIM_DIST.VALUE_DEFAULTED")
+            .iter()
+            .any(|f| f.contains("sequence numbers")),
+        "{:#?}",
+        net.warnings
+    );
+    let line = net.lines().iter().find(|l| l.name == "l2").unwrap();
+    let code = net
+        .line_codes()
+        .iter()
+        .find(|c| c.name == line.linecode)
+        .unwrap();
+    assert!(close(code.r_series[1][1], 2.2), "{:?}", code.r_series);
+}
+
+/// A segment using part of a shared impedance matrix writes as its own
+/// impedance object: the output defines every id once and reads back.
+#[test]
+fn a_projected_line_code_writes_its_own_mrid() {
+    let text = feeder_on_pli(&format!(
+        "{}\n{}",
+        three_conductor_pli(),
+        segment_on_pli(&[("A", 1), ("C", 3)])
+    ));
+    let net = parse_str(&text, "cim-dist").unwrap();
+    assert_eq!(net.line_codes().len(), 2, "{:#?}", net.line_codes());
+    let out = emit_value(&net, DistTargetFormat::CimDist);
+    let mut ids: Vec<&str> = out
+        .text
+        .split("rdf:ID=\"")
+        .skip(1)
+        .map(|rest| rest.split('"').next().unwrap())
+        .collect();
+    let count = ids.len();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), count, "an rdf:ID repeats");
+    let back = parse_str(&out.text, "cim-dist").unwrap();
+    assert_eq!(back.lines().len(), net.lines().len());
+}
+
+/// An impedance object with no data is dropped, and a segment that names
+/// it has no impedance: an error finding, not a silent zero matrix.
+#[test]
+fn an_impedance_object_without_data_leaves_the_segment_unresolved() {
+    let text = feeder_on_pli(
+        r#"<cim:PerLengthPhaseImpedance rdf:ID="_pli">
+    <cim:PerLengthPhaseImpedance.conductorCount>3</cim:PerLengthPhaseImpedance.conductorCount>
+  </cim:PerLengthPhaseImpedance>"#,
+    );
+    let net = parse_str(&text, "cim-dist").unwrap();
+    assert!(
+        findings(&net.warnings, "READ.CIM_DIST.RECORD_DROPPED")
+            .iter()
+            .any(|f| f.contains("no PhaseImpedanceData")),
+        "{:#?}",
+        net.warnings
+    );
+    let unresolved = findings(&net.warnings, "READ.CIM_DIST.IMPEDANCE_UNRESOLVED");
+    assert_eq!(unresolved.len(), 1, "{:#?}", net.warnings);
+    assert!(
+        unresolved[0].contains("no usable impedance"),
+        "{unresolved:?}"
+    );
+}
+
+/// A consumer whose phase records state only their phase shares its stated
+/// total, and a total that disagrees with the phases is reported.
+#[test]
+fn consumer_totals_and_phase_powers_are_reconciled() {
+    let consumer = |id: &str, total: &str, phase_p: &str| {
+        let mut out = format!(
+            r##"<cim:EnergyConsumer rdf:ID="_{id}">
+    <cim:IdentifiedObject.name>{id}</cim:IdentifiedObject.name>
+    <cim:EnergyConsumer.phaseConnection rdf:resource="http://iec.ch/TC57/CIM100#PhaseShuntConnectionKind.Y"/>
+    {total}
+  </cim:EnergyConsumer>
+  <cim:Terminal rdf:ID="_{id}_t">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_{id}"/>
+    <cim:Terminal.ConnectivityNode rdf:resource="#_n2"/>
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>"##
+        );
+        for phase in ["A", "B", "C"] {
+            let _ = write!(
+                out,
+                r##"<cim:EnergyConsumerPhase rdf:ID="_{id}_{phase}">
+    <cim:EnergyConsumerPhase.EnergyConsumer rdf:resource="#_{id}"/>
+    <cim:EnergyConsumerPhase.phase rdf:resource="http://iec.ch/TC57/CIM100#SinglePhaseKind.{phase}"/>
+    {phase_p}
+  </cim:EnergyConsumerPhase>"##
+            );
+        }
+        out
+    };
+    let text = feeder(&format!(
+        "{}\n{}",
+        consumer(
+            "shared",
+            "<cim:EnergyConsumer.p>30000</cim:EnergyConsumer.p><cim:EnergyConsumer.q>9000</cim:EnergyConsumer.q>",
+            "",
+        ),
+        consumer(
+            "conflict",
+            "<cim:EnergyConsumer.p>5000</cim:EnergyConsumer.p><cim:EnergyConsumer.q>0</cim:EnergyConsumer.q>",
+            "<cim:EnergyConsumerPhase.p>1000</cim:EnergyConsumerPhase.p><cim:EnergyConsumerPhase.q>0</cim:EnergyConsumerPhase.q>",
+        ),
+    ));
+    let net = parse_str(&text, "cim-dist").unwrap();
+    let shared = net.loads().iter().find(|l| l.name == "shared").unwrap();
+    assert_eq!(shared.p_nom, vec![10_000.0; 3]);
+    assert_eq!(shared.q_nom, vec![3_000.0; 3]);
+    assert!(
+        findings(&net.warnings, "READ.CIM_DIST.VALUE_DEFAULTED")
+            .iter()
+            .any(|f| f.contains("shared") && f.contains("split evenly")),
+        "{:#?}",
+        net.warnings
+    );
+    let conflict = net.loads().iter().find(|l| l.name == "conflict").unwrap();
+    assert_eq!(conflict.p_nom, vec![1_000.0; 3]);
+    assert!(
+        findings(&net.warnings, "READ.CIM_DIST.VALUE_CONFLICT")
+            .iter()
+            .any(|f| f.contains("conflict") && f.contains("sum to 3000")),
+        "{:#?}",
+        net.warnings
+    );
 }
 
 /// Each transformer takes the mesh impedance between its own ends, and a

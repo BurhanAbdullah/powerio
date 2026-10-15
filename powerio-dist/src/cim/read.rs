@@ -27,6 +27,10 @@ use crate::{Error, Result};
 
 const FMT: &str = "distribution CIM";
 
+/// The most conductors a phase impedance matrix may state. The count sizes
+/// four square matrices, so a larger one is dropped rather than allocated.
+const MAX_CONDUCTORS: usize = 64;
+
 /// The switch classes the reader maps to [`DistSwitch`].
 pub(super) const SWITCH_CLASSES: [&str; 8] = [
     "Switch",
@@ -878,31 +882,10 @@ impl<'a> Mapper<'a> {
             "PhaseImpedanceData.PerLengthPhaseImpedance",
         );
         let mut line_codes: Vec<DistLineCode> = Vec::new();
-        // (impedance object, conductor count) to line code name.
-        let mut seen: HashMap<(String, usize), String> = HashMap::new();
-        // Every phase impedance object is a line code at its own conductor
-        // count, whether or not a segment uses it; a segment naming another
-        // number of phases takes its own projection below.
-        for pli in self.store.ids_of("PerLengthPhaseImpedance") {
-            let n = self.conductor_count(&pli, &impedance_data);
-            if n == 0 {
-                self.drop_record(
-                    "PerLengthPhaseImpedance",
-                    &pli,
-                    "it states neither a conductor count nor PhaseImpedanceData",
-                );
-                continue;
-            }
-            if let Some((r, x, g, b)) = self.per_length_matrices(&pli, n, &impedance_data) {
-                let base = self.store.name_of(&pli).unwrap_or_else(|| pli.clone());
-                let name = self.unique_line_code_name(&base);
-                let mut code = DistLineCode::new(name.clone(), r, x);
-                set_shunt_halves(&mut code, &g, &b);
-                code.extras.insert("cim_mrid".into(), pli.clone().into());
-                line_codes.push(code);
-                seen.insert((pli, n), name);
-            }
-        }
+        // (impedance object, its matrix rows in segment phase order) to line
+        // code name.
+        let mut seen: HashMap<(String, Vec<usize>), String> = HashMap::new();
+        self.phase_impedance_codes(&impedance_data, &mut line_codes, &mut seen);
         let mut lines = Vec::new();
         for id in self.store.ids_of("ACLineSegment") {
             let (Some(from), Some(to)) = (self.bus_at(&id, 0), self.bus_at(&id, 1)) else {
@@ -914,27 +897,27 @@ impl<'a> Mapper<'a> {
                 continue;
             };
             let children = phase_children.get(&id).cloned().unwrap_or_default();
-            let map: Vec<String> = if children.is_empty() {
-                self.fallback_map("ACLineSegment", &id)
+            let (map, rows): (Vec<String>, Vec<usize>) = if children.is_empty() {
+                let map = self.fallback_map("ACLineSegment", &id);
+                let rows = (1..=map.len()).collect();
+                (map, rows)
             } else {
                 for terminal in self.terminals(&id) {
                     self.store.consume(&terminal, "Terminal.phases");
                 }
-                self.phase_children(
+                let phases = self.phase_children(
                     &children,
                     "ACLineSegmentPhase",
                     "ACLineSegmentPhase.phase",
                     Some("ACLineSegmentPhase.sequenceNumber"),
-                )
-                .into_iter()
-                .map(|(t, _)| t)
-                .collect()
+                );
+                let rows = self.impedance_rows(&id, &phases);
+                (phases.into_iter().map(|(t, _)| t).collect(), rows)
             };
             if map.is_empty() {
                 self.drop_record("ACLineSegment", &id, "no conductor phase is readable");
                 continue;
             }
-            let n = map.len();
             let stated = self.store.f(&id, "Conductor.length").filter(|l| *l > 0.0);
             let length = if let Some(length) = stated {
                 length
@@ -953,7 +936,7 @@ impl<'a> Mapper<'a> {
             let code = self.line_code_for(
                 &id,
                 &name,
-                n,
+                &rows,
                 length,
                 &impedance_data,
                 &mut line_codes,
@@ -966,38 +949,103 @@ impl<'a> Mapper<'a> {
         (line_codes, lines)
     }
 
-    /// The line code for a segment: shared per impedance object and
-    /// conductor count, or the segment's own from its series totals.
+    /// Every phase impedance object is a line code at its own conductor
+    /// count, whether or not a segment uses it; a segment naming another set
+    /// of rows takes its own projection in [`Self::line_code_for`].
+    fn phase_impedance_codes(
+        &mut self,
+        impedance_data: &HashMap<String, Vec<String>>,
+        line_codes: &mut Vec<DistLineCode>,
+        seen: &mut HashMap<(String, Vec<usize>), String>,
+    ) {
+        for pli in self.store.ids_of("PerLengthPhaseImpedance") {
+            if impedance_data.get(&pli).is_none_or(Vec::is_empty) {
+                self.drop_record(
+                    "PerLengthPhaseImpedance",
+                    &pli,
+                    "it states no PhaseImpedanceData",
+                );
+                continue;
+            }
+            let count = self.conductor_count(&pli, impedance_data);
+            if count < 1.0 {
+                self.drop_record(
+                    "PerLengthPhaseImpedance",
+                    &pli,
+                    "it states neither a conductor count nor a PhaseImpedanceData row",
+                );
+                continue;
+            }
+            if count > MAX_CONDUCTORS as f64 {
+                self.drop_record(
+                    "PerLengthPhaseImpedance",
+                    &pli,
+                    &format!("{count} conductors exceed the supported maximum of {MAX_CONDUCTORS}"),
+                );
+                continue;
+            }
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // 1..=64
+            let rows: Vec<usize> = (1..=count as usize).collect();
+            if let Some((r, x, g, b)) = self.per_length_matrices(&pli, &rows, impedance_data) {
+                let base = self.store.name_of(&pli).unwrap_or_else(|| pli.clone());
+                let name = self.unique_line_code_name(&base);
+                let mut code = DistLineCode::new(name.clone(), r, x);
+                set_shunt_halves(&mut code, &g, &b);
+                code.extras.insert("cim_mrid".into(), pli.clone().into());
+                line_codes.push(code);
+                seen.insert((pli, rows), name);
+            } else {
+                self.drop_record(
+                    "PerLengthPhaseImpedance",
+                    &pli,
+                    "its PhaseImpedanceData states no self impedance",
+                );
+            }
+        }
+    }
+
+    /// The line code for a segment: shared per impedance object and matrix
+    /// rows, or the segment's own from its series totals. Only the first code
+    /// an impedance object yields carries its mRID, so a projection onto
+    /// other rows writes as an object of its own.
     #[allow(clippy::too_many_arguments)]
     fn line_code_for(
         &mut self,
         line: &str,
         line_name: &str,
-        n: usize,
+        rows: &[usize],
         length: f64,
         impedance_data: &HashMap<String, Vec<String>>,
         line_codes: &mut Vec<DistLineCode>,
-        seen: &mut HashMap<(String, usize), String>,
+        seen: &mut HashMap<(String, Vec<usize>), String>,
     ) -> String {
+        let n = rows.len();
+        let mut unusable = None;
         if let Some(pli) = self.target("ACLineSegment", line, "ACLineSegment.PerLengthImpedance") {
-            if let Some(name) = seen.get(&(pli.clone(), n)) {
+            let key = (pli.clone(), rows.to_vec());
+            if let Some(name) = seen.get(&key) {
                 return name.clone();
             }
-            if let Some((r, x, g, b)) = self.per_length_matrices(&pli, n, impedance_data) {
+            let matrices = if self.dropped.contains(&pli) {
+                None
+            } else {
+                self.per_length_matrices(&pli, rows, impedance_data)
+            };
+            if let Some((r, x, g, b)) = matrices {
+                let first = !seen.keys().any(|(p, _)| *p == pli);
                 let base = self.store.name_of(&pli).unwrap_or_else(|| pli.clone());
-                let name = if seen.keys().any(|(p, _)| *p == pli) {
-                    format!("{base}_{n}")
-                } else {
-                    base
-                };
+                let name = if first { base } else { format!("{base}_{n}") };
                 let name = self.unique_line_code_name(&name);
                 let mut code = DistLineCode::new(name.clone(), r, x);
                 set_shunt_halves(&mut code, &g, &b);
-                code.extras.insert("cim_mrid".into(), pli.clone().into());
+                if first {
+                    code.extras.insert("cim_mrid".into(), pli.clone().into());
+                }
                 line_codes.push(code);
-                seen.insert((pli, n), name.clone());
+                seen.insert(key, name.clone());
                 return name;
             }
+            unusable = Some(pli);
         }
         // Series totals on the segment, per length through the length.
         let total = |key: &str| self.store.f(line, key);
@@ -1005,14 +1053,21 @@ impl<'a> Mapper<'a> {
         let name = self.unique_line_code_name(&format!("{line_name}_lc"));
         if r1.is_none() && x1.is_none() {
             let label = self.label(line);
+            let why = match &unusable {
+                Some(pli) => format!(
+                    "its PerLengthImpedance {} gives no usable impedance and it states no series \
+                     r and x",
+                    self.label(pli)
+                ),
+                None => "states neither a PerLengthImpedance nor series r and x (wire geometry \
+                         is not calculated)"
+                    .to_owned(),
+            };
             self.note(
                 &C::READ_CIM_DIST_IMPEDANCE_UNRESOLVED,
                 "ACLineSegment",
                 line,
-                format!(
-                    "ACLineSegment {label}: states neither a PerLengthImpedance nor series r and x \
-                     (wire geometry is not calculated); the segment has no series impedance"
-                ),
+                format!("ACLineSegment {label}: {why}; the segment has no series impedance"),
             );
         }
         let r1 = r1.unwrap_or(0.0);
@@ -1051,14 +1106,15 @@ impl<'a> Mapper<'a> {
     }
 
     /// A phase impedance object's conductor count: `conductorCount`, else the
-    /// largest row or column its data states.
-    fn conductor_count(&self, pli: &str, impedance_data: &HashMap<String, Vec<String>>) -> usize {
+    /// largest row or column its data states. The caller bounds it before
+    /// sizing matrices.
+    fn conductor_count(&self, pli: &str, impedance_data: &HashMap<String, Vec<String>>) -> f64 {
         if let Some(count) = self
             .store
             .f(pli, "PerLengthPhaseImpedance.conductorCount")
             .filter(|c| *c >= 1.0)
         {
-            return count as usize;
+            return count;
         }
         impedance_data
             .get(pli)
@@ -1071,16 +1127,59 @@ impl<'a> Mapper<'a> {
                 ]
             })
             .flatten()
-            .fold(0.0_f64, f64::max) as usize
+            .fold(0.0_f64, f64::max)
     }
 
-    /// The `n×n` (r, x, g, b) matrices of a `PerLengthImpedance`: from the
-    /// phase matrix data, or expanded from sequence values. ohm/m and S/m.
+    /// The phase impedance matrix row of each segment phase, in the
+    /// segment's phase order. `ACLineSegmentPhase.sequenceNumber` numbers the
+    /// rows and columns of `PhaseImpedanceData`, so a phase C conductor
+    /// numbered 3 takes row 3 even on a two phase segment. Phases that state
+    /// no numbers take rows in phase order; numbers that cannot each name a
+    /// distinct row do too, with a finding.
+    fn impedance_rows(&mut self, line: &str, phases: &[(String, String)]) -> Vec<usize> {
+        let positional: Vec<usize> = (1..=phases.len()).collect();
+        let stated: Vec<Option<f64>> = phases
+            .iter()
+            .map(|(_, child)| self.store.f(child, "ACLineSegmentPhase.sequenceNumber"))
+            .collect();
+        if stated.iter().all(Option::is_none) {
+            return positional;
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // 1..=64
+        let rows: Option<Vec<usize>> = stated
+            .iter()
+            .map(|s| {
+                s.filter(|v| v.fract() == 0.0 && (1.0..=MAX_CONDUCTORS as f64).contains(v))
+                    .map(|v| v as usize)
+            })
+            .collect();
+        if let Some(rows) = rows
+            && rows.iter().collect::<HashSet<_>>().len() == rows.len()
+        {
+            return rows;
+        }
+        let label = self.label(line);
+        self.note(
+            &C::READ_CIM_DIST_VALUE_DEFAULTED,
+            "ACLineSegment",
+            line,
+            format!(
+                "ACLineSegment {label}: its ACLineSegmentPhase sequence numbers do not each name \
+                 a distinct impedance matrix row; the rows follow phase order"
+            ),
+        );
+        positional
+    }
+
+    /// The (r, x, g, b) matrices of a `PerLengthImpedance` for a segment
+    /// whose phases take matrix `rows`: from the phase matrix data, or
+    /// expanded from sequence values. ohm/m and S/m. `None` when the object
+    /// gives the segment no impedance.
     #[allow(clippy::many_single_char_names)] // r, x, g, b are the matrix names
     fn per_length_matrices(
         &mut self,
         pli: &str,
-        n: usize,
+        rows: &[usize],
         impedance_data: &HashMap<String, Vec<String>>,
     ) -> Option<(
         ConductorMatrix,
@@ -1088,67 +1187,30 @@ impl<'a> Mapper<'a> {
         ConductorMatrix,
         ConductorMatrix,
     )> {
+        let n = rows.len();
         let class = self.store.class_of(pli)?.to_owned();
         let label = self.label(pli);
         match class.as_str() {
             "PerLengthPhaseImpedance" => {
-                let count = self
-                    .store
-                    .f(pli, "PerLengthPhaseImpedance.conductorCount")
-                    .map(|c| c as usize);
-                let mut r = vec![vec![0.0; n]; n];
-                let mut x = vec![vec![0.0; n]; n];
-                let mut g = vec![vec![0.0; n]; n];
-                let mut b = vec![vec![0.0; n]; n];
-                let mut outside = 0usize;
-                for d in impedance_data.get(pli).map_or(&[][..], Vec::as_slice) {
-                    let row = self.store.f(d, "PhaseImpedanceData.row");
-                    let col = self.store.f(d, "PhaseImpedanceData.column");
-                    let (Some(row), Some(col)) = (row, col) else {
-                        self.drop_record("PhaseImpedanceData", d, "row or column is not stated");
-                        continue;
-                    };
-                    let (row, col) = (row as usize, col as usize);
-                    if row < 1 || col < 1 || row > n || col > n {
-                        outside += 1;
-                        self.store.consume(d, "PhaseImpedanceData.r");
-                        self.store.consume(d, "PhaseImpedanceData.x");
-                        self.store.consume(d, "PhaseImpedanceData.g");
-                        self.store.consume(d, "PhaseImpedanceData.b");
-                        continue;
-                    }
-                    let (i, j) = (row - 1, col - 1);
-                    let value = |key: &str| self.store.f(d, key).unwrap_or(0.0);
-                    for (matrix, key) in [
-                        (&mut r, "PhaseImpedanceData.r"),
-                        (&mut x, "PhaseImpedanceData.x"),
-                        (&mut g, "PhaseImpedanceData.g"),
-                        (&mut b, "PhaseImpedanceData.b"),
-                    ] {
-                        let v = value(key);
-                        matrix[i][j] = v;
-                        matrix[j][i] = v;
-                    }
-                }
-                if count.is_some_and(|c| c != n) || outside > 0 {
-                    self.note(
-                        &C::READ_CIM_DIST_VALUE_COLLAPSED,
-                        "PerLengthPhaseImpedance",
-                        pli,
-                        format!(
-                            "PerLengthPhaseImpedance {label}: states {} conductors for a segment \
-                             with {n} phases; {outside} data rows outside the {n}×{n} matrix were \
-                             not carried",
-                            count.map_or_else(|| "no count of".to_owned(), |c| c.to_string()),
-                        ),
-                    );
-                }
-                Some((r, x, g, b))
+                self.phase_impedance_matrices(pli, &label, rows, impedance_data)
             }
             "PerLengthSequenceImpedance" => {
-                let value = |key: &str| self.store.f(pli, key);
-                let r1 = value("PerLengthSequenceImpedance.r").unwrap_or(0.0);
-                let x1 = value("PerLengthSequenceImpedance.x").unwrap_or(0.0);
+                let store = self.store;
+                let value = |key: &str| store.f(pli, key);
+                let (r1, x1) = (
+                    value("PerLengthSequenceImpedance.r"),
+                    value("PerLengthSequenceImpedance.x"),
+                );
+                if r1.is_none() && x1.is_none() {
+                    self.drop_record(
+                        "PerLengthSequenceImpedance",
+                        pli,
+                        "it states neither r nor x",
+                    );
+                    return None;
+                }
+                let r1 = r1.unwrap_or(0.0);
+                let x1 = x1.unwrap_or(0.0);
                 let b1 = value("PerLengthSequenceImpedance.bch").unwrap_or(0.0);
                 let g1 = value("PerLengthSequenceImpedance.gch").unwrap_or(0.0);
                 let r0 = value("PerLengthSequenceImpedance.r0");
@@ -1189,6 +1251,117 @@ impl<'a> Mapper<'a> {
         }
     }
 
+    /// The (r, x, g, b) matrices of a `PerLengthPhaseImpedance` for a
+    /// segment whose phases take matrix `rows`; `None` when its data states
+    /// no self impedance for any of them.
+    #[allow(clippy::many_single_char_names)] // r, x, g, b are the matrix names
+    fn phase_impedance_matrices(
+        &mut self,
+        pli: &str,
+        label: &str,
+        rows: &[usize],
+        impedance_data: &HashMap<String, Vec<String>>,
+    ) -> Option<(
+        ConductorMatrix,
+        ConductorMatrix,
+        ConductorMatrix,
+        ConductorMatrix,
+    )> {
+        let n = rows.len();
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let count = self
+            .store
+            .f(pli, "PerLengthPhaseImpedance.conductorCount")
+            .map(|c| c as usize);
+        let position: HashMap<usize, usize> =
+            rows.iter().enumerate().map(|(k, &row)| (row, k)).collect();
+        let mut r = vec![vec![0.0; n]; n];
+        let mut x = vec![vec![0.0; n]; n];
+        let mut g = vec![vec![0.0; n]; n];
+        let mut b = vec![vec![0.0; n]; n];
+        let mut outside = 0usize;
+        let mut unstated = 0usize;
+        let mut diagonal = vec![false; n];
+        for d in impedance_data.get(pli).map_or(&[][..], Vec::as_slice) {
+            let row = self.store.f(d, "PhaseImpedanceData.row");
+            let col = self.store.f(d, "PhaseImpedanceData.column");
+            let (Some(row), Some(col)) = (row, col) else {
+                self.drop_record("PhaseImpedanceData", d, "row or column is not stated");
+                continue;
+            };
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let at = |v: f64| (v >= 1.0).then(|| position.get(&(v as usize)).copied());
+            let (at_row, at_col) = (at(row).flatten(), at(col).flatten());
+            let (Some(i), Some(j)) = (at_row, at_col) else {
+                outside += 1;
+                self.store.consume(d, "PhaseImpedanceData.r");
+                self.store.consume(d, "PhaseImpedanceData.x");
+                self.store.consume(d, "PhaseImpedanceData.g");
+                self.store.consume(d, "PhaseImpedanceData.b");
+                continue;
+            };
+            diagonal[i] |= i == j;
+            unstated += usize::from(self.store.f(d, "PhaseImpedanceData.r").is_none())
+                + usize::from(self.store.f(d, "PhaseImpedanceData.x").is_none());
+            for (matrix, key) in [
+                (&mut r, "PhaseImpedanceData.r"),
+                (&mut x, "PhaseImpedanceData.x"),
+                (&mut g, "PhaseImpedanceData.g"),
+                (&mut b, "PhaseImpedanceData.b"),
+            ] {
+                let v = self.store.f(d, key).unwrap_or(0.0);
+                matrix[i][j] = v;
+                matrix[j][i] = v;
+            }
+        }
+        if !diagonal.iter().any(|d| *d) {
+            return None;
+        }
+        if count.is_some_and(|c| c != n) || outside > 0 {
+            self.note(
+                &C::READ_CIM_DIST_VALUE_COLLAPSED,
+                "PerLengthPhaseImpedance",
+                pli,
+                format!(
+                    "PerLengthPhaseImpedance {label}: states {} conductors for a segment \
+                     with {n} phases; {outside} data rows outside the {n}×{n} matrix were \
+                     not carried",
+                    count.map_or_else(|| "no count of".to_owned(), |c| c.to_string()),
+                ),
+            );
+        }
+        if unstated > 0 {
+            self.note(
+                &C::READ_CIM_DIST_VALUE_DEFAULTED,
+                "PerLengthPhaseImpedance",
+                pli,
+                format!(
+                    "PerLengthPhaseImpedance {label}: {unstated} r or x values of its \
+                     PhaseImpedanceData are not stated; 0 is used"
+                ),
+            );
+        }
+        let missing: Vec<String> = rows
+            .iter()
+            .zip(&diagonal)
+            .filter(|(_, stated)| !**stated)
+            .map(|(row, _)| row.to_string())
+            .collect();
+        if !missing.is_empty() {
+            self.note(
+                &C::READ_CIM_DIST_VALUE_DEFAULTED,
+                "PerLengthPhaseImpedance",
+                pli,
+                format!(
+                    "PerLengthPhaseImpedance {label}: no PhaseImpedanceData on the \
+                     diagonal for row {}; that conductor's self impedance is 0",
+                    missing.join(", ")
+                ),
+            );
+        }
+        Some((r, x, g, b))
+    }
+
     /// Report `Equipment.inService = false` (or `normallyInService`): the
     /// model has no service state, so the element is carried in service.
     fn check_in_service(&mut self, class: &str, id: &str) {
@@ -1222,8 +1395,6 @@ impl<'a> Mapper<'a> {
             let configuration =
                 self.shunt_configuration("EnergyConsumer", &id, "EnergyConsumer.phaseConnection");
             let children = phase_children.get(&id).cloned().unwrap_or_default();
-            let total_p = self.store.f(&id, "EnergyConsumer.p");
-            let total_q = self.store.f(&id, "EnergyConsumer.q");
             // Powers are per phase conductor: the neutral carries none.
             let (phases, p_nom, q_nom) = if children.is_empty() {
                 let phases: Vec<String> = self
@@ -1231,18 +1402,17 @@ impl<'a> Mapper<'a> {
                     .into_iter()
                     .filter(|t| t != "4")
                     .collect();
-                let n = phases.len().max(1) as f64;
-                let p = total_p.unwrap_or(0.0) / n;
-                let q = total_q.unwrap_or(0.0) / n;
-                let count = phases.len();
-                (phases, vec![p; count], vec![q; count])
+                let unstated = vec![None; phases.len()];
+                let p_nom = self.phase_powers(&id, "p", &unstated, false);
+                let q_nom = self.phase_powers(&id, "q", &unstated, false);
+                (phases, p_nom, q_nom)
             } else {
                 for terminal in self.terminals(&id) {
                     self.store.consume(&terminal, "Terminal.phases");
                 }
                 let mut phases = Vec::new();
-                let mut p_nom = Vec::new();
-                let mut q_nom = Vec::new();
+                let mut p_stated = Vec::new();
+                let mut q_stated = Vec::new();
                 for (terminal, child) in self.phase_children(
                     &children,
                     "EnergyConsumerPhase",
@@ -1258,9 +1428,11 @@ impl<'a> Mapper<'a> {
                         continue;
                     }
                     phases.push(terminal);
-                    p_nom.push(self.store.f(&child, "EnergyConsumerPhase.p").unwrap_or(0.0));
-                    q_nom.push(self.store.f(&child, "EnergyConsumerPhase.q").unwrap_or(0.0));
+                    p_stated.push(self.store.f(&child, "EnergyConsumerPhase.p"));
+                    q_stated.push(self.store.f(&child, "EnergyConsumerPhase.q"));
                 }
+                let p_nom = self.phase_powers(&id, "p", &p_stated, true);
+                let q_nom = self.phase_powers(&id, "q", &q_stated, true);
                 (phases, p_nom, q_nom)
             };
             if phases.is_empty() {
@@ -1312,6 +1484,84 @@ impl<'a> Mapper<'a> {
             loads.push(load);
         }
         loads
+    }
+
+    /// A consumer's per phase powers for `quantity` (`p` or `q`). Without
+    /// `EnergyConsumerPhase` records (`phase_records` false) the total is
+    /// shared evenly. With them, phases that state none share the total
+    /// evenly when no phase states one, and are 0 otherwise; either way with
+    /// a finding. A stated total that disagrees with the phases' sum is
+    /// reported, and the phase values are kept.
+    fn phase_powers(
+        &mut self,
+        id: &str,
+        quantity: &str,
+        stated: &[Option<f64>],
+        phase_records: bool,
+    ) -> Vec<f64> {
+        let total_key = format!("EnergyConsumer.{quantity}");
+        let total = self.store.f(id, &total_key);
+        let label = self.label(id);
+        let unstated = stated.iter().filter(|v| v.is_none()).count();
+        if stated.is_empty() {
+            return Vec::new();
+        }
+        if unstated == stated.len() {
+            let Some(total) = total else {
+                self.note(
+                    &C::READ_CIM_DIST_VALUE_DEFAULTED,
+                    "EnergyConsumer",
+                    id,
+                    format!(
+                        "EnergyConsumer {label}: neither the consumer nor its phases state \
+                         {quantity}; 0 is used"
+                    ),
+                );
+                return vec![0.0; stated.len()];
+            };
+            #[allow(clippy::cast_precision_loss)] // a handful of phases
+            let share = total / stated.len() as f64;
+            if phase_records {
+                self.note(
+                    &C::READ_CIM_DIST_VALUE_DEFAULTED,
+                    "EnergyConsumer",
+                    id,
+                    format!(
+                        "EnergyConsumer {label}: its phases state no {quantity}; the total \
+                         {total_key} = {total} is split evenly over {} phases",
+                        stated.len()
+                    ),
+                );
+            }
+            return vec![share; stated.len()];
+        }
+        let values: Vec<f64> = stated.iter().map(|v| v.unwrap_or(0.0)).collect();
+        if unstated > 0 {
+            self.note(
+                &C::READ_CIM_DIST_VALUE_DEFAULTED,
+                "EnergyConsumer",
+                id,
+                format!(
+                    "EnergyConsumer {label}: {unstated} of its phases state no {quantity}; 0 is \
+                     used for them"
+                ),
+            );
+        }
+        let sum: f64 = values.iter().sum();
+        if let Some(total) = total
+            && (sum - total).abs() > 1e-9 * sum.abs().max(total.abs()).max(1.0)
+        {
+            self.note(
+                &C::READ_CIM_DIST_VALUE_CONFLICT,
+                "EnergyConsumer",
+                id,
+                format!(
+                    "EnergyConsumer {label}: {total_key} = {total}, but its phases sum to \
+                     {sum}; the phase values are kept"
+                ),
+            );
+        }
+        values
     }
 
     /// The connection of a load or shunt from its `PhaseShuntConnectionKind`:
