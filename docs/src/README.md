@@ -1,66 +1,69 @@
-# PowerIO Guide
+# PowerIO guide
 
-PowerIO is compiler infrastructure for power system data. Source formats parse
-into typed models. Explicit, recorded passes normalize, validate, and lower
-them, and writers emit any supported target format. The `.pio.json` document
-records how a source was interpreted: model kind, provenance, source maps,
-structured diagnostics, validation, and lowering history. Sparse matrices and
-graph views are built from the same models for solver and analysis code. This
-guide records behavior, conventions, and release checks. Rustdoc covers API
-detail.
+PowerIO reads power system data into typed values, writes those values in the
+formats other tools read, and builds the sparse matrices and graph data that
+solvers consume. The Rust crates are the implementation, and the Python
+package, [PowerIO.jl](https://eigenergy.github.io/PowerIO.jl), and the C ABI
+expose the same operations under the same names.
 
-The rules these pages document:
+```rust,ignore
+use powerio::{PioValue, parse};
 
-- same format write back preserves retained source text;
-- cross format conversion keeps the electrical core and reports losses as
-  warnings;
-- lowering between model families is an explicit, recorded pass, never an
-  implicit side effect;
-- matrix builders state sign, tap, shift, shunt, and reference bus conventions;
-- C, Python, and Julia bindings share the same Rust core.
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let module = parse("case9.m")?;         // PioModule<PioValue>
+    match module.value() {
+        PioValue::BalancedNetwork(network) => {
+            println!("{} buses", network.buses().len());
+        }
+        other => println!("{}", other.type_name()),
+    }
+    Ok(())
+}
+```
 
-Transmission readers cover MATPOWER, PSS/E revisions 33 through 35,
-PowerWorld AUX and PWB, PSLF EPC, PowerModels JSON, egret JSON, pandapower JSON,
-PyPSA CSV folders, GO Challenge 3 JSON, Surge JSON, and GridFM Parquet
-datasets. PowerWorld PWD is a display artifact and uses the display API.
-Distribution readers and writers live in `powerio-dist` for OpenDSS,
-PowerModelsDistribution ENGINEERING JSON, and BMOPF JSON.
+```python
+import powerio
+module = powerio.parse("case9.m")                 # PioModule[BalancedNetwork]
+```
 
-Where to look:
+```julia
+using PowerIO
+module_ = parse("case9.m")                        # PioModule{BalancedNetwork}
+feeder = parse("IEEE13Nodeckt.dss")               # PioModule{MulticonductorNetwork}
+```
 
-- [Compiler IR](https://powerio.dev/guide/compiler-ir.html): the
-  `BalancedNetwork` and `MulticonductorNetwork` model families and the
-  `.pio.json` document.
-- [PIO JSON schema](https://powerio.dev/guide/pio-json-schema.html): the
-  `.pio.json` field reference, metadata and model JSON versioning, and row
-  identity.
-- [Format fidelity](https://powerio.dev/guide/format-fidelity.html): numeric
-  conventions, the validation oracles, known limits per format, and the missing
-  generator cost policy.
-- [Matrix outputs](https://powerio.dev/guide/matrices.html) and the
-  [DC OPF bundle](https://powerio.dev/guide/dcopf-bundle.html).
-- [Language APIs](https://powerio.dev/guide/languages.html) and
-  [Python](https://powerio.dev/guide/python.html).
-- [Performance](https://powerio.dev/guide/performance.html) and
-  [testing and release checks](https://powerio.dev/guide/contributor-workflow.html).
-- Julia bindings: <https://github.com/eigenergy/PowerIO.jl>.
+A parse returns a module, which is one typed value together with the data
+that explains it: the source descriptions, the source map, the reader's
+diagnostics, the derivation history, and, while the process runs, the source
+bytes themselves. Which value you get depends on what the source declares:
 
-Rendered API docs (rustdoc) for all crates: <https://powerio.dev>.
+| Source | Value |
+|---|---|
+| MATPOWER, PSS/E, XIIDM, CGMES, UCTE-DEF, and the other balanced formats | `BalancedNetwork` |
+| OpenDSS, PowerModelsDistribution JSON, BMOPF JSON | `MulticonductorNetwork` |
+| a PyPSA directory whose inputs vary by snapshot | `TimeSeries<BalancedNetwork>` |
+| a GridFM Parquet dataset | `ScenarioSet<BalancedNetwork>` |
+| a DOE GO Challenge 3 problem file | `AcScucInstance` |
+| that problem file beside its solution file | `AcScucSolution` |
+| a DeepMind OPFData file | `AcOpfSolution` |
+| a geographic layer document or a PowerWorld `.pwd` display | `GeoLayer` |
 
-## Crates
+`parse` reads a grid exchange format into a module, and `emit` writes a
+module out in one. The other two operations, `serialize` and `deserialize`,
+write and read PowerIO IR, the JSON document that stores a complete module for
+another PowerIO consumer to read back. PowerIO IR is not a grid exchange
+format, so `parse` does not accept it; `deserialize` does.
 
-| crate | responsibility |
-| --- | --- |
-| `powerio` | parsers, writers, `Network`, `IndexedNetwork`, normalization, format routing |
-| `powerio-matrix` | sparse matrices, graph views, DC OPF bundle, GridFM datasets |
-| `powerio-dist` | multiconductor distribution model and converters |
-| `powerio-pkg` | `.pio.json` document metadata and model JSON |
-| `powerio-cli` | command line interface and TUI |
-| `powerio-py` | PyO3 extension for the Python package |
-| `powerio-capi` | C ABI for C, C++, Julia, and other foreign function interfaces |
+Whichever format you use, writing an unchanged module back to its own format
+reproduces the source bytes byte for byte, and writing to another format
+keeps what that format can represent and reports each loss as a diagnostic
+with a stable code. Converting from one kind of value to another is an
+explicit operation that adds an entry to the module history; nothing converts
+as a side effect.
 
-Adding a format means adding one reader or writer at the hub, not pairwise
-converters. `IndexedNetwork` is the dense \\([0,n)\\) analysis view derived from
-a balanced `Network`; matrix builders work from that view. Code that maps
-source bus ids to dense rows must use `IndexedNetwork::bus_index`; it must not
-clamp ids or assume 1 based contiguous ids.
+To install PowerIO and run a first conversion, start with
+[Getting started](getting-started.md). [Core concepts](concepts.md) defines
+the module, the value types, diagnostics, and sources.
+[Formats and fidelity](format-fidelity.md) says what each reader keeps and
+each writer reports, and [Rust, Python, Julia, and C](languages.md) shows
+each operation in all four languages.

@@ -1,36 +1,38 @@
-//! `powerio-dist`: a multiconductor distribution network model and lossless
-//! converters between OpenDSS `.dss`, PowerModelsDistribution ENGINEERING
+//! Multiconductor distribution network models and converters for OpenDSS
+//! `.dss`, PowerModelsDistribution ENGINEERING
 //! JSON ("PMD JSON"), and the draft JSON schema of the IEEE PES Task Force on
 //! Benchmarking Multiconductor OPF ("BMOPF JSON",
-//! <https://github.com/frederikgeth/bmopf-report>). Distribution CIM
-//! (IEC 61968-13 / GridAPPS-D CIMXML) reads and writes too (`cim`), so a CIM
-//! feeder converts to and from all of them.
+//! <https://github.com/distribution-system-opt/dsopt-schema>).
 //!
-//! The canonical model is a network in wire coordinates: string bus ids,
-//! ordered string terminal names per bus, explicit grounding, terminal maps
-//! on every element, SI units and radians internally (BMOPF semantics, the
-//! most explicit of the three formats). The transmission model in the
-//! `powerio` crate is positive sequence and stays separate; the two crates
-//! share conventions, not types.
+//! The model uses wire coordinates: string bus IDs, ordered terminal names,
+//! explicit grounding, terminal maps on every element, SI units, and radians.
+//! The transmission model in `powerio` is positive sequence and remains a
+//! separate type.
 //!
 //! ```no_run
-//! let net = powerio_dist::parse_file("feeder.dss", None)?;
-//! for w in &net.warnings {
-//!     eprintln!("parse: {w}");
+//! let source = powerio_core::Source::open("feeder.dss")?;
+//! let module = powerio_dist::parse(source)?;
+//! for line in powerio_dist::diagnostics::render_diagnostics(module.diagnostics()) {
+//!     eprintln!("parse: {line}");
 //! }
-//! let conv = net.to_format(powerio_dist::DistTargetFormat::PmdJson);
-//! # Ok::<(), powerio_dist::Error>(())
+//! let emitted = powerio_dist::emit(
+//!     &module,
+//!     powerio_dist::DistTargetFormat::PmdJson,
+//!     powerio_core::Destination::memory("feeder.pmd.json")?,
+//! )?;
+//! for line in powerio_dist::diagnostics::render_diagnostics(emitted.diagnostics()) {
+//!     eprintln!("emit: {line}");
+//! }
+//! # Ok::<(), powerio_core::Error>(())
 //! ```
 //!
 //! # Fidelity rules
 //!
-//! The rules match `powerio`. Writing back to the source format
-//! reproduces the file byte for byte via retained source text. Every cross
-//! format conversion regenerates from the typed model and reports each field
-//! the target cannot represent in [`Conversion::warnings`]; nothing drops
-//! silently. The dss reader materializes every OpenDSS class default into an
-//! explicit model value and records which fields were defaulted
-//! ([`DistNetwork::defaulted`]), so BMOPF output is always fully explicit.
+//! Emitting to the retained source format returns the original bytes. Cross
+//! format emission uses the typed model and reports fields the target cannot
+//! represent through [`powerio_core::EmitResult::diagnostics`]. The DSS reader expands OpenDSS
+//! class defaults into explicit model values and records them in
+//! [`MulticonductorNetwork::defaulted`]. BMOPF output includes those values.
 //! The per fixture results live in `docs/conversion-matrix.md`.
 //!
 //! # Float formatting
@@ -39,49 +41,59 @@
 //! representation: Rust's `Display` for `.dss`, serde_json (ryu) for both
 //! JSON formats. The readers parse with serde_json's `float_roundtrip`
 //! feature, so a parse of canonical output recovers the exact bit pattern
-//! and canonical writes are idempotent. JSON cannot carry `Inf`/`NaN`: the
-//! PMD writer emits `null` (PMD restores the value from the field name
-//! suffix), and the BMOPF writer emits `0` with a warning, since the schema
+//! and canonical emissions are idempotent. JSON cannot carry `Inf`/`NaN`: the
+//! PMD emitter uses `null` (PMD restores the value from the field name
+//! suffix), and the BMOPF emitter uses `0` with a warning, since the schema
 //! requires numbers. The byte exact echo tier is unaffected; it never
 //! reformats.
 
 pub mod bmopf;
-pub mod cim;
+mod collect;
 pub mod convert;
 pub mod diagnostics;
 pub mod dss;
 pub mod error;
 pub mod geo;
 pub mod graph;
+pub mod kron;
+pub mod lindist3flow;
 pub mod model;
 pub mod pmd;
+pub mod readiness;
+#[cfg(test)]
+pub(crate) mod testkit;
 
-pub use bmopf::{
-    BmopfWriteOptions, parse_bmopf_file, parse_bmopf_str, write_bmopf_json,
-    write_bmopf_json_with_options,
-};
-pub use cim::{parse_cim_file, parse_cim_str, write_cim_xml};
+pub use bmopf::{BMOPF_SCHEMA_ID, BMOPF_SCHEMA_VERSION, BmopfEmitOptions, BmopfSchemaVersion};
 pub use convert::{
-    Conversion, ConversionSidecar, DistTargetFormat, convert_file, convert_str,
-    dist_target_from_name, parse_file, parse_str,
+    DistTargetFormat, EmitOptions, classify_distribution_json, emit, emit_with_options, parse,
+    parse_dist_target_format,
 };
-pub use diagnostics::{DiagnosticCode, DiagnosticSeverity, DiagnosticStage, StructuredDiagnostic};
-pub use dss::{
-    DssLoadVoltageBounds, DssWriteOptions, parse_dss_file, parse_dss_str, write_dss,
-    write_dss_with_options,
-};
+pub use diagnostics::{Diagnostic, DiagnosticCode, DiagnosticSeverity, DiagnosticStage};
+pub use dss::{DssEmitOptions, DssLoadVoltageBounds};
 pub use error::{Error, Result};
-pub use geo::{Canvas, CoordinateSpace, CoordsKind, GeoMeta, Location};
+pub use geo::{CoordinateSpace, DistCanvas, DistCoordsKind, DistGeoMeta, DistLocation};
 pub use graph::{
     DistGraph, DistGraphAttachment, DistGraphAttachmentKind, DistGraphBus, DistGraphEdge,
     DistGraphEdgeKind,
 };
-pub use model::{
-    ActivePowerReference, ActivePowerUnit, Configuration, ControlVoltageReference, DistBus,
-    DistControlProfile, DistGenerator, DistIbr, DistLine, DistLineCode, DistLoad,
-    DistLoadVoltageModel, DistNetwork, DistShunt, DistSourceFormat, DistSwitch, DistTransformer,
-    Extras, IbrPrimeMover, IbrTopology, IbrVoltageAggregation, Mat, MulticonductorNetwork,
-    PowerFactorControl, ReactivePowerReference, ReactivePowerUnit, UntypedObject, VoltVarControl,
-    VoltWattControl, VoltageSource, Winding, WindingConn,
+pub use kron::{
+    NeutralKronAction, NeutralKronBus, NeutralKronGrounding, NeutralKronOptions,
+    NeutralKronRecovery, NeutralKronReduction, NeutralKronReport, neutral_kron_reduce,
 };
-pub use pmd::{parse_pmd_file, parse_pmd_str, write_pmd_json};
+pub use lindist3flow::{
+    LinDist3FlowPreparationAction, LinDist3FlowPreparationActionKind,
+    LinDist3FlowPreparationPolicy, LinDist3FlowPreparationReport, LinDist3FlowPreparedNetwork,
+    prepare_lindist3flow_network,
+};
+pub use model::{
+    ActivePowerReference, ActivePowerUnit, ConductorMatrix, Configuration, ControlVoltageReference,
+    DistBus, DistCapacitor, DistControlProfile, DistGenerator, DistIbr, DistLine, DistLineCode,
+    DistLoad, DistLoadVoltageModel, DistShunt, DistSourceFormat, DistSwitch, DistTransformer,
+    DistWinding, DistWindingConn, Extras, IbrPrimeMover, IbrTopology, IbrVoltageAggregation,
+    MulticonductorNetwork, PowerFactorControl, ReactivePowerReference, ReactivePowerUnit,
+    UntypedObject, VoltVarControl, VoltWattControl, VoltageSource, find_unresolved_references,
+};
+pub use readiness::{
+    ElectricalReadiness, ReadinessFinding, ReadinessSeverity, audit_electrical_readiness,
+    require_electrical_readiness,
+};

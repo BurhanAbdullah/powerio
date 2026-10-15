@@ -1,401 +1,618 @@
-"""Tests for the optional MCP server (``powerio.mcp``)."""
+"""Tests for the optional PowerIO MCP server."""
 
 import asyncio
+import io
 import json
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 pytest.importorskip("mcp", reason="powerio[mcp] not installed (needs Python 3.10+)")
 
-import powerio  # noqa: E402
-from powerio.mcp import server  # noqa: E402
+from mcp.server.mcpserver.exceptions import ToolError
+from powerio.mcp import sandbox, server
+
+import powerio
 
 DATA = Path(__file__).resolve().parents[2] / "tests" / "data"
 DSS = DATA / "dist" / "micro" / "xfmr_single_phase.dss"
 BMOPF = DATA / "dist" / "bmopf" / "example_ieee13.json"
-PMD = DATA / "dist" / "pmd" / "ieee13.json"
 PWD = DATA / "powerworld" / "ACTIVSg200.pwd"
-MINIMAL_BMOPF = '{"bus":{"a":{"terminal_names":["1"]}}}'
 
-HAS_GRIDFM = bool(getattr(powerio._powerio, "_has_gridfm", False))
-gridfm_only = pytest.mark.skipif(
-    not HAS_GRIDFM, reason="extension built without the gridfm feature"
-)
+LOWERABLE_DSS = """Clear
+Set DefaultBaseFrequency=60
+New Circuit.tiny basekv=12.47 pu=1.0 phases=3 bus1=src MVAsc3=2000 MVAsc1=2100
+New Transformer.t1 phases=3 windings=2 buses=(src, sec) conns=(delta, wye) kvs=(12.47, 0.416) kvas=(500, 300) %Rs=(0.5, 0.5) xhl=6
+New Load.l1 bus1=sec phases=3 conn=wye kv=0.416 kw=90 pf=0.95 model=1
+Set VoltageBases=[12.47, 0.416]
+"""
 
 
-def test_tool_surface_is_semantic():
-    tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
-    names = set(tools)
-    assert names == {
-        "convert",
-        "save",
-        "summary",
+@pytest.fixture(autouse=True)
+def configured_test_roots(monkeypatch, tmp_path):
+    monkeypatch.setenv(sandbox.ALLOWED_ROOTS_ENV, os.pathsep.join((str(DATA), str(tmp_path))))
+
+
+def test_tool_surface_uses_powerio_operations_and_types():
+    tools = {tool.name: tool for tool in asyncio.run(server.mcp.list_tools())}
+    assert set(tools) == {
         "parse",
-        "normalize",
-        "matrix",
+        "emit",
+        "summarize",
         "diagnostics",
+        "to_normalized",
+        "calc_matrix",
         "display",
+        "to_balanced_report",
+        "to_balanced",
+        "about",
     }
-    for name in ("parse", "summary", "normalize", "matrix", "display"):
-        props = tools[name].inputSchema["properties"]
-        assert "from_format" in props
-        assert "format" not in props
-    convert_props = tools["convert"].inputSchema["properties"]
-    assert "to_format" in convert_props and "from_format" in convert_props
-    assert "to" not in convert_props and "format" not in convert_props
-    save_schema = tools["save"].inputSchema
-    assert save_schema["required"] == ["out_path"]
-    save_props = save_schema["properties"]
-    assert "to_format" in save_props and "from_format" in save_props
-    assert "to" not in save_props and "format" not in save_props
-    assert "package_json" in save_props
-    assert "transport" in tools["parse"].inputSchema["properties"]
+    for removed in (
+        "inspect",
+        "list_states",
+        "inspect_state",
+        "export_state",
+        "materialize_network",
+    ):
+        assert removed not in tools
+
+    parse_properties = tools["parse"].input_schema["properties"]
+    assert set(parse_properties) == {"path", "content", "format"}
+    assert parse_properties["content"]["type"] == "string"
+    assert parse_properties["content"]["default"] == ""
+    assert "transport" not in parse_properties
+
+    emit_properties = tools["emit"].input_schema["properties"]
+    assert "powerio_ir" in emit_properties
+    assert "source_format" in emit_properties
+    assert "json" not in emit_properties
+    assert "json_format" not in emit_properties
+    assert "from_format" not in emit_properties
+
+    matrix = tools["calc_matrix"].input_schema["properties"]["matrix"]
+    assert matrix["enum"] == sorted(server._MATRIX_NAMES)
 
 
-def test_summary_transmission_schema():
-    s = server.summary(path=str(DATA / "case9.m"))
-    assert s["schema"] == "powerio.summary"
-    assert s["schema_version"] == "0.1"
-    assert s["domain"] == "transmission"
-    assert s["model"] == "balanced"
-    assert s["json_format"] == "powerio-json"
-    assert s["source_format"] == "Matpower"
-    assert s["base_mva"] == 100.0
-    assert s["elements"]["buses"] == 9
-    assert s["elements"]["branches"] == 9
-    assert s["topology"]["connected_components"] == 1
-    assert s["topology"]["reference_buses"] == [0]
-    assert s["warnings"] == []
-
-
-def test_summary_distribution_schema_and_json_sniffing():
-    for path in (DSS, BMOPF, PMD):
-        s = server.summary(path=str(path))
-        assert s["schema"] == "powerio.summary"
-        assert s["domain"] == "distribution"
-        assert s["model"] == "multiconductor"
-        assert s["json_format"] == "bmopf-json"
-        assert s["elements"]["buses"] > 0
-        assert s["elements"]["sources"] >= 0
-        assert s["topology"]["connected_components"] is None
-
-
-def test_distribution_aliases_route_to_core_parser():
-    text = DSS.read_text()
-    for fmt in ("dss", "opendss"):
-        assert server.summary(content=text, from_format=fmt)["domain"] == "distribution"
-    assert json.loads(server.convert(to_format="pmd", path=str(DSS))["text"])[
-        "data_model"
-    ] == "ENGINEERING"
-    assert "bus" in json.loads(server.convert(to_format="bmopf", path=str(DSS))["text"])
-
-
-def test_parse_transmission_transport_round_trip(tmp_path):
+def test_parse_returns_powerio_ir_and_actual_value_type():
     parsed = server.parse(path=str(DATA / "case9.m"))
-    assert parsed["schema"] == "powerio.parse"
-    assert parsed["schema_version"] == "0.1"
-    assert parsed["domain"] == "transmission"
-    assert parsed["model"] == "balanced"
-    assert parsed["source_format"] == "Matpower"
-    assert parsed["json_format"] == "powerio-json"
-    assert powerio.from_json(parsed["json"]).n_buses == 9
-    assert server.summary(json=parsed["json"], json_format="powerio-json")[
-        "elements"
-    ]["buses"] == 9
-    assert server.summary(json=parsed["json"], json_format="powerio_json")[
-        "elements"
-    ]["buses"] == 9
 
-    out = tmp_path / "case9.m"
-    server.save(out_path=str(out), json=parsed["json"], json_format=parsed["json_format"])
-    assert powerio.parse_file(out).n_buses == 9
+    assert parsed["value_type"] == "powerio.BalancedNetwork"
+    assert "json" not in parsed and "json_format" not in parsed
+    document = json.loads(parsed["powerio_ir"])
+    assert document["schema"] == "pio-ir"
+    module = powerio.deserialize(io.StringIO(parsed["powerio_ir"]))
+    assert isinstance(module.value, powerio.BalancedNetwork)
+    assert module.value.n_buses == 9
 
 
-def test_parse_distribution_uses_bmopf_transport(tmp_path):
+def test_powerio_ir_is_read_only_by_powerio_deserialize():
+    powerio_ir = powerio.serialize(powerio.parse(DATA / "case9.m")).text
+    summary = server.summarize(powerio_ir=powerio_ir)
+    diagnostics = server.diagnostics(powerio_ir)
+    emitted = server.emit("psse", powerio_ir=powerio_ir)
+
+    assert summary["module_value_type"] == "powerio.BalancedNetwork"
+    assert summary["elements"]["buses"] == 9
+    assert diagnostics["value_type"] == "powerio.BalancedNetwork"
+    assert emitted["text"].lstrip().startswith("0,")
+
+
+def test_content_is_parsed_as_a_file_object_not_as_a_path():
+    text = (DATA / "case9.m").read_text()
+    parsed = server.parse(content=text, format="matpower")
+    emitted = server.emit("matpower", content=text, source_format="matpower")
+    assert parsed["summary"]["elements"]["buses"] == 9
+    assert emitted["text"] == text
+
+
+def test_bmopf_parse_returns_a_network_and_instance_construction_is_explicit():
+    parsed = server.parse(path=str(BMOPF))
+    module = powerio.deserialize(io.StringIO(parsed["powerio_ir"]))
+    assert isinstance(module.value, powerio.MulticonductorNetwork)
+    assert parsed["summary"]["electrical_model"] == "multiconductor"
+
+    instance = module.to_mc_ac_opf_instance()
+    assert isinstance(instance.value, powerio.McAcOpfInstance)
+
+
+def test_distribution_network_uses_the_same_module_path():
     parsed = server.parse(path=str(DSS))
-    assert parsed["schema"] == "powerio.parse"
-    assert parsed["domain"] == "distribution"
-    assert parsed["model"] == "multiconductor"
-    assert parsed["json_format"] == "bmopf-json"
-    doc = json.loads(parsed["json"])
-    assert "bus" in doc and "voltage_source" in doc
-    assert server.summary(json=parsed["json"], json_format="bmopf-json")[
-        "elements"
-    ]["sources"] >= 1
-
-    out = tmp_path / "feeder.dss"
-    server.save(out_path=str(out), json=parsed["json"], json_format=parsed["json_format"])
-    assert "new circuit" in out.read_text().lower()
-
-
-def test_package_transport_flows_through_summary_matrix_and_save(tmp_path):
-    parsed = server.parse(path=str(DATA / "case9.m"), transport="package")
-    assert parsed["schema"] == "powerio.parse"
-    assert parsed["transport"] == "package"
-    assert parsed["json_format"] == "package"
-    assert parsed["domain"] == "transmission"
-    assert parsed["model"] == "balanced"
-    assert "package_json" in parsed
-    package = json.loads(parsed["package_json"])
-    assert package["schema"].endswith("/pio-package/0.1")
-    assert package["model_kind"] == "balanced"
-    assert package["model"]["kind"] == "balanced"
-
-    package_json = parsed["package_json"]
-    assert server.summary(json=package_json)["elements"]["buses"] == 9
-    assert server.summary(package_json=package_json)["elements"]["branches"] == 9
-
-    matrix = server.matrix("bprime", json=package_json)
-    assert matrix["kind"] == "bprime"
-    assert matrix["shape"] == [9, 9]
-
-    normalized = server.normalize(package_json=package_json)
-    assert normalized["domain"] == "transmission"
-    assert normalized["summary"]["elements"]["buses"] == 9
-
-    out = tmp_path / "case9.m"
-    server.save(out_path=str(out), package_json=package_json)
-    assert powerio.parse_file(out).n_buses == 9
-
-    package_path = tmp_path / "case9.pio.json"
-    package_path.write_text(package_json)
-    assert server.summary(path=str(package_path), from_format="package")["elements"][
-        "buses"
-    ] == 9
-
-
-def test_package_transport_routes_distribution_by_model_kind():
-    parsed = server.parse(path=str(DSS), transport="package")
-    package = json.loads(parsed["package_json"])
-    assert package["model_kind"] == "multiconductor"
-    assert package["model"]["kind"] == "multiconductor"
-
-    summary = server.summary(json=parsed["package_json"])
-    assert summary["domain"] == "distribution"
-    assert summary["model"] == "multiconductor"
+    summary = server.summarize(powerio_ir=parsed["powerio_ir"])
+    assert parsed["value_type"] == "powerio.MulticonductorNetwork"
+    assert summary["electrical_model"] == "multiconductor"
     assert summary["elements"]["buses"] > 0
 
 
-def test_package_diagnostics():
-    parsed = server.parse(path=str(DATA / "case9.m"), transport="package")
-    diag = server.diagnostics(parsed["package_json"])
-    assert diag["schema"] == "powerio.diagnostics"
-    assert diag["model_kind"] == "balanced"
-    assert diag["summary"]["status"] in {"ok", "info", "warning", "error", "fatal"}
-    assert isinstance(diag["summary"]["text"], str)
-    assert isinstance(diag["diagnostics"], list)
+def test_collection_summary_uses_normal_indexing_without_conversion(
+    time_series_powerio_ir,
+):
+    collection = server.summarize(powerio_ir=time_series_powerio_ir)
+    selected = server.summarize(powerio_ir=time_series_powerio_ir, time_index=1)
 
-    verbose = server.diagnostics(parsed["package_json"], verbose=True)
-    assert verbose["diagnostics"] == json.loads(parsed["package_json"]).get("diagnostics", [])
-
-def test_minimal_bmopf_json_routes_without_format(tmp_path):
-    parsed = server.parse(content=MINIMAL_BMOPF)
-    assert parsed["domain"] == "distribution"
-    assert parsed["model"] == "multiconductor"
-    assert parsed["json_format"] == "bmopf-json"
-    assert parsed["summary"]["elements"]["buses"] == 1
-
-    s = server.summary(content=MINIMAL_BMOPF)
-    assert s["domain"] == "distribution"
-
-    out = tmp_path / "minimal.json"
-    server.save(to_format="bmopf-json", out_path=str(out), json=MINIMAL_BMOPF)
-    assert json.loads(out.read_text())["bus"]["a"]["terminal_names"] == ["1"]
+    assert collection["collection"] == "TimeSeries"
+    assert collection["length"] == 2
+    assert selected["selection"] == {"time_index": 1}
+    assert selected["value_type"] == "OperatingPoint"
+    assert "elements" not in selected
+    assert selected["network"]["elements"]["buses"] == 9
+    with pytest.raises(ValueError, match="BalancedNetwork"):
+        server.calc_matrix("bprime", powerio_ir=time_series_powerio_ir)
 
 
-def test_powermodels_json_still_routes_as_transmission():
-    pm = powerio.parse_file(str(DATA / "case9.m")).to_format("powermodels-json").text
-    parsed = server.parse(content=pm)
-    assert parsed["domain"] == "transmission"
-    assert parsed["json_format"] == "powerio-json"
-    assert parsed["summary"]["elements"]["buses"] == 9
-
-    packaged = server.parse(content=pm, transport="package")
-    assert packaged["domain"] == "transmission"
-    assert json.loads(packaged["package_json"])["model_kind"] == "balanced"
-    assert packaged["summary"]["elements"]["buses"] == 9
+def test_collection_selector_refuses_the_wrong_collection_operation(
+    time_series_powerio_ir,
+):
+    with pytest.raises(ValueError, match="ScenarioSet"):
+        server.summarize(powerio_ir=time_series_powerio_ir, scenario_id="base")
 
 
-def test_normalize_rejects_distribution():
-    with pytest.raises(ValueError, match="not defined for distribution"):
-        server.normalize(path=str(DSS))
+def test_out_of_range_time_index_names_the_valid_indices(time_series_powerio_ir):
+    message = r"`time_index` 2 is out of range: the TimeSeries has 2 time points, indices 0 to 1"
+    with pytest.raises(IndexError, match=message):
+        server.summarize(powerio_ir=time_series_powerio_ir, time_index=2)
+    with pytest.raises(IndexError, match="`time_index` -3 is out of range"):
+        server.calc_matrix("bprime", powerio_ir=time_series_powerio_ir, time_index=-3)
+    last = server.summarize(powerio_ir=time_series_powerio_ir, time_index=-1)
+    assert last["selection"] == {"time_index": -1}
 
 
-def test_normalize_payload_has_schema_marker():
-    norm = server.normalize(path=str(DATA / "case9.m"))
-    assert norm["schema"] == "powerio.normalize"
-    assert norm["schema_version"] == "0.1"
-    assert norm["domain"] == "transmission"
-    assert norm["model"] == "balanced"
-
-
-def test_parse_reads_pypsa_folder(tmp_path):
-    net = powerio.parse_file(str(DATA / "case9.m"))
-    folder = tmp_path / "case9-pypsa"
-    net.write_pypsa_csv_folder(str(folder))
-
-    parsed = server.parse(path=str(folder))
-    assert parsed["summary"]["domain"] == "transmission"
-    assert parsed["summary"]["elements"]["buses"] == 9
-
-
-@gridfm_only
-def test_gridfm_routes_through_generic_verbs(tmp_path):
-    out_dir = tmp_path / "gfm"
-    write = server.save(to_format="gridfm", out_path=str(out_dir), path=str(DATA / "case9.m"))
-    assert write["files"]
-
-    parsed = server.parse(path=str(out_dir), from_format="gridfm", options={"scenario": 0})
-    assert parsed["summary"]["domain"] == "transmission"
-    assert parsed["summary"]["elements"]["buses"] == 9
-
-    converted = server.convert(
-        to_format="matpower", path=str(out_dir), from_format="gridfm"
+def test_unknown_scenario_id_lists_the_scenarios():
+    network = powerio.parse(DATA / "case9.m").value
+    scenarios = powerio.ScenarioSet({"base": network, "high": network})
+    powerio_ir = powerio.serialize(scenarios.module).text
+    with pytest.raises(KeyError) as raised:
+        server.summarize(powerio_ir=powerio_ir, scenario_id="peak")
+    assert str(raised.value) == (
+        "unknown `scenario_id` 'peak': the ScenarioSet holds 'base', 'high'"
     )
-    assert "mpc.bus" in converted["text"]
+    selected = server.summarize(powerio_ir=powerio_ir, scenario_id="high")
+    assert selected["selection"] == {"scenario_id": "high"}
 
 
-def test_matrix_kinds_aliases_and_errors():
-    m = server.matrix("b", path=str(DATA / "case9.m"))
-    assert m["schema"] == "powerio.matrix"
-    assert m["schema_version"] == "0.1"
-    assert m["domain"] == "transmission"
-    assert m["model"] == "balanced"
-    assert m["source_format"] == "Matpower"
-    assert m["warnings"] == []
-    assert m["kind"] == "bprime"
-    assert m["shape"] == [9, 9]
-    assert type(m["data"][0]) is float and type(m["row"][0]) is int
+def test_emit_returns_artifact_inventory_and_fidelity(tmp_path):
+    memory = server.emit("psse", path=str(DATA / "case9.m"))
+    assert memory["layout"] == "file"
+    assert memory["fidelity"] in {"canonical", "exact_same_format"}
+    assert len(memory["artifacts"]) == 1
+    assert memory["artifacts"][0]["text"] == memory["text"]
 
-    for alias, canonical in (
-        ("b2", "bdoubleprime"),
-        ("g", "ybus_real"),
-        ("negB", "ybus_imag"),
-        ("adj", "adjacency"),
-        ("ptdf", "ptdf"),
-        ("lodf", "lodf"),
-        ("laplacian", "laplacian"),
-        ("lacpf", "lacpf"),
-    ):
-        assert server.matrix(alias, path=str(DATA / "case9.m"))["kind"] == canonical
-
-    with pytest.raises(ValueError, match="bprime"):
-        server.matrix("nope", path=str(DATA / "case9.m"))
-    with pytest.raises(ValueError, match="transmission"):
-        server.matrix("b", path=str(DSS))
-
-
-def test_bad_json_transport_maps_cleanly():
-    for bad in ("{}", "[]", "null", '{"buses": "nope"}'):
-        with pytest.raises(ValueError, match="parse failed"):
-            server.matrix("bprime", json=bad, json_format="powerio-json")
-
-
-def test_save_text_folder_and_overwrite(tmp_path):
-    out = tmp_path / "case9.json"
-    r = server.save(
-        to_format="powermodels-json", out_path=str(out), path=str(DATA / "case9.m")
+    destination = tmp_path / "case9.raw"
+    written = server.emit(
+        "psse", destination=str(destination), path=str(DATA / "case9.m")
     )
-    assert r["path"] == str(out)
-    assert r["bytes_written"] == out.stat().st_size
-    with pytest.raises(ValueError):
-        server.save(
-            to_format="powermodels-json",
-            out_path=str(out),
-            path=str(DATA / "case9.m"),
+    assert written["path"] == str(destination)
+    assert destination.read_text().lstrip().startswith("0,")
+    with pytest.raises(ValueError, match="overwrite"):
+        server.emit(
+            "psse", destination=str(destination), path=str(DATA / "case9.m")
         )
-    server.save(
-        to_format="matpower",
-        out_path=str(out),
-        path=str(DATA / "case9.m"),
+    replaced = server.emit(
+        "matpower",
+        destination=str(destination),
         overwrite=True,
+        path=str(DATA / "case9.m"),
     )
+    assert replaced["path"] == str(destination)
+    assert destination.read_text().lstrip().startswith("function mpc")
 
-    folder = tmp_path / "pypsa"
-    w = server.save(
-        to_format="pypsa-csv", out_path=str(folder), path=str(DATA / "case9.m")
+
+def test_directory_emit_is_staged_and_lists_files(tmp_path):
+    destination = tmp_path / "pypsa"
+    emitted = server.emit(
+        "pypsa-csv", destination=str(destination), path=str(DATA / "case9.m")
     )
-    assert w["files"] and (folder / "buses.csv").exists()
+    assert emitted["layout"] == "directory"
+    assert emitted["dir"] == str(destination)
+    assert emitted["files"]
+    assert all(Path(path).is_file() for path in emitted["files"])
 
 
-def test_convert_requires_to_format():
-    with pytest.raises(ValueError, match="to_format"):
-        server.convert(path=str(DATA / "case9.m"))
+def test_matrix_response_names_the_calculation():
+    matrix = server.calc_matrix("bprime", path=str(DATA / "case9.m"))
+    assert matrix["matrix"] == "bprime"
+    assert matrix["shape"] == [9, 9]
+    assert matrix["nnz"] > 0
+    assert "kind" not in matrix
 
 
-def test_save_infers_unambiguous_output_format(tmp_path):
-    raw = tmp_path / "case9.raw"
-    server.save(out_path=str(raw), path=str(DATA / "case9.m"))
-    assert raw.read_text().lstrip().startswith("0,")
-
-    with pytest.raises(ValueError, match="to_format"):
-        server.save(out_path=str(tmp_path / "case9.json"), path=str(DATA / "case9.m"))
-
-
-def test_file_uri_paths_are_accepted(tmp_path):
-    source_uri = (DATA / "case9.m").as_uri()
-    assert server.summary(path=source_uri)["elements"]["buses"] == 9
-
-    out = tmp_path / "case9.json"
-    server.save(to_format="powermodels-json", out_path=out.as_uri(), path=source_uri)
-    assert json.loads(out.read_text())["name"] == "case9"
+def test_matrix_names_and_unknown_name():
+    assert server.calc_matrix("bdoubleprime", path=str(DATA / "case9.m"))[
+        "matrix"
+    ] == "bdoubleprime"
+    with pytest.raises(ValueError, match="unknown matrix"):
+        server.calc_matrix("b1", path=str(DATA / "case9.m"))
 
 
-def test_file_uri_decoding_preserves_windows_drive_letters():
-    def text(path):
-        return str(path).replace("\\", "/")
-
-    assert (
-        text(server._decode_local_path("file:///C:/Users/Sam/case%209.m", purpose="path"))
-        == "C:/Users/Sam/case 9.m"
-    )
-    assert (
-        text(
-            server._decode_local_path(
-                "file://localhost/D:/grid/case.raw", purpose="path"
-            )
-        )
-        == "D:/grid/case.raw"
-    )
-    with pytest.raises(ValueError, match="must be local"):
-        server._decode_local_path("file://server/share/case.raw", purpose="path")
+def test_to_normalized_returns_a_powerio_module():
+    result = server.to_normalized(path=str(DATA / "case9.m"))
+    module = powerio.deserialize(io.StringIO(result["powerio_ir"]))
+    assert isinstance(module.value, powerio.BalancedNetwork)
+    assert module.value.source_format == "normalized"
 
 
-def test_mcp_allowed_roots_restrict_filesystem_paths(monkeypatch, tmp_path):
-    local_case = tmp_path / "case9.m"
-    local_case.write_text((DATA / "case9.m").read_text())
-    monkeypatch.setenv("POWERIO_MCP_ALLOWED_ROOTS", str(tmp_path))
+def test_to_balanced_report_and_conversion_use_module_methods():
+    parsed = server.parse(content=LOWERABLE_DSS, format="dss")
+    report = server._to_balanced_report_tool(powerio_ir=parsed["powerio_ir"])
+    converted = server._to_balanced_tool(powerio_ir=parsed["powerio_ir"])
 
-    assert server.summary(path=str(local_case))["elements"]["buses"] == 9
-    with pytest.raises(ValueError, match="outside allowed MCP roots"):
-        server.summary(path=str(DATA / "case9.m"))
+    assert report["ready"] is True
+    module = powerio.deserialize(io.StringIO(converted["powerio_ir"]))
+    assert isinstance(module.value, powerio.BalancedNetwork)
 
 
 def test_display_decodes_powerworld_pwd():
-    d = server.display(str(PWD))
-    assert d["schema"] == "powerio.display"
-    assert d["schema_version"] == "0.1"
-    assert d["domain"] == "display"
-    assert d["model"] == "display"
-    assert d["source_format"] == "powerworld-pwd"
-    assert d["canvas"]["width"] > 0
-    assert d["substations"]
-    assert {"number", "name", "x", "y"} <= set(d["substations"][0])
+    result = server.display(str(PWD))
+    assert result["format"] == "powerworld-pwd"
+    assert result["canvas"]["width"] > 0
+    assert result["substations"]
 
 
-def test_display_errors_map_cleanly(tmp_path):
-    with pytest.raises(ValueError):
-        server.display(str(tmp_path / "nope.pwd"))
-    bad = tmp_path / "bad.pwd"
-    bad.write_bytes(b"not a powerworld display")
-    with pytest.raises(ValueError):
-        server.display(str(bad))
+def test_about_reports_exact_tool_list():
+    about = server._about_tool()
+    assert about["powerio_version"] == powerio.__version__
+    # `about` passes the library's own version report through unchanged;
+    # `scripts/wheel-smoke.py` owns pinning that report to the release version.
+    assert about["powerio_ir"] == powerio.versions()["powerio_ir"]
+    assert about["powerio_ir"]["schema"] == "pio-ir"
+    assert "parse" in about["tools"]
+    assert "export_state" not in about["tools"]
 
 
-def test_compatibility_aliases_are_not_tools(tmp_path):
-    assert server.case_summary(path=str(DATA / "case9.m")) == server.summary(path=str(DATA / "case9.m"))
-    assert server.convert(to="psse", format="matpower", content=(DATA / "case9.m").read_text())["text"]
-    assert server.compute_matrix("b", path=str(DATA / "case9.m"))["kind"] == "bprime"
-    out_dir = tmp_path / "pypsa"
-    assert server.write_pypsa_csv_folder(str(out_dir), path=str(DATA / "case9.m"))["files"]
+def test_about_reports_the_feature_set():
+    about = server._about_tool()
+    assert about["features"] == powerio.features()
+    assert about["features"]["matrix"] is True
+
+
+def test_every_tool_reports_refusals_to_the_client():
+    tools = server.mcp._tool_manager.list_tools()
+    # Every tool is registered through `_tool`, so all share its wrapper.
+    assert len({tool.fn.__code__ for tool in tools}) == 1
+    assert all(hasattr(tool.fn, "__wrapped__") for tool in tools)
+    summarize = next(tool for tool in tools if tool.name == "summarize")
+    with pytest.raises(ToolError, match="provide exactly one"):
+        summarize.fn()
+
+
+def test_selectors_of_the_wrong_type_keep_the_collection_type_error(
+    time_series_powerio_ir,
+):
+    network = powerio.parse(DATA / "case9.m").value
+    scenarios = powerio.ScenarioSet({"base": network, "high": network})
+    scenario_ir = powerio.serialize(scenarios.module).text
+    with pytest.raises(TypeError, match="scenario keys must be strings"):
+        server.summarize(powerio_ir=scenario_ir, scenario_id=1)
+    with pytest.raises(TypeError, match="time series indices must be integers"):
+        server.summarize(powerio_ir=time_series_powerio_ir, time_index=5.0)
+
+
+def test_inputs_are_mutually_exclusive():
+    with pytest.raises(ValueError, match="exactly one"):
+        server.summarize()
+    with pytest.raises(ValueError, match="exactly one"):
+        server.summarize(path=str(DATA / "case9.m"), content="case")
+
+
+def test_allowed_roots_restrict_read_and_write(monkeypatch, tmp_path):
+    allowed = tmp_path / "allowed"
+    outside = tmp_path / "outside"
+    allowed.mkdir()
+    outside.mkdir()
+    case = allowed / "case9.m"
+    shutil.copy2(DATA / "case9.m", case)
+    monkeypatch.setenv(sandbox.ALLOWED_ROOTS_ENV, str(allowed))
+
+    assert server.summarize(path=str(case))["elements"]["buses"] == 9
+    with pytest.raises(sandbox.PathNotAllowed):
+        server.summarize(path=str(DATA / "case9.m"))
+    with pytest.raises(sandbox.PathNotAllowed):
+        server.emit("psse", destination=str(outside / "case.raw"), path=str(case))
+
+
+def test_directory_input_preflight_refuses_a_symlink_escape(monkeypatch, tmp_path):
+    allowed = tmp_path / "allowed"
+    outside = tmp_path / "outside"
+    dataset = allowed / "dataset"
+    dataset.mkdir(parents=True)
+    outside.mkdir()
+    (outside / "secret.csv").write_text("secret")
+    (dataset / "escape.csv").symlink_to(outside / "secret.csv")
+    monkeypatch.setenv(sandbox.ALLOWED_ROOTS_ENV, str(allowed))
+
+    with pytest.raises(sandbox.PathNotAllowed, match="outside"):
+        server.parse(path=str(dataset), format="pypsa-csv")
+
+
+def test_file_uri_paths_are_accepted(tmp_path):
+    case = tmp_path / "case9.m"
+    shutil.copy2(DATA / "case9.m", case)
+    assert server.summarize(path=case.as_uri())["elements"]["buses"] == 9
+
+
+def test_public_module_has_no_removed_mcp_callables():
+    for name in (
+        "inspect",
+        "list_states",
+        "inspect_state",
+        "export_state",
+        "convert",
+        "save",
+    ):
+        assert not hasattr(server, name)
+
+
+def test_matrix_response_names_every_axis():
+    bprime = server.calc_matrix("bprime", path=str(DATA / "case9.m"))
+    assert bprime["row_ids"] == bprime["col_ids"]
+    assert len(bprime["row_ids"]) == 9
+    assert bprime["skipped_branch_rows"] == []
+    assert bprime["skip_zero_impedance"] is False
+
+    ptdf = server.calc_matrix("ptdf", path=str(DATA / "case9.m"))
+    assert ptdf["shape"] == [len(ptdf["row_ids"]), len(ptdf["col_ids"])]
+    assert all(isinstance(identity, str) for identity in ptdf["row_ids"])
+    assert ptdf["col_ids"] == bprime["col_ids"]
+
+    lacpf = server.calc_matrix("lacpf", path=str(DATA / "case9.m"))
+    assert len(lacpf["row_ids"]) == 18
+    assert lacpf["row_ids"][0].endswith(":p") and lacpf["row_ids"][9].endswith(":q")
+    assert lacpf["col_ids"][0].endswith(":vm") and lacpf["col_ids"][9].endswith(":va")
+
+
+def test_matrix_tool_serves_the_dc_calculations_by_name():
+    # case14 has 14 buses and 20 branches, so a transposed result changes the
+    # shape; case9's 9 by 9 incidence would hide the swap.
+    case14 = str(DATA / "case14.m")
+    index_map = powerio.parse(case14).value.calc_dc_index_map()
+
+    incidence = server.calc_matrix("incidence", path=case14)
+    assert incidence["format"] == "coo"
+    assert incidence["shape"] == [20, 14]
+    assert incidence["row_ids"] == list(index_map["branch_ids"])
+    assert incidence["col_ids"] == list(index_map["bus_ids"])
+
+    susceptances = server.calc_matrix("branch_susceptances", path=case14)
+    assert susceptances["format"] == "vector"
+    assert susceptances["shape"] == [20]
+    assert len(susceptances["data"]) == 20
+    assert susceptances["row_ids"] == incidence["row_ids"]
+    assert "col_ids" not in susceptances
+
+    injection = server.calc_matrix(
+        "bus_phase_shift_injection", path=case14, formula="reactance_only"
+    )
+    assert injection["formula"] == "reactance_only"
+    assert injection["row_ids"] == incidence["col_ids"]
+
+
+def _resistive_case_ir(resistance=0.1):
+    document = json.loads(powerio.serialize(powerio.parse(DATA / "case9.m")).text)
+    for branch in document["value"]["data"]["branches"]:
+        branch["r"] = resistance
+        branch["x"] = 0.0
+    return json.dumps(document)
+
+
+def test_adjacency_axes_do_not_require_dc_impedance():
+    result = server.calc_matrix("adjacency", powerio_ir=_resistive_case_ir(0.0))
+    assert result["shape"] == [9, 9]
+    assert result["row_ids"] == result["col_ids"] == list(range(1, 10))
+    assert result["nnz"] > 0
+
+
+def test_multiconductor_operating_point_summary_does_not_request_a_balanced_network():
+    document = json.loads(powerio.serialize(powerio.parse(DSS)).text)
+    document["value"] = {
+        "type": "powerio.OperatingPoint<powerio.MulticonductorNetwork>",
+        "data": {"network": document["value"]["data"], "quantities": {}},
+    }
+    text = json.dumps(document)
+    result = server.summarize(powerio_ir=text)
+    assert result["operating_point"] is True
+    assert result["network"] is None
+    with pytest.raises(ValueError, match="BalancedNetwork"):
+        server.calc_matrix("adjacency", powerio_ir=text)
+
+
+@pytest.mark.parametrize("matrix,scheme", [
+    ("bprime", "bx"), ("bdoubleprime", "xb"),
+    ("admittance_real", "bx"), ("admittance_imag", "bx"), ("lacpf", "bx"),
+])
+def test_ac_axes_do_not_apply_the_dc_reactance_formula(matrix, scheme):
+    result = server.calc_matrix(
+        matrix, powerio_ir=_resistive_case_ir(), scheme=scheme, formula="reactance_only"
+    )
+    assert result["shape"] == [len(result["row_ids"]), len(result["col_ids"])]
+    assert result["skipped_branch_rows"] == []
+
+
+@pytest.mark.parametrize("matrix,scheme", [("bprime", "xb"), ("bdoubleprime", "bx")])
+def test_fdpf_skipped_rows_follow_the_selected_scheme(matrix, scheme):
+    result = server.calc_matrix(
+        matrix, powerio_ir=_resistive_case_ir(), scheme=scheme, skip_zero_impedance=True
+    )
+    assert result["skipped_branch_rows"] == list(range(9))
+
+
+def test_lacpf_axes_match_the_power_voltage_blocks():
+    np = pytest.importorskip("numpy")
+    sparse = pytest.importorskip("scipy.sparse")
+    net = powerio.parse(DATA / "case9.m").value
+    result = server.calc_matrix("lacpf", path=str(DATA / "case9.m"))
+    matrix = sparse.coo_matrix((result["data"], (result["row"], result["col"])), shape=result["shape"])
+    vm = np.linspace(-0.01, 0.02, 9)
+    va = np.linspace(0.02, -0.03, 9)
+    ybus = net.calc_admittance_matrix()
+    expected = np.r_[ybus.real @ vm - ybus.imag @ va, -ybus.imag @ vm - ybus.real @ va]
+    np.testing.assert_allclose(matrix @ np.r_[vm, va], expected)
+
+
+def test_matrix_tool_rejects_skip_zero_impedance_where_it_would_be_ignored():
+    for name in ("ptdf", "lodf", "adjacency", "weighted_laplacian"):
+        with pytest.raises(ValueError, match="does not take skip_zero_impedance"):
+            server.calc_matrix(
+                name, path=str(DATA / "case9.m"), skip_zero_impedance=True
+            )
+    # The message names the DC calculations that do take it.
+    with pytest.raises(ValueError, match="bus_phase_shift_injection"):
+        server.calc_matrix(
+            "ptdf", path=str(DATA / "case9.m"), skip_zero_impedance=True
+        )
+    # The flag still reaches the calculations that accept it.
+    incidence = server.calc_matrix(
+        "incidence", path=str(DATA / "case9.m"), skip_zero_impedance=True
+    )
+    assert incidence["skip_zero_impedance"] is True
+
+
+def test_matrix_tool_computes_over_an_operating_point_entry(time_series_powerio_ir):
+    matrix = server.calc_matrix(
+        "bprime", powerio_ir=time_series_powerio_ir, time_index=1
+    )
+    assert matrix["selection"] == {"time_index": 1}
+    assert matrix["shape"] == [9, 9]
+    summary = server.summarize(powerio_ir=time_series_powerio_ir, time_index=1)
+    assert summary["value_type"] == "OperatingPoint"
+    assert summary["network"]["elements"]["buses"] == 9
+
+
+LIMIT_ENVS = ("POWERIO_MAX_PRIMARY_BYTES", "POWERIO_MAX_REFERENCED_BYTES")
+
+
+def test_server_start_defaults_unset_limits_to_256_mib(monkeypatch):
+    environ = {"POWERIO_MAX_PRIMARY_BYTES": ""}
+    server._apply_service_limits(environ)
+    assert environ == {name: str(256 << 20) for name in LIMIT_ENVS}
+
+    # Values the operator set stay as they are, valid or not; PowerIO
+    # validates them when it reads a source.
+    environ = {"POWERIO_MAX_PRIMARY_BYTES": "2048", "POWERIO_MAX_REFERENCED_BYTES": "x"}
+    server._apply_service_limits(environ)
+    assert environ == {
+        "POWERIO_MAX_PRIMARY_BYTES": "2048",
+        "POWERIO_MAX_REFERENCED_BYTES": "x",
+    }
+
+    # `main` applies the defaults to the process before it serves. Setting
+    # each variable through monkeypatch first restores the original afterward.
+    monkeypatch.setenv("POWERIO_MAX_PRIMARY_BYTES", "")
+    monkeypatch.setenv("POWERIO_MAX_REFERENCED_BYTES", "4096")
+    monkeypatch.setattr(sandbox, "_DEFAULT_ROOT", sandbox._DEFAULT_ROOT)
+    served = []
+    monkeypatch.setattr(server.mcp, "run", lambda *args, **kwargs: served.append(True))
+    server.main()
+    assert served == [True]
+    assert os.environ["POWERIO_MAX_PRIMARY_BYTES"] == str(256 << 20)
+    assert os.environ["POWERIO_MAX_REFERENCED_BYTES"] == "4096"
+
+
+def test_importing_the_server_keeps_the_library_limits():
+    code = (
+        "import os; from powerio.mcp import server; "
+        "print([os.environ.get(name) for name in "
+        "('POWERIO_MAX_PRIMARY_BYTES', 'POWERIO_MAX_REFERENCED_BYTES')])"
+    )
+    env = {key: value for key, value in os.environ.items() if key not in LIMIT_ENVS}
+    out = subprocess.run(
+        [sys.executable, "-c", code], check=True, capture_output=True, text=True, env=env
+    )
+    assert out.stdout.strip() == "[None, None]"
+
+
+@pytest.mark.parametrize(
+    "value,limit",
+    [(None, 256 << 20), ("", 256 << 20), ("0", 256 << 20), ("-1", 256 << 20),
+     (" 7", 256 << 20), ("1e3", 256 << 20), ("١", 256 << 20), ("123", 123)],
+)
+def test_primary_limit_falls_back_to_the_service_default(monkeypatch, value, limit):
+    if value is None:
+        monkeypatch.delenv("POWERIO_MAX_PRIMARY_BYTES", raising=False)
+    else:
+        monkeypatch.setenv("POWERIO_MAX_PRIMARY_BYTES", value)
+    assert server._primary_byte_limit() == limit
+
+
+def test_inline_arguments_are_refused_past_the_primary_limit_before_parsing(
+    monkeypatch,
+):
+    text = (DATA / "case9.m").read_text()
+    powerio_ir = powerio.serialize(powerio.parse(DATA / "case9.m")).text
+    monkeypatch.setenv("POWERIO_MAX_PRIMARY_BYTES", str(len(text.encode())))
+    assert server.parse(content=text, format="matpower")["summary"]["elements"][
+        "buses"
+    ] == 9
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("an oversize argument reached the reader")
+
+    monkeypatch.setattr(powerio, "parse", refuse)
+    monkeypatch.setattr(powerio, "deserialize", refuse)
+    limit = len(text.encode()) - 1
+    monkeypatch.setenv("POWERIO_MAX_PRIMARY_BYTES", str(limit))
+    message = rf"`content` exceeds the {limit} byte .*POWERIO_MAX_PRIMARY_BYTES"
+    with pytest.raises(ValueError, match=message):
+        server.parse(content=text, format="matpower")
+    with pytest.raises(ValueError, match=message):
+        server.emit("psse", content=text, source_format="matpower")
+
+    limit = len(powerio_ir.encode()) - 1
+    monkeypatch.setenv("POWERIO_MAX_PRIMARY_BYTES", str(limit))
+    message = rf"`powerio_ir` exceeds the {limit} byte .*POWERIO_MAX_PRIMARY_BYTES"
+    for call in (
+        lambda: server.summarize(powerio_ir=powerio_ir),
+        lambda: server.diagnostics(powerio_ir),
+        lambda: server.calc_matrix("bprime", powerio_ir=powerio_ir),
+        lambda: server._to_balanced_tool(powerio_ir=powerio_ir),
+    ):
+        with pytest.raises(ValueError, match=message):
+            call()
+
+
+def test_inline_size_counts_utf8_bytes(monkeypatch):
+    # Ten two-byte characters and one lone surrogate, which counts as the
+    # three bytes it would take if it were encoded.
+    value = "é" * 10 + "\ud800"
+    monkeypatch.setattr(server, "_UTF8_COUNT_CHUNK", 3)
+    monkeypatch.setenv("POWERIO_MAX_PRIMARY_BYTES", "23")
+    server._check_inline_size("content", value)
+    monkeypatch.setenv("POWERIO_MAX_PRIMARY_BYTES", "22")
+    with pytest.raises(ValueError, match="`content` exceeds the 22 byte"):
+        server._check_inline_size("content", value)
+    # More characters than the limit has bytes is refused without counting,
+    # and a limit of four bytes per character is accepted without counting.
+    monkeypatch.setenv("POWERIO_MAX_PRIMARY_BYTES", "10")
+    with pytest.raises(ValueError, match="exceeds the 10 byte"):
+        server._check_inline_size("content", value)
+    monkeypatch.setattr(server, "_UTF8_COUNT_CHUNK", None)
+    monkeypatch.setenv("POWERIO_MAX_PRIMARY_BYTES", "44")
+    server._check_inline_size("content", value)
+
+
+def test_display_requires_a_regular_file_within_the_primary_limit(
+    monkeypatch, tmp_path
+):
+    size = PWD.stat().st_size
+    monkeypatch.setenv("POWERIO_MAX_PRIMARY_BYTES", str(size))
+    assert server.display(str(PWD))["format"] == "powerworld-pwd"
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("the display reader ran")
+
+    monkeypatch.setattr(powerio, "parse_display", refuse)
+    monkeypatch.setenv("POWERIO_MAX_PRIMARY_BYTES", str(size - 1))
+    with pytest.raises(
+        ValueError, match=rf"exceeds the {size - 1} byte .*POWERIO_MAX_PRIMARY_BYTES"
+    ):
+        server.display(str(PWD))
+    with pytest.raises(ValueError, match="regular file"):
+        server.display(str(tmp_path))
+    if os.name != "nt":
+        # A named pipe is refused from its metadata, without opening it.
+        fifo = tmp_path / "display.pwd"
+        os.mkfifo(fifo)
+        with pytest.raises(ValueError, match="regular file"):
+            server.display(str(fifo))

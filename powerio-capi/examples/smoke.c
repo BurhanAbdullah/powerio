@@ -1,401 +1,306 @@
-/* C ABI smoke test: drive powerio-capi from C the way a real consumer would.
- *
- * Built and run in CI against the checked-in static library, so a break in the
- * ABI (or the header drifting from the Rust source) fails the build rather than
- * silently shipping. Not a unit test — it asserts the calls work end to end and
- * returns non-zero on any failure.
+/* End to end C probe for ABI 7.
  *
  *   cc -I powerio-capi/include powerio-capi/examples/smoke.c \
- *      target/release/libpowerio_capi.a -o smoke   (+ -lpthread -ldl -lm on Linux)
- *   ./smoke tests/data/case9.m
+ *      -L target/release -lpowerio_capi -o smoke
+ *   ./smoke tests/data/case9.m [gridfm_dataset_dir]
  */
 #include "powerio.h"
 
-#ifdef PIO_ARROW
-#include "arrow_c_data_interface.h" /* full ArrowArray/ArrowSchema definitions */
-#endif
-
-#include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
-#if PIO_ABI_VERSION != 4
-#error "PIO_ABI_VERSION changed without updating the C ABI smoke test"
+#if PIO_ABI_VERSION != 7
+#error "update the C probe for the current ABI"
 #endif
 
-#if PIO_ERRBUF_MIN != 256
-#error "PIO_ERRBUF_MIN changed without updating the C ABI smoke test"
-#endif
+static int failures;
 
-#ifdef PIO_DIST
-#if PIO_DIST_ABI_VERSION != 1
-#error "PIO_DIST_ABI_VERSION changed without updating the C ABI smoke test"
-#endif
-#endif
-
-#ifdef PIO_ARROW
-#if PIO_ARROW_TABLE_BUS != 0 || PIO_ARROW_TABLE_BRANCH != 1 ||                \
-    PIO_ARROW_TABLE_GEN != 2 || PIO_ARROW_TABLE_LOAD != 3 ||                  \
-    PIO_ARROW_TABLE_SHUNT != 4 || PIO_ARROW_TABLE_YBUS != 15 ||               \
-    PIO_ARROW_TABLE_INCIDENCE != 16 || PIO_ARROW_TABLE_BPRIME != 17 ||         \
-    PIO_ARROW_TABLE_BDOUBLEPRIME != 18 ||                                      \
-    PIO_ARROW_TABLE_MATRIX_BUS != 19 || PIO_ARROW_TABLE_MATRIX_BRANCH != 20
-#error "PIO_ARROW_TABLE_* ids changed without updating the C ABI smoke test"
-#endif
-#endif
-
-#define CHECK(cond, msg)                                                       \
+#define CHECK(condition, message)                                              \
     do {                                                                       \
-        if (!(cond)) {                                                         \
-            fprintf(stderr, "smoke: %s\n", (msg));                             \
-            return 1;                                                          \
+        if (!(condition)) {                                                    \
+            fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, message); \
+            failures++;                                                        \
         }                                                                      \
     } while (0)
 
+static int view_equals(PioStringView view, const char *text) {
+    size_t len = strlen(text);
+    return view.len == len && view.data != NULL && memcmp(view.data, text, len) == 0;
+}
+
+static void report_error(const char *operation, PioError *error) {
+    if (error == NULL) {
+        fprintf(stderr, "%s failed without a PioError\n", operation);
+    } else {
+        PioStringView code = pio_error_code(error);
+        PioStringView message = pio_error_message(error);
+        fprintf(stderr, "%s: %.*s: %.*s\n", operation, (int)code.len, code.data,
+                (int)message.len, message.data);
+        pio_error_release(error);
+    }
+    failures++;
+}
+
 int main(int argc, char **argv) {
-    if (argc < 2) {
-        fprintf(stderr, "usage: %s <case.m>\n", argv[0]);
-        return 2;
-    }
 #ifdef PIO_GRIDFM
-    if (argc < 3) {
-        fprintf(stderr, "usage: %s <case.m> <gridfm-raw-dir>\n", argv[0]);
-        return 2;
-    }
-#endif
-
-    /* ABI handshake: a consumer refuses a library whose ABI version differs from
-     * the header it compiled against. pio_version() is a static, non-owned string. */
-    CHECK(pio_abi_version() == PIO_ABI_VERSION, "ABI version mismatch");
-    printf("powerio %s (ABI %u)\n", pio_version(), pio_abi_version());
-
-    char err[PIO_ERRBUF_MIN];
-    PioNetwork *c = pio_parse_file(argv[1], NULL, err, sizeof err);
-    CHECK(c != NULL, err);
-
-    size_t nb = pio_n_buses(c);
-    size_t m = pio_n_branches(c);
-    size_t ng = pio_n_gens(c);
-    double base = pio_base_mva(c);
-    printf("parsed %s: %zu buses, %zu branches, %zu gens, baseMVA %g\n", argv[1],
-           nb, m, ng, base);
-    CHECK(nb > 0 && m > 0, "empty case");
-    CHECK(pio_n_islands(c) >= 1, "bad island count");
-    CHECK(pio_ref_bus_index(c) >= 0, "no single reference bus");
-    /* The MATPOWER reader is total: no warnings attached to the handle. */
-    CHECK(pio_warnings(c, NULL, 0) == 0, "unexpected parse warnings");
-
-    /* Pull branch endpoints (1-based bus ids, same space as pio_bus_ids) and
-     * reactances, as a solver would. The all-NULL call is the count query; the
-     * fill returns the same total, so a short buffer is detectable. */
-    CHECK(pio_branches(c, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0) == m,
-          "count query disagrees with pio_n_branches");
-    int64_t *from = malloc(m * sizeof *from);
-    double *x = malloc(m * sizeof *x);
-    CHECK(from && x, "out of memory");
-    CHECK(pio_branches(c, from, NULL, NULL, x, NULL, NULL, NULL, NULL, m) == m,
-          "branch fill did not return the total");
-    for (size_t k = 0; k < m; k++) {
-        CHECK(from[k] >= 1, "branch from-id should be a valid 1-based bus id");
-        CHECK(x[k] != 0.0, "zero reactance");
-    }
-    free(from);
-    free(x);
-
-    /* Byte-exact MATPOWER echo: matpower is a format string, not a symbol. */
-    char warn[PIO_ERRBUF_MIN];
-    warn[0] = '\0';
-    char *echo = pio_to_format(c, "matpower", warn, sizeof warn, err, sizeof err);
-    CHECK(echo != NULL && strlen(echo) > 0, err);
-    pio_string_free(echo);
-
-    /* Cross-format convert reaches the converter and returns owned text. */
-    char *raw = pio_convert_file(argv[1], NULL, "psse", NULL, 0, err, sizeof err);
-    CHECK(raw != NULL, err);
-    pio_string_free(raw);
-
-    /* The canonical snapshot: serialize to powerio-json, parse it back, and
-     * confirm the counts survive. Lossless, validated on read. */
-    char *json = pio_to_format(c, "powerio-json", NULL, 0, err, sizeof err);
-    CHECK(json != NULL, err);
-    PioNetwork *c2 = pio_parse_str(json, "powerio-json", err, sizeof err);
-    CHECK(c2 != NULL, err);
-    CHECK(pio_n_buses(c2) == nb && pio_n_branches(c2) == m && pio_n_gens(c2) == ng,
-          "snapshot round-trip changed the table sizes");
-    pio_string_free(json);
-    pio_network_free(c2);
-
-#ifdef PIO_PKG
-    /* Compiler package surface: wrap the live balanced handle, validate the
-     * package, serialize it, and parse it back. */
-    {
-        CHECK(pio_has_feature("pkg") == 1, "pio_has_feature(pkg) should be 1");
-        PioPackage *pkg = pio_package_from_balanced_network(c, 0, err, sizeof err);
-        CHECK(pkg != NULL, err);
-        CHECK(pio_package_validate(pkg, err, sizeof err) == 0, err);
-
-        char *validation = pio_package_validation_json(pkg, err, sizeof err);
-        CHECK(validation != NULL, err);
-        CHECK(strstr(validation, "\"status\":\"ok\"") != NULL,
-              "package validation JSON did not report ok");
-        pio_string_free(validation);
-
-        char *diagnostics = pio_package_diagnostics_json(pkg, err, sizeof err);
-        CHECK(diagnostics != NULL, err);
-        CHECK(strcmp(diagnostics, "[]") == 0, "unexpected package diagnostics");
-        pio_string_free(diagnostics);
-
-        char *pkg_json = pio_package_to_json(pkg, err, sizeof err);
-        CHECK(pkg_json != NULL, err);
-        CHECK(strstr(pkg_json, "\"model_kind\":\"balanced\"") != NULL,
-              "package JSON lost the balanced model kind");
-
-        PioPackage *pkg2 = pio_package_parse_str(pkg_json, err, sizeof err);
-        CHECK(pkg2 != NULL, err);
-        pio_package_free(pkg2);
-        pio_string_free(pkg_json);
-        pio_package_free(pkg);
-        printf("package surface OK\n");
-    }
-#endif
-
-    /* In-memory parse: read the bytes ourselves and parse them with an explicit
-     * format, then confirm it agrees with the path-based parse. */
-    {
-        FILE *fp = fopen(argv[1], "rb");
-        CHECK(fp != NULL, "could not reopen case file");
-        fseek(fp, 0, SEEK_END);
-        long sz = ftell(fp);
-        fseek(fp, 0, SEEK_SET);
-        char *buf = malloc((size_t)sz + 1);
-        CHECK(buf != NULL, "out of memory");
-        size_t rd = fread(buf, 1, (size_t)sz, fp);
-        buf[rd] = '\0';
-        fclose(fp);
-
-        PioNetwork *cs = pio_parse_str(buf, "matpower", err, sizeof err);
-        CHECK(cs != NULL, err);
-        CHECK(pio_n_buses(cs) == nb && pio_n_branches(cs) == m && pio_n_gens(cs) == ng,
-              "pio_parse_str disagrees with pio_parse_file on table sizes");
-
-        /* In-memory convert: parse + serialize fused, no filesystem. */
-        char *pm = pio_convert_str(buf, "matpower", "powermodels-json",
-                                   NULL, 0, err, sizeof err);
-        CHECK(pm != NULL, err);
-        pio_string_free(pm);
-
-        char *old_order = pio_convert_str(buf, "powermodels-json", "matpower",
-                                          NULL, 0, err, sizeof err);
-        if (old_order != NULL) {
-            pio_string_free(old_order);
-            CHECK(0, "pio_convert_str accepted target/source argument order");
-        }
-        CHECK(strlen(err) > 0, "pio_convert_str old-order error was empty");
-        free(buf);
-
-        /* Normalize into a NEW handle: per unit, radians, filtered, reindexed.
-         * It has no more buses than the raw case, has at least one reference bus
-         * (several if the file marked several), and still snapshots. Count the
-         * references with the NULL-out query, not pio_ref_bus_index >= 0: the
-         * latter returns -1 for a multi-slack case, which is valid here. */
-        PioNetwork *cn = pio_normalize(cs, err, sizeof err);
-        CHECK(cn != NULL, err);
-        CHECK(pio_n_buses(cn) <= nb && pio_n_buses(cn) > 0, "normalized bus count out of range");
-        CHECK(pio_ref_bus_indices(cn, NULL, 0) >= 1, "normalized case lost its reference bus");
-        char *njson = pio_to_format(cn, "powerio-json", NULL, 0, err, sizeof err);
-        CHECK(njson != NULL, err);
-        pio_string_free(njson);
-        pio_network_free(cn);
-        pio_network_free(cs);
-        printf("parse_str + convert_str + normalize OK\n");
-    }
-
-    /* Directory writer: 0 on success, -1 on error (message in errbuf). The
-     * format is a string here too; pypsa-csv is the one directory format. */
-    {
-        warn[0] = '\0';
-        char outdir[512];
-        snprintf(outdir, sizeof outdir, "%s-pypsa-smoke", argv[1]);
-        int rc = pio_write_dir(c, "pypsa-csv", outdir, warn, sizeof warn, err, sizeof err);
-        CHECK(rc == 0, err);
-        char buses[600];
-        snprintf(buses, sizeof buses, "%s/buses.csv", outdir);
-        FILE *bf = fopen(buses, "rb");
-        CHECK(bf != NULL, "PyPSA folder missing buses.csv");
-        fclose(bf);
-        rc = pio_write_dir(NULL, "pypsa-csv", outdir, NULL, 0, err, sizeof err);
-        CHECK(rc == -1, "NULL network handle should fail the directory write");
-        printf("pypsa csv directory write OK: %s\n", outdir);
-    }
-
-#ifdef PIO_GRIDFM
-    /* Dataset reader surface: gridfm is a directory format and returns the same
-     * PioNetwork handle family as parse_file/parse_str. */
-    {
-        const char *gridfm_dir = argv[2];
-        CHECK(pio_has_feature("gridfm") == 1, "pio_has_feature(gridfm) should be 1");
-
-        ptrdiff_t count = pio_scenario_ids(gridfm_dir, "gridfm", NULL, 0, err, sizeof err);
-        CHECK(count > 0, err);
-        int64_t ids[4] = {-1, -1, -1, -1};
-        CHECK(pio_scenario_ids(gridfm_dir, "gridfm", ids, 4, err, sizeof err) == count,
-              "scenario-id fill did not return the total");
-
-        PioNetwork *g = pio_read_dir(gridfm_dir, "gridfm", ids[0], err, sizeof err);
-        CHECK(g != NULL, err);
-        CHECK(pio_n_buses(g) > 0, "gridfm read returned an empty network");
-        CHECK(pio_warnings(g, NULL, 0) > 0, "gridfm read should report fidelity warnings");
-        pio_network_free(g);
-        printf("gridfm surface OK\n");
-    }
-#endif
-
-#ifdef PIO_DIST
-    /* Distribution surface: parse an in-memory OpenDSS case, read its parse
-     * warnings, convert it to BMOPF JSON, and check the byte-exact dss echo. */
-    {
-        const char *dss =
-            "clear\n"
-            "new circuit.smoke basekv=12.47 bus1=src\n"
-            "new line.l1 bus1=src bus2=b2 length=100 units=m\n"
-            "new load.d1 bus1=b2 kv=12.47 kw=50\n"
-            "solve\n";
-        PioDistNetwork *d = pio_dist_parse_str(dss, "dss", err, sizeof err);
-        CHECK(d != NULL, err);
-
-        char warn[1024];
-        /* Warnings use the size-then-fill idiom of pio_warnings: the return is
-         * the byte length needed (0 here, this case is clean). */
-        pio_dist_warnings(d, warn, sizeof warn);
-
-        char *bmopf = pio_dist_to_format(d, "bmopf", warn, sizeof warn, err, sizeof err);
-        CHECK(bmopf != NULL, err);
-        CHECK(strstr(bmopf, "\"bus\"") != NULL, "BMOPF output lost the bus table");
-        pio_string_free(bmopf);
-
-        /* Same-format write echoes the retained source byte for byte. */
-        char *echo2 = pio_dist_to_format(d, "dss", warn, sizeof warn, err, sizeof err);
-        CHECK(echo2 != NULL, err);
-        CHECK(strcmp(echo2, dss) == 0, "dss echo is not byte exact");
-        pio_string_free(echo2);
-        pio_dist_network_free(d);
-
-        /* One-shot string conversion into PMD ENGINEERING JSON; parameter
-         * order is input, source, target, like pio_dist_convert_file. */
-        char *pmd = pio_dist_convert_str(dss, "dss", "pmd", warn, sizeof warn, err, sizeof err);
-        CHECK(pmd != NULL, err);
-        CHECK(strstr(pmd, "\"data_model\": \"ENGINEERING\"") != NULL,
-              "PMD output lost the data_model marker");
-        pio_string_free(pmd);
-
-        char *old_dist_order = pio_dist_convert_str(dss, "pmd", "dss",
-                                                    warn, sizeof warn, err, sizeof err);
-        if (old_dist_order != NULL) {
-            pio_string_free(old_dist_order);
-            CHECK(0, "pio_dist_convert_str accepted target/source argument order");
-        }
-        CHECK(strlen(err) > 0, "pio_dist_convert_str old-order error was empty");
-
-        /* NULL handle is the documented safe default: a 0-length count. */
-        CHECK(pio_dist_warnings(NULL, warn, sizeof warn) == 0,
-              "NULL dist handle did not return 0");
-        /* The optional dist surface reports itself through the feature query. */
-        CHECK(pio_has_feature("dist") == 1, "pio_has_feature(dist) should be 1");
-        CHECK(pio_dist_abi_version() == PIO_DIST_ABI_VERSION,
-              "dist ABI version mismatch");
-        char *dist_caps = pio_dist_capabilities_json();
-        CHECK(dist_caps != NULL, "pio_dist_capabilities_json returned NULL");
-        CHECK(strstr(dist_caps, "\"dist\":true") != NULL,
-              "dist capabilities did not report dist=true");
-        CHECK(strstr(dist_caps, "\"schema_version\":\"1.0.0\"") != NULL,
-              "dist capabilities schema_version mismatch");
-        CHECK(strstr(dist_caps, "\"bmopf_fixed_taps\":true") != NULL,
-              "fixed tap capability missing");
-        CHECK(strstr(dist_caps, "\"bmopf_center_tap_leakage\":true") != NULL,
-              "center tap capability missing");
-        CHECK(strstr(dist_caps, "\"bmopf_delta_wye_leakage\":true") != NULL,
-              "delta wye leakage capability missing");
-        CHECK(strstr(dist_caps, "\"bmopf_delta_roll\":true") != NULL,
-              "delta roll capability missing");
-        CHECK(strstr(dist_caps, "\"bmopf_voltage_source_merge\":true") != NULL,
-              "voltage source merge capability missing");
-        CHECK(strstr(dist_caps, "\"bmopf_transformer_diagnostics\":true") != NULL,
-              "transformer diagnostics capability missing");
-        pio_string_free(dist_caps);
-        printf("dist surface OK\n");
-    }
-#endif
-
-#ifdef PIO_ARROW
-    /* Zero-copy Arrow C Data Interface export: pull the bus table, check the row
-     * count, then release the producer-owned buffers. */
-    {
-        struct ArrowArray arr;
-        struct ArrowSchema sch;
-        memset(&arr, 0, sizeof arr);
-        memset(&sch, 0, sizeof sch);
-        int rc = pio_to_arrow(c, PIO_ARROW_TABLE_BUS, &arr, &sch, err, sizeof err);
-        CHECK(rc == 0, err);
-        CHECK(arr.length == (int64_t)nb, "arrow bus table row count mismatch");
-        CHECK(arr.release != NULL && sch.release != NULL, "missing arrow release callbacks");
-        arr.release(&arr);
-        sch.release(&sch);
-        printf("arrow export OK: %zu bus rows\n", nb);
-    }
-#ifdef PIO_MATRIX
-    {
-        CHECK(pio_matrix_available() == 1, "matrix Arrow tables should be available");
-        struct ArrowArray arr;
-        struct ArrowSchema sch;
-        memset(&arr, 0, sizeof arr);
-        memset(&sch, 0, sizeof sch);
-        int rc = pio_to_arrow(c, PIO_ARROW_TABLE_BPRIME, &arr, &sch, err, sizeof err);
-        CHECK(rc == 0, err);
-        CHECK(arr.length > 0, "Bprime table should not be empty for case9");
-        CHECK(arr.release != NULL && sch.release != NULL,
-              "missing matrix arrow release callbacks");
-        arr.release(&arr);
-        sch.release(&sch);
-        memset(&arr, 0, sizeof arr);
-        memset(&sch, 0, sizeof sch);
-        rc = pio_to_arrow(c, PIO_ARROW_TABLE_MATRIX_BUS, &arr, &sch, err, sizeof err);
-        CHECK(rc == 0, err);
-        CHECK(arr.length == (int64_t)nb, "matrix_bus axis row count mismatch");
-        CHECK(arr.release != NULL && sch.release != NULL,
-              "missing matrix_bus arrow release callbacks");
-        arr.release(&arr);
-        sch.release(&sch);
-
-        char *catalog = pio_arrow_catalog_json(err, sizeof err);
-        CHECK(catalog != NULL, err);
-        CHECK(strstr(catalog, "\"name\":\"matrix_bus\"") != NULL,
-              "Arrow catalog missing matrix_bus");
-        CHECK(strstr(catalog, "\"name\":\"matrix_branch\"") != NULL,
-              "Arrow catalog missing matrix_branch");
-        pio_string_free(catalog);
-        printf("matrix arrow export OK\n");
-    }
+    if (argc < 2 || argc > 3) {
+        fprintf(stderr, "usage: %s case9.m [gridfm_dataset_dir]\n", argv[0]);
 #else
-    {
-        CHECK(pio_matrix_available() == 0,
-              "matrix Arrow tables should be unavailable without PIO_MATRIX");
-        struct ArrowArray arr;
-        struct ArrowSchema sch;
-        memset(&arr, 0, sizeof arr);
-        memset(&sch, 0, sizeof sch);
-        int rc = pio_to_arrow(c, PIO_ARROW_TABLE_BPRIME, &arr, &sch, err, sizeof err);
-        CHECK(rc == -1, "matrix Arrow table should fail without matrix support");
-        CHECK(strlen(err) > 0, "matrix Arrow failure should explain the missing feature");
+    if (argc != 2) {
+        fprintf(stderr, "usage: %s case9.m\n", argv[0]);
+#endif
+        return 2;
+    }
+
+    CHECK(pio_abi_version() == PIO_ABI_VERSION, "ABI handshake");
+    CHECK(pio_version().len != 0, "version string");
+
+    PioError *error = NULL;
+    PioSource *missing = pio_source_open("missing-case.m", 14, &error);
+    CHECK(missing == NULL && error != NULL, "missing source reports an error");
+    if (error != NULL) {
+        PioDiagnostics *diagnostics = pio_error_diagnostics(error);
+        CHECK(diagnostics != NULL && pio_diagnostics_len(diagnostics) != 0,
+              "failure carries diagnostics");
+        pio_diagnostics_release(diagnostics);
+        pio_error_release(error);
+        error = NULL;
+    }
+
+    PioSource *source = pio_source_open(argv[1], strlen(argv[1]), &error);
+    if (source == NULL) {
+        report_error("pio_source_open", error);
+        return 1;
+    }
+    PioModule *module = pio_parse(source, NULL, 0, &error);
+    pio_source_release(source);
+    if (module == NULL) {
+        report_error("pio_parse", error);
+        return 1;
+    }
+
+    PioDiagnostics *diagnostics = pio_module_diagnostics(module);
+    CHECK(diagnostics != NULL, "module diagnostics");
+    for (size_t i = 0; i < pio_diagnostics_len(diagnostics); i++) {
+        CHECK(pio_diagnostic_code(diagnostics, i).len != 0, "diagnostic code");
+        CHECK(pio_diagnostic_severity(diagnostics, i).len != 0,
+              "diagnostic severity");
+    }
+    pio_diagnostics_release(diagnostics);
+
+    PioValueHandle *value = pio_module_value(module);
+    CHECK(value != NULL, "module value");
+    CHECK(view_equals(pio_value_type_name(value), "powerio.BalancedNetwork"),
+          "balanced structural type");
+    CHECK(pio_value_is_type(value, "powerio.BalancedNetwork", 23),
+          "exact structural type predicate");
+
+    PioBalancedNetwork *network = pio_value_balanced_network(value, &error);
+    pio_value_release(value);
+    if (network == NULL) {
+        report_error("pio_value_balanced_network", error);
+        pio_module_release(module);
+        return 1;
+    }
+    size_t buses = pio_balanced_network_bus_count(network);
+    size_t branches = pio_balanced_network_branch_count(network);
+    CHECK(buses == 9 && branches == 9, "case9 element counts");
+    CHECK(pio_balanced_network_base_mva(network) == 100.0, "case9 base MVA");
+    PioBalancedBusView bus;
+    CHECK(pio_balanced_network_bus_at(network, 0, &bus, &error),
+          "checked bus view");
+    CHECK(bus.id == 1 && view_equals(bus.bus_type, "REF"),
+          "case9 reference bus");
+    PioBalancedBranchView branch;
+    CHECK(pio_balanced_network_branch_at(network, 0, &branch, &error),
+          "checked branch view");
+    CHECK(branch.from_bus_id == 1 && branch.to_bus_id == 4 &&
+              branch.rate_a_mva == 250.0 && branch.effective_tap_ratio == 1.0,
+          "case9 first branch");
+    PioBalancedGeneratorView generator;
+    CHECK(pio_balanced_network_generator_at(network, 0, &generator, &error),
+          "checked generator view");
+    CHECK(generator.has_cost && generator.cost.coefficients.len == 3,
+          "case9 generator cost span");
+
+    CHECK(!pio_balanced_network_bus_at(network, buses, &bus, &error) &&
+              error != NULL,
+          "out of range row reports an error");
+    if (error != NULL) {
+        CHECK(view_equals(pio_error_code(error), "BIND.CAPI.INDEX_OUT_OF_RANGE"),
+              "out of range diagnostic code");
+        pio_error_release(error);
+        error = NULL;
+    }
+
+    PioSparseMatrix *incidence =
+        pio_calc_incidence_matrix(network, NULL, 0, &error);
+    if (incidence == NULL) {
+        report_error("pio_calc_incidence_matrix", error);
+    } else {
+        CHECK(pio_sparse_matrix_rows(incidence) == branches, "incidence rows");
+        CHECK(pio_sparse_matrix_columns(incidence) == buses, "incidence columns");
+        CHECK(pio_sparse_matrix_values(incidence).len == 2 * branches,
+              "incidence nonzeros");
+        pio_sparse_matrix_release(incidence);
+    }
+
+    PioDcOperators *operators = pio_calc_dc_operators(network, NULL, 0, false, &error);
+    if (operators == NULL) {
+        report_error("pio_calc_dc_operators", error);
+    } else {
+        CHECK(pio_dc_operators_n_buses(operators) == buses, "DC bus axis");
+        CHECK(pio_dc_operators_n_branches(operators) == branches, "DC branch axis");
+        CHECK(pio_dc_operators_skipped_branch_rows(operators).len == 0,
+              "no skipped branch rows");
+        CHECK(pio_dc_operators_branch_identity(operators, 0).len != 0,
+              "branch axis identity");
+        PioVector *susceptances = pio_dc_operators_branch_susceptances(operators, &error);
+        if (susceptances == NULL) {
+            report_error("pio_dc_operators_branch_susceptances", error);
+        } else {
+            CHECK(pio_vector_values(susceptances).len == branches,
+                  "branch susceptances over the DC branch axis");
+            pio_vector_release(susceptances);
+        }
+        pio_dc_operators_release(operators);
+    }
+
+    PioDestination *memory = pio_destination_memory("case9.m", 7, &error);
+    PioEmitResult *emitted = pio_emit(module, "matpower", 8, memory, &error);
+    pio_destination_release(memory);
+    if (emitted == NULL) {
+        report_error("pio_emit", error);
+    } else {
+        CHECK(pio_emit_result_artifact_count(emitted) == 1, "one MATPOWER artifact");
+        PioArtifact *artifact = pio_emit_result_artifact(emitted, 0, &error);
+        CHECK(artifact != NULL && pio_artifact_bytes(artifact).len != 0,
+              "MATPOWER bytes");
+        pio_artifact_release(artifact);
+        pio_emit_result_release(emitted);
+    }
+
+    /* The update detaches the module while this borrowed network keeps the
+     * pre-edit value alive. */
+    PioComponentId *load = pio_component_id_new("load", 4, "bus-5", 5, &error);
+    PioActivePower *replacement = pio_active_power_from_megawatts(91.0);
+    PioOperatingPointUpdate *operating =
+        pio_operating_point_update_set_load_active_power(load, NULL, 0, replacement, &error);
+    PioCalculationUpdate *update =
+        pio_calculation_update_from_operating_point(operating, &error);
+    const PioCalculationUpdate *updates[] = {update};
+    PioUpdateReport *report = pio_apply_updates(module, updates, 1, &error);
+    if (report == NULL) {
+        report_error("pio_apply_updates", error);
+    } else {
+        CHECK(pio_update_report_len(report) == 1, "one exact update change");
+        CHECK(!pio_update_report_connectivity_changed(report),
+              "load power does not change connectivity");
+        PioUpdateChange *change = pio_update_report_change(report, 0, &error);
+        CHECK(change != NULL, "update change view");
+        CHECK(view_equals(pio_update_change_field(change), "load_active_power"),
+              "updated field name");
+        PioComponentId *changed_id = pio_update_change_component_id(change);
+        CHECK(view_equals(pio_component_id_type(changed_id), "load"),
+              "changed component type");
+        CHECK(view_equals(pio_component_id_local_id(changed_id), "bus-5"),
+              "changed component identity");
+        pio_component_id_release(changed_id);
+        pio_update_change_release(change);
+        pio_update_report_release(report);
+    }
+    pio_calculation_update_release(update);
+    pio_operating_point_update_release(operating);
+    pio_active_power_release(replacement);
+    pio_component_id_release(load);
+
+    CHECK(pio_balanced_network_bus_count(network) == buses,
+          "borrowed pre-edit network remains valid");
+    pio_balanced_network_release(network);
+
+    PioDestination *ir_memory =
+        pio_destination_memory("roundtrip.pio.json", 18, &error);
+    PioEmitResult *serialized = pio_module_serialize(module, ir_memory, &error);
+    pio_destination_release(ir_memory);
+    if (serialized == NULL) {
+        report_error("pio_module_serialize", error);
+    } else {
+        PioArtifact *artifact = pio_emit_result_artifact(serialized, 0, &error);
+        PioByteView bytes = pio_artifact_bytes(artifact);
+        PioSource *ir_source =
+            pio_source_from_memory("roundtrip.pio.json", 18, bytes.data, bytes.len, &error);
+        PioModule *roundtrip = pio_module_deserialize(ir_source, &error);
+        CHECK(roundtrip != NULL, "PowerIO IR round trip");
+        pio_module_release(roundtrip);
+        pio_source_release(ir_source);
+        pio_artifact_release(artifact);
+        pio_emit_result_release(serialized);
+    }
+
+    pio_module_release(module);
+
+#ifdef PIO_GRIDFM
+    if (argc == 3) {
+        PioSource *dataset_source =
+            pio_source_open(argv[2], strlen(argv[2]), &error);
+        PioModule *dataset = NULL;
+        if (dataset_source == NULL) {
+            report_error("pio_source_open GridFM", error);
+            error = NULL;
+        } else {
+            dataset = pio_parse(dataset_source, NULL, 0, &error);
+            pio_source_release(dataset_source);
+            if (dataset == NULL) {
+                report_error("pio_parse GridFM", error);
+                error = NULL;
+            }
+        }
+        if (dataset != NULL) {
+            PioValueHandle *dataset_value = pio_module_value(dataset);
+            CHECK(dataset_value != NULL, "GridFM module value");
+            CHECK(pio_value_is_type(
+                      dataset_value,
+                      "powerio.ScenarioSet<powerio.BalancedNetwork>",
+                      sizeof("powerio.ScenarioSet<powerio.BalancedNetwork>") -
+                          1),
+                  "GridFM structural type");
+            PioScenarioSetHandle *scenarios =
+                pio_value_scenario_set(dataset_value, &error);
+            if (scenarios == NULL) {
+                report_error("pio_value_scenario_set", error);
+                error = NULL;
+            } else {
+                CHECK(pio_scenario_set_len(scenarios) != 0,
+                      "GridFM scenario count");
+                CHECK(view_equals(pio_scenario_set_element_type(scenarios),
+                                  "powerio.BalancedNetwork"),
+                      "GridFM scenario element type");
+                PioValueHandle *first =
+                    pio_scenario_set_get_at(scenarios, 0, &error);
+                CHECK(first != NULL, "GridFM first scenario");
+                if (first != NULL) {
+                    CHECK(view_equals(pio_value_type_name(first),
+                                      "powerio.BalancedNetwork"),
+                          "GridFM scenario value type");
+                    pio_value_release(first);
+                }
+                pio_scenario_set_release(scenarios);
+            }
+            pio_value_release(dataset_value);
+            pio_module_release(dataset);
+        }
     }
 #endif
-#endif
 
-    /* NULL handle is the documented safe default. */
-    CHECK(pio_n_buses(NULL) == 0, "NULL handle did not return 0");
-    CHECK(pio_ref_bus_index(NULL) == -1, "NULL handle did not return -1");
+    pio_module_release(NULL);
+    pio_value_release(NULL);
+    pio_error_release(NULL);
+    pio_diagnostics_release(NULL);
+    pio_sparse_matrix_release(NULL);
+    pio_vector_release(NULL);
 
-    pio_network_free(c);
-    printf("C ABI smoke test OK\n");
-    return 0;
+    if (failures == 0) {
+        puts("PowerIO C ABI 7 probe passed");
+    }
+    return failures == 0 ? 0 : 1;
 }

@@ -1,127 +1,119 @@
-# Language APIs
+# Rust, Python, Julia, and C
 
-PowerIO uses the same IO vocabulary across Rust, Python, Julia, and the C ABI,
-with language-specific spelling where needed. A new format or dataset should
-appear as a format string or convenience wrapper, not as a new naming scheme.
+Rust, Python, Julia, and C expose the same operations on the same power system
+types:
 
-Verb taxonomy:
-
-- `parse_*`: bytes, paths, or text to typed parsed values. Transmission parsers
-  return a balanced network handle; distribution parsers return a
-  multiconductor network handle; display parsers return display data.
-- `to_*`: `Network` to a new value
-- `convert_file`: path to target text convenience
-- `write_*`: filesystem outputs (`write_gridfm`, `write_pypsa_csv_folder`,
-  `write_dcopf_bundle`); the Rust
-  hub also keeps `write_as` and per-format `write_*` text builders, the
-  internals behind `to_format` and the `to_*` writers, which the bindings do
-  not mirror
-- `read_*`: filesystem dataset inputs (`read_gridfm`, `read_pypsa_csv_folder`), the inverse of
-  `write_*`. Datasets are multi-file directories, so they read and write;
-  single documents parse and serialize (`parse_*`/`to_*`)
-- `export_*`: handoff to external memory or interface protocols
-
-| Concept | Rust | Python | Julia | C ABI |
-|---|---|---|---|---|
-| Parse path | `parse_file(path, from)` | `parse_file(path, from_=None)` | `parse_file(path; from=nothing)` | `pio_parse_file` |
-| Parse text | `parse_str(text, format)` | `parse_str(text, format)` | `parse_str(text, format)` | `pio_parse_str` |
-| Parse display path | `parse_display_file(path, from)` | `parse_display_file(path, from_=None)` | planned | n/a |
-| Parse display bytes | `parse_display_bytes(bytes, format)` | `parse_display_bytes(data, format)` | planned | n/a |
-| Parse IO | n/a | file object later | `parse_file(io, format)` | n/a |
-| JSON to Network | `Network::from_json` | `from_json` | `from_json` | `pio_parse_str` + `"powerio-json"` |
-| File conversion | `convert_file(path, to, from)` | `convert_file(path, to, from_=None)` | `convert_file(path, to; from=nothing)` | `pio_convert_file` |
-| Text conversion | `convert_str(text, to, format)` | `convert_str(text, to, format)` | `convert_str(text, to; from=format)` | `pio_convert_str` |
-| Parsed conversion | `net.to_format(to)` | `net.to_format(to)` | `to_format(net, to)` | `pio_to_format` |
-| MATPOWER text | `net.to_matpower()` | `net.to_matpower()` | `to_matpower(net)` | `pio_to_format` + `"matpower"` |
-| JSON text | `net.to_json()` | `net.to_json()` | `to_json(net)` | `pio_to_format` + `"powerio-json"` |
-| `.pio.json` document JSON | `NetworkPackage::to_json()` | `Package` class / package transport | `to_package` / `write_package` | `pio_package_*` |
-| `.pio.json` operating points | `pkg.operating_points()` | `pkg.operating_points()` | planned | `pio_package_operating_points_json` |
-| Materialize operating point | `pkg.materialize_operating_point(i)` | `pkg.materialize_operating_point(i)` | planned | `pio_package_materialize_operating_point` |
-| `.pio.json` study block | `pkg.study()` | `pkg.study()` | planned | `pio_package_study_json` |
-| Materialize study commit | `pkg.materialize_study_commit(i)` | `pkg.materialize_study_commit(i)` | planned | `pio_package_materialize_study_commit` |
-| Normalized copy | `net.to_normalized()` | `net.to_normalized()` | `to_normalized(net)` | `pio_normalize` |
-| Dense tables | typed table API | `to_dense` | `to_dense` | `pio_*` extractors |
-| PyPSA CSV folder | `read_pypsa_csv_folder` / `write_pypsa_csv_folder` | `read_pypsa_csv_folder` / `net.write_pypsa_csv_folder` | `parse_file(dir; from="pypsa-csv")` / `write_pypsa_csv_folder` | `pio_parse_file` / `pio_write_dir` + `"pypsa-csv"` |
-| gridfm write | `write_gridfm_dataset` / `write_gridfm_batch` | `net.write_gridfm` / `write_gridfm_batch` | planned | planned |
-| gridfm read | `read_gridfm_dataset(dir, scenario)` | `read_gridfm(dir, scenario=0)` | `read_gridfm(dir; scenario=0)` | `pio_read_dir` + `"gridfm"` |
-| Arrow handoff | internal/C ABI | later | `to_arrow` | `pio_to_arrow` |
-
-**Note:** the C ABI carries no per-format symbols: matpower, `powerio-json`,
-PyPSA CSV directories, and gridfm datasets are all format strings into
-`pio_to_format` / `pio_parse_str` / `pio_write_dir` / `pio_read_dir`. Removing
-or changing a documented format token is a C behavior change even though the C
-signature stays the same. The language APIs keep their per-format conveniences
-(`to_matpower`, `from_json`, ...) as wrappers over the same paths.
-
-## C ABI and binding compatibility
-
-The C ABI is the stable boundary for non Rust callers. Handles own parsed
-networks. `PioPackage` handles own `.pio.json` documents. Callers free
-network handles with `pio_network_free`, package handles with
-`pio_package_free`, free returned text with `pio_string_free`, size output
-buffers before filling them, and treat every format name as a string routed
-through the same parser and writer hub.
-
-C ABI review points:
-
-- null handles must return documented defaults or errors, not crash;
-- optional output buffers must be safe to pass as null; required output structs
-  such as Arrow exports must report an error when null;
-- returned text and warning buffers must be NUL terminated when capacity permits;
-- reported lengths must let callers allocate exact buffers;
-- header declarations and exported Rust symbols must match;
-- feature gated exports such as Arrow, GridFM, distribution, and packages must
-  be additive;
-- ownership rules must be documented in the header, README, and binding code.
-
-Julia's `PowerIO.jl` uses the C ABI for handles, dense extractors, Arrow,
-GridFM, PyPSA CSV folders, distribution conversion, and `.pio.json` document
-construction. Programmatic whole-network JSON remains available through
-`powerio-json`; file handoffs should use `.pio.json`. The Julia binding checks
-`pio_abi_version()` against `PIO_ABI_VERSION` on first use. Distribution calls
-also check `pio_dist_abi_version()`.
-
-GOC3 document construction is the first `.pio.json` operating point path backed
-by a source format. The static balanced model JSON carries the first interval;
-the replayable series is exposed through the package APIs above.
-
-During development, test the sibling Julia binding against the local C ABI
-instead of an artifact:
-
-```sh
-cargo build -p powerio-capi --release --features arrow,matrix,gridfm,dist,pkg
-POWERIO_CAPI=$PWD/target/release/libpowerio_capi.dylib \
-  julia --project=../PowerIO.jl -e 'using Pkg; Pkg.test()'
+```text
+source -> parse -> PioModule<T> -> calculation or update -> emit
+                         |
+                         +-> serialize -> PowerIO IR
 ```
 
-Binding compatibility checks:
+`parse` and `emit` handle grid exchange formats, while `serialize` and
+`deserialize` handle PowerIO IR. A `calc_*` function returns a derived matrix,
+vector, report, or count, and a `to_*` function transforms a value in memory
+into another semantic type. The nouns are stored values and fields: module,
+value, diagnostics, network, bus, branch, generator, load, operating point,
+time series, scenario set, instance, solution.
 
-| surface | behavior |
-| --- | --- |
-| Python base import | `import powerio` does not import NumPy, SciPy, NetworkX, Polars, pandas, pyarrow, or the MCP SDK |
-| Python optional paths | matrix, graph, GridFM inspection, pandas, MCP, and benchmark oracles live behind extras |
-| C ABI | `pio_abi_version()` is the core compatibility check; optional symbols are additive and feature probed |
-| Julia | `PowerIO.jl` checks the C ABI version before first use and checks `pio_dist_abi_version()` before distribution calls |
-| Arrow | C returns Arrow C Data Interface structs; Julia's default `to_arrow` copies to owned vectors, while `copy=false` keeps the wrapper alive for zero copy reads |
-| GridFM | Julia and C read GridFM through `pio_read_dir` / `"gridfm"` and surface schema losses as warnings |
-| Distribution | Python, Julia, Rust, and C use separate distribution handles; transmission and distribution conversion paths do not mix |
-
-## Distribution surface (`powerio-dist`)
-
-The multiconductor distribution model follows the same taxonomy under its own
-handle type; the two families do not mix. The C distribution surface ships
-behind the optional `dist` feature (`PIO_DIST`); a consumer probes it with
-`pio_has_feature("dist")`, then checks `pio_dist_abi_version()` against
-`PIO_DIST_ABI_VERSION`. PowerIO.jl uses the same runtime check before calling
-the distribution C conversion helpers.
-
-| Concept | Rust | Python | Julia | C ABI |
+| Meaning | Rust | Python | Julia | C ABI 7 |
 |---|---|---|---|---|
-| Parse path | `powerio_dist::parse_file(path, from)` | `dist.parse_file(path, from_=None)` | `parse_file(DistNetwork, path; from=nothing)` | `pio_dist_parse_file` |
-| Parse text | `powerio_dist::parse_str(text, format)` | `dist.parse_str(text, format)` | `parse_str(DistNetwork, text, format)` | `pio_dist_parse_str` |
-| File conversion | `powerio_dist::convert_file(path, to, from)` | `dist.convert_file(path, to, from_=None)` | `convert_file(DistNetwork, path, to; from=nothing)` | `pio_dist_convert_file(path, from, to, ...)` |
-| Target format type | `DistTargetFormat` (`FromStr`, `name()`) | format name strings | `DistNetwork` plus format strings | format name strings |
-| Text conversion | `powerio_dist::convert_str(text, to, format)` | `dist.convert_str(text, to, format)` | `convert_str(DistNetwork, text, to, format)` | `pio_dist_convert_str(text, from, to, ...)` |
-| Parsed conversion | `net.to_format(to)` | `case.to_format(to)` | `to_format(net, to)` | `pio_dist_to_format` |
-| Parse warnings | `net.warnings` | `case.warnings` | `warnings(net)` | `pio_dist_warnings` |
-| Graph projection | `net.graph()` | `case.graph()` | planned | `pio_dist_graph_json` |
+| name a file | pass the name to `parse` | pass a path to `parse` | pass a path string to `parse` | `pio_source_open` |
+| acquire memory | `Source::from_memory(name, bytes)` | pass a file or bytes-like object | pass `IO` or `AbstractVector{UInt8}` | `pio_source_from_memory` |
+| parse | `parse(input)`, `parse_with_options(input, &options)` | `parse(source, format=..., name=...)` | `parse(source; format=..., name=...)` | `pio_parse` |
+| module value | `module.value()` | `module.value` | `module.value` | `pio_module_value` |
+| module diagnostics | `module.diagnostics()` | `module.diagnostics` | `module.diagnostics` | `pio_module_diagnostics` |
+| emit a format | `emit(&module, format, destination)` | `emit(module, format, destination=None)` | `emit(module, format, destination=nothing)` | `pio_emit` |
+| serialize IR | `serialize(&module, destination)` | `serialize(module, destination=None)` | `serialize(module, destination=nothing)` | `pio_module_serialize` |
+| deserialize IR | `deserialize(source)` | `deserialize(source)` | `deserialize(source)` | `pio_module_deserialize` |
+| apply updates | `apply_updates` | `apply_updates` | `apply_updates!` | `pio_apply_updates` |
+| resolve contingencies | `ContingencySet::resolve(&net)` | `network.resolve_contingencies(text)` | `resolve_contingencies(net, set)` | `pio_contingency_set_resolve` |
+| expand contingencies | `ContingencySet::expand(&net, &subsystems)` | `network.expand_contingencies(con, sub)` | `expand_contingencies(net, set, subsystems)` | `pio_contingency_set_expand` |
+| select subsystem buses | `Subsystem::select_buses(&net)` | `network.select_subsystem_buses(sub, name)` | `select_subsystem_buses(net, subsystems, name)` | `pio_balanced_network_select_subsystem_buses` |
+| apply a geo layer | `apply_geo_layer(&module, &layer)` | `network.apply_geo_layer(text)` | `apply_geo_layer(m, layer)` | `pio_module_apply_geo_layer` |
+
+To find out what you parsed, Rust matches on the `PioValue` case that
+`module.value()` returns, Python uses `isinstance`, Julia dispatches on
+`PioModule{T}` and on the concrete value types, and C compares canonical
+structural type names with `pio_value_is_type` before calling the typed
+accessor for the type it handles.
+
+Only Rust and C have a `Source` type, because both need an explicit owner for
+acquired bytes. A Python path, open file, or bytes-like object, or a Julia
+path, `IO`, or byte vector, already says where the bytes come from, and the
+interpreter owns them, so `parse` takes them directly and reads the source name
+from the path or from the `name` argument.
+
+A format made of related files goes through the same `parse`. For GO Challenge
+3, a directory holding the problem file returns `AcScucInstance`, and once the
+matching solution file sits beside it the same call returns `AcScucSolution`.
+
+## Member access
+
+Member names match across the four languages; what differs is the syntax, which
+follows what each language's users expect.
+
+| Language | A member | A table's length |
+|---|---|---|
+| Rust | accessor method: `module.value()`, `module.diagnostics()`, `network.buses()` | `network.buses().len()` |
+| Python | read only property: `module.value`, `module.diagnostics`, `network.buses` | `len(network.buses)` or `network.n_buses` |
+| Julia | property: `module.value`, `module.diagnostics`, `net.buses` | `length(net.buses)` |
+| C | one function per member: `pio_module_value`, `pio_module_diagnostics` | a `_count` function |
+
+Rust containers (`PioModule`, `BalancedNetwork`, `MulticonductorNetwork`,
+instances, and solutions) keep their fields private because they maintain
+invariants; `value_mut` severs retained source bytes, for example, and
+`add_diagnostic` rejects a duplicate identifier. Rust element records (`Bus`,
+`Branch`, `Generator`, `Load`, and the rest) are plain public structs, because
+struct literals and pattern matching are how Rust users build and read them.
+Python keeps the `n_*` counts because a table property builds one dict per row.
+A Python element is a dict keyed by the Rust field names, while a Julia element
+is an immutable struct whose field names are the C ABI names, which spell out
+the quantity and unit (`vm_pu`, `active_power_mw`). Unifying those two sets of
+field names is listed under [Known limits](scope-0.11.md).
+
+## Collections
+
+`TimeSeries<T>` and `ScenarioSet<T>` contain typed entries, and each language
+reaches them its own way.
+
+| Language | Operations |
+|---|---|
+| Rust | `len`, `iter`, checked `get` |
+| Python | `len`, iteration, `series[index]`, `scenarios[id]`; `TimeSeries` is a `Sequence` and `ScenarioSet` a `Mapping` |
+| Julia | `length`, iteration, 1-based `getindex` |
+| C | zero-based length and entry access; scenario lookup by identifier |
+
+An entry is either the contained value or a view rooted in the owning module,
+so indexing does not serialize, expand, or copy a complete network.
+
+## Calculations
+
+The DC matrix and vector functions have the same names in each language:
+
+```text
+calc_incidence_matrix
+calc_branch_susceptances
+calc_bus_susceptance_matrix
+calc_branch_flow_matrix
+calc_branch_phase_shift_injection
+calc_bus_phase_shift_injection
+calc_branch_flow_dc
+calc_bus_injection_dc
+```
+
+Rust and C use zero based sparse matrix positions, Python sparse matrices use
+SciPy's zero based positions, and Julia presents one based indices. Stable
+component identities and source identifiers do not change at a language
+boundary. [Matrices and graphs](matrices.md) gives the signs and equations.
+
+## Errors and ownership
+
+Rust returns `Result`, Python raises `PowerIOError` subclasses, Julia throws a
+`PowerIOError` with structured diagnostics, and C returns a documented failure
+value and writes one `PioError *` through its error output. Each failure has a
+stable diagnostic code.
+
+Python and Julia keep the native owner alive behind the borrowed typed views
+they hand you, whereas C callers retain and release opaque handles themselves.
+Ownership differs; the data types and the operation names do not.

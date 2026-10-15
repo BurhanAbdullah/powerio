@@ -4,7 +4,7 @@
 //! terminal names per bus, explicit grounding on buses, terminal maps on
 //! every element, SI units (V, W, var, ohm, S, meters) and radians. Terminal
 //! names are the OpenDSS node numbers as strings; implicit ground
-//! connections materialize as an explicit perfectly grounded neutral
+//! connections become an explicit perfectly grounded neutral
 //! terminal on the bus (named 4 on a three phase bus), the convention
 //! PowerModelsDistribution and the public BMOPF examples share.
 //!
@@ -14,16 +14,15 @@
 //! carries beyond the typed fields lives in its `extras` map.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo::{GeoMeta, Location};
+use crate::geo::{DistGeoMeta, DistLocation};
 
 pub type Extras = BTreeMap<String, serde_json::Value>;
 
 /// A square matrix in conductor order, row major.
-pub type Mat = Vec<Vec<f64>>;
+pub type ConductorMatrix = Vec<Vec<f64>>;
 
 /// Where the network came from; fixes the echo tier target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,20 +33,16 @@ pub enum DistSourceFormat {
     Dss,
     BmopfJson,
     PmdJson,
-    /// Read from a distribution CIM (IEC 61968-13 / GridAPPS-D) CIMXML file
-    /// set. Read only; no retained source text.
-    Cim,
 }
 
 impl DistSourceFormat {
     /// The canonical format name (`dss`, `pmd-json`, `bmopf-json`), accepted
-    /// back by [`crate::dist_target_from_name`].
+    /// back by [`crate::parse_dist_target_format`].
     pub fn name(self) -> &'static str {
         match self {
             DistSourceFormat::Dss => "dss",
             DistSourceFormat::PmdJson => "pmd-json",
             DistSourceFormat::BmopfJson => "bmopf-json",
-            DistSourceFormat::Cim => "cim",
         }
     }
 }
@@ -62,23 +57,69 @@ pub struct DistBus {
     /// Terminals tied to ground with zero impedance.
     pub grounded: Vec<String>,
     /// Voltage magnitude bounds, volts: the scalar pair plus the phase to
-    /// neutral, phase to phase, and symmetrical component families (the
-    /// four BMOPF bound families).
+    /// neutral and phase to phase families, and the per-sequence scalars
+    /// (BMOPF schema 0.1.0: positive sequence has both bounds, negative and
+    /// zero sequence and neutral to ground are magnitude caps whose lower
+    /// bound is always 0).
     pub v_min: Option<f64>,
     pub v_max: Option<f64>,
+    /// Nonuniform phase-to-ground bounds in phase-terminal order, volts.
+    /// A scalar bound, when present, takes precedence over this vector.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub v_min_phase: Option<Vec<f64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub v_max_phase: Option<Vec<f64>>,
     pub vpn_min: Option<Vec<f64>>,
     pub vpn_max: Option<Vec<f64>>,
     pub vpp_min: Option<Vec<f64>>,
     pub vpp_max: Option<Vec<f64>>,
-    pub vsym_min: Option<Vec<f64>>,
-    pub vsym_max: Option<Vec<f64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vpos_min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vpos_max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vneg_max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vzero_max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vn_max: Option<f64>,
     /// Optional bus coordinates in the network coordinate space.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub location: Option<Location>,
+    pub location: Option<DistLocation>,
     pub extras: Extras,
 }
 
 impl DistBus {
+    /// Phase positions in terminal order, using explicit BMOPF roles when supplied.
+    #[must_use]
+    pub fn phase_indices(&self, conventions: Option<&serde_json::Value>) -> Vec<usize> {
+        let numeric_four = self.terminals.len() == 4
+            && ["1", "2", "3", "4"]
+                .iter()
+                .all(|t| self.terminals.iter().any(|v| v == t));
+        self.terminals
+            .iter()
+            .enumerate()
+            .filter_map(|(index, terminal)| {
+                let nonphase = if let Some(roles) = conventions {
+                    ["neutral", "earth"].iter().any(|role| {
+                        roles
+                            .get(role)
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(|names| {
+                                names
+                                    .iter()
+                                    .any(|name| name.as_str() == Some(terminal.as_str()))
+                            })
+                    })
+                } else {
+                    terminal.eq_ignore_ascii_case("n") || (numeric_four && terminal == "4")
+                };
+                (!nonphase).then_some(index)
+            })
+            .collect()
+    }
+
     #[must_use]
     pub fn new(id: impl Into<String>, terminals: Vec<String>) -> Self {
         Self {
@@ -87,12 +128,17 @@ impl DistBus {
             grounded: Vec::new(),
             v_min: None,
             v_max: None,
+            v_min_phase: None,
+            v_max_phase: None,
             vpn_min: None,
             vpn_max: None,
             vpp_min: None,
             vpp_max: None,
-            vsym_min: None,
-            vsym_max: None,
+            vpos_min: None,
+            vpos_max: None,
+            vneg_max: None,
+            vzero_max: None,
+            vn_max: None,
             location: None,
             extras: Extras::new(),
         }
@@ -106,22 +152,32 @@ pub struct DistLineCode {
     pub name: String,
     pub n_conductors: usize,
     /// Series impedance, ohm per meter.
-    pub r_series: Mat,
-    pub x_series: Mat,
+    pub r_series: ConductorMatrix,
+    pub x_series: ConductorMatrix,
     /// Shunt admittance halves at each end, S per meter.
-    pub g_from: Mat,
-    pub b_from: Mat,
-    pub g_to: Mat,
-    pub b_to: Mat,
+    pub g_from: ConductorMatrix,
+    pub b_from: ConductorMatrix,
+    pub g_to: ConductorMatrix,
+    pub b_to: ConductorMatrix,
     /// Ampacity per conductor.
+    #[serde(default)]
     pub i_max: Option<Vec<f64>>,
+    #[serde(default)]
     pub s_max: Option<Vec<f64>>,
+    /// Origin of the impedance matrices (BMOPF `source`, e.g. "fem",
+    /// "datasheet", "import").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     pub extras: Extras,
 }
 
 impl DistLineCode {
     #[must_use]
-    pub fn new(name: impl Into<String>, r_series: Mat, x_series: Mat) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        r_series: ConductorMatrix,
+        x_series: ConductorMatrix,
+    ) -> Self {
         let n_conductors = matrix_extent(&r_series).max(matrix_extent(&x_series));
         Self {
             name: name.into(),
@@ -134,6 +190,7 @@ impl DistLineCode {
             b_to: zero_mat(n_conductors),
             i_max: None,
             s_max: None,
+            source: None,
             extras: Extras::new(),
         }
     }
@@ -151,6 +208,18 @@ pub struct DistLine {
     pub linecode: String,
     /// Meters.
     pub length: f64,
+    /// Polyline route in the network's coordinate space (`MulticonductorNetwork.geo`),
+    /// present only when a source provides intermediate geometry.
+    /// `#[serde(default)]` so JSON written before the field existed still
+    /// deserializes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<Vec<DistLocation>>,
+    /// Per-conductor ampacity and apparent power limits, amps and VA
+    /// (BMOPF schema 0.1.0 line fields, alongside the linecode's own).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub i_max: Option<Vec<f64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub s_max: Option<Vec<f64>>,
     pub extras: Extras,
 }
 
@@ -173,6 +242,52 @@ impl DistLine {
             terminal_map_to,
             linecode: linecode.into(),
             length,
+            route: None,
+            i_max: None,
+            s_max: None,
+            extras: Extras::new(),
+        }
+    }
+}
+
+/// A rated capacitor bank (BMOPF schema 0.1.0 `capacitor`): `q_rated` vars
+/// delivered at `v_nom` volts across the element terminals, distinct from the
+/// raw admittance [`DistShunt`]. The DSS converter still lowers OpenDSS
+/// capacitors to shunt B matrices; this element carries capacitors that arrive
+/// as BMOPF input.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[non_exhaustive]
+pub struct DistCapacitor {
+    pub name: String,
+    pub bus: String,
+    pub terminal_map: Vec<String>,
+    pub configuration: Configuration,
+    /// Nameplate rated reactive power of the whole bank, vars.
+    pub q_rated: f64,
+    /// Nameplate nominal voltage, volts: line to line for the three phase
+    /// configurations, across the terminals for SINGLE_PHASE.
+    pub v_nom: f64,
+    pub extras: Extras,
+}
+
+impl DistCapacitor {
+    #[must_use]
+    pub fn new(
+        name: impl Into<String>,
+        bus: impl Into<String>,
+        terminal_map: Vec<String>,
+        configuration: Configuration,
+        q_rated: f64,
+        v_nom: f64,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            bus: bus.into(),
+            terminal_map,
+            configuration,
+            q_rated,
+            v_nom,
             extras: Extras::new(),
         }
     }
@@ -188,6 +303,8 @@ pub struct DistSwitch {
     pub terminal_map_from: Vec<String>,
     pub terminal_map_to: Vec<String>,
     pub open: bool,
+    /// Ampacity per conductor.
+    #[serde(default)]
     pub i_max: Option<Vec<f64>>,
     pub extras: Extras,
 }
@@ -327,12 +444,26 @@ pub struct DistGenerator {
     /// Setpoint, watts per phase.
     pub p_nom: Vec<f64>,
     pub q_nom: Vec<f64>,
+    /// Bounds per phase.
+    #[serde(default)]
     pub p_min: Option<Vec<f64>>,
+    #[serde(default)]
     pub p_max: Option<Vec<f64>>,
+    #[serde(default)]
     pub q_min: Option<Vec<f64>>,
+    #[serde(default)]
     pub q_max: Option<Vec<f64>>,
-    /// $/kWh; no OpenDSS equivalent, so it is None until a format supplies it.
-    pub cost: Option<f64>,
+    /// Generation cost, $/kWh per phase conductor, exactly as the source
+    /// states it: one entry per phase, or a single entry for a scalar
+    /// statement. No OpenDSS equivalent, so it is None until a format
+    /// supplies it.
+    pub cost: Option<Vec<f64>>,
+    /// Per-conductor apparent power and current limits, VA and amps (BMOPF
+    /// generator fields, alongside the p/q bounds).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub s_max: Option<Vec<f64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub i_max: Option<Vec<f64>>,
     pub extras: Extras,
 }
 
@@ -358,6 +489,8 @@ impl DistGenerator {
             q_min: None,
             q_max: None,
             cost: None,
+            s_max: None,
+            i_max: None,
             extras: Extras::new(),
         }
     }
@@ -406,12 +539,17 @@ pub struct DistIbr {
     /// Per phase apparent power nameplate ratings, volt amperes.
     pub s_max: Vec<f64>,
     /// Per conductor current limits, amperes.
+    #[serde(default)]
     pub i_max: Option<Vec<f64>>,
     /// Available active power, watts.
     pub p_avail: Option<f64>,
+    #[serde(default)]
     pub p_min: Option<Vec<f64>>,
+    #[serde(default)]
     pub p_max: Option<Vec<f64>>,
+    #[serde(default)]
     pub q_min: Option<Vec<f64>>,
+    #[serde(default)]
     pub q_max: Option<Vec<f64>>,
     pub control_profile: Option<String>,
     pub voltage_aggregation: Option<IbrVoltageAggregation>,
@@ -561,8 +699,8 @@ pub struct DistShunt {
     pub bus: String,
     pub terminal_map: Vec<String>,
     /// Total siemens in conductor order.
-    pub g: Mat,
-    pub b: Mat,
+    pub g: ConductorMatrix,
+    pub b: ConductorMatrix,
     pub extras: Extras,
 }
 
@@ -572,8 +710,8 @@ impl DistShunt {
         name: impl Into<String>,
         bus: impl Into<String>,
         terminal_map: Vec<String>,
-        g: Mat,
-        b: Mat,
+        g: ConductorMatrix,
+        b: ConductorMatrix,
     ) -> Self {
         Self {
             name: name.into(),
@@ -590,7 +728,7 @@ impl DistShunt {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
-pub enum WindingConn {
+pub enum DistWindingConn {
     Wye,
     Delta,
 }
@@ -598,10 +736,10 @@ pub enum WindingConn {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[non_exhaustive]
-pub struct Winding {
+pub struct DistWinding {
     pub bus: String,
     pub terminal_map: Vec<String>,
-    pub conn: WindingConn,
+    pub conn: DistWindingConn,
     /// Rated winding voltage, volts (line to line for 2 and 3 phase).
     pub v_ref: f64,
     /// Volt amperes.
@@ -615,12 +753,12 @@ pub struct Winding {
     pub x_neutral: Option<f64>,
 }
 
-impl Winding {
+impl DistWinding {
     #[must_use]
     pub fn new(
         bus: impl Into<String>,
         terminal_map: Vec<String>,
-        conn: WindingConn,
+        conn: DistWindingConn,
         v_ref: f64,
         s_rating: f64,
     ) -> Self {
@@ -643,9 +781,10 @@ impl Winding {
 #[non_exhaustive]
 pub struct DistTransformer {
     pub name: String,
-    pub windings: Vec<Winding>,
+    pub windings: Vec<DistWinding>,
     /// Short circuit reactances between winding pairs, percent:
-    /// `[xhl]` for two windings, `[xhl, xht, xlt]` for three.
+    /// Upper-triangular order `12, 13, ..., 1n, 23, ..., (n-1)n`,
+    /// on winding 1's power base, matching OpenDSS `Xscarray`.
     pub xsc_pct: Vec<f64>,
     pub phases: usize,
     pub extras: Extras,
@@ -655,7 +794,7 @@ impl DistTransformer {
     #[must_use]
     pub fn new(
         name: impl Into<String>,
-        windings: Vec<Winding>,
+        windings: Vec<DistWinding>,
         xsc_pct: Vec<f64>,
         phases: usize,
     ) -> Self {
@@ -680,6 +819,9 @@ pub struct VoltageSource {
     pub v_magnitude: Vec<f64>,
     /// Radians per terminal.
     pub v_angle: Vec<f64>,
+    /// Energy cost rate in $/kWh, one entry per phase in terminal-map order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub energy_cost_rate: Option<Vec<f64>>,
     pub extras: Extras,
 }
 
@@ -698,6 +840,7 @@ impl VoltageSource {
             terminal_map,
             v_magnitude,
             v_angle,
+            energy_cost_rate: None,
             extras: Extras::new(),
         }
     }
@@ -729,22 +872,56 @@ impl UntypedObject {
     }
 }
 
+/// A multiconductor distribution network: an immutable cheap to clone owning
+/// handle over private shared tables.
+///
+/// Cloning the handle bumps one reference count and clones no table
+/// allocation. Reads go through the per field accessors; the `*_mut`
+/// accessors copy the shared tables once on first write to a shared handle
+/// (copy on write), so no other handle ever observes a mutation. Per element
+/// (`"class.name"` key), the tables also record which fields the reader
+/// materialized from a format default rather than the source text. The
+/// original source text for the byte exact echo tier is not carried here; it
+/// lives on the [`PioModule`](powerio_core::PioModule) a parse returns,
+/// alongside this network.
+#[derive(Debug, Clone)]
+pub struct MulticonductorNetwork {
+    tables: std::sync::Arc<MulticonductorNetworkTables>,
+}
+
+impl MulticonductorNetwork {
+    pub(crate) fn from_tables(tables: MulticonductorNetworkTables) -> Self {
+        Self {
+            tables: std::sync::Arc::new(tables),
+        }
+    }
+
+    /// The one mutation door: copies the shared tables on first write to a
+    /// shared handle, so no other handle observes the change.
+    pub(crate) fn tables_mut(&mut self) -> &mut MulticonductorNetworkTables {
+        std::sync::Arc::make_mut(&mut self.tables)
+    }
+}
+
 /// A multiconductor distribution network.
 ///
 /// `source` retains the original text for the byte exact echo tier;
 /// `defaulted` records, per element (`"class.name"` key), the fields the
 /// reader materialized from format defaults rather than the source text.
+// The one owned table store behind the `MulticonductorNetwork` handle.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[non_exhaustive]
-pub struct DistNetwork {
+#[cfg_attr(feature = "schema", schemars(rename = "MulticonductorNetwork"))]
+#[serde(remote = "Self")]
+pub(crate) struct MulticonductorNetworkTables {
     pub name: Option<String>,
     /// Hz.
     pub base_frequency: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub geo: Option<GeoMeta>,
+    pub geo: Option<DistGeoMeta>,
     pub buses: Vec<DistBus>,
-    pub linecodes: Vec<DistLineCode>,
+    #[serde(rename = "linecodes")]
+    pub line_codes: Vec<DistLineCode>,
     pub lines: Vec<DistLine>,
     pub switches: Vec<DistSwitch>,
     pub transformers: Vec<DistTransformer>,
@@ -755,47 +932,140 @@ pub struct DistNetwork {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub control_profiles: Vec<DistControlProfile>,
     pub shunts: Vec<DistShunt>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capacitors: Vec<DistCapacitor>,
     /// BMOPF allows exactly one; the model allows any number and the BMOPF
     /// writer warns beyond the first.
     pub sources: Vec<VoltageSource>,
-    pub untyped: Vec<UntypedObject>,
+    #[serde(rename = "untyped")]
+    pub untyped_objects: Vec<UntypedObject>,
     /// Source commands and options the typed model does not interpret
     /// (`solve`, `set mode=...`), in order, as (verb, args).
     pub commands: Vec<(String, String)>,
     pub options: Vec<(String, String)>,
     /// Per-element record of which fields were materialized from a format
     /// default. Skipped in the `.pio.json` payload: the field holds
-    /// `&'static str` (no `Deserialize`), and this provenance belongs in the
-    /// compiler package's `source_maps` as `mapping_kind = defaulted`, not in
-    /// the raw IR payload. See
+    /// `&'static str` (no `Deserialize`), and these defaulted fields belong in
+    /// the module source map with `mapping_kind = defaulted`, not in the
+    /// network value. See
     /// <https://eigenergy.github.io/powerio/guide/pio-json-schema.html>.
     #[serde(skip)]
     pub defaulted: BTreeMap<String, Vec<&'static str>>,
-    pub warnings: Vec<String>,
-    /// Retained source text for the byte-exact echo tier. Skipped in the
-    /// `.pio.json` payload (mirrors `powerio::Network::source`): keeping it out
-    /// avoids serde's `rc` feature, and retained source is an envelope concern
-    /// surfaced through `Origin::File { retained_source, .. }`.
-    #[serde(skip)]
-    pub source: Option<Arc<String>>,
     pub source_format: Option<DistSourceFormat>,
     pub extras: Extras,
 }
 
-/// v1-facing name for the canonical multiconductor distribution model.
-pub type MulticonductorNetwork = DistNetwork;
+// `remote = "Self"` turns the derived serde impls into inherent functions;
+// routing them through `powerio_core::nonfinite` spells a nonfinite float as
+// `"Infinity"`/`"-Infinity"`/`"NaN"` on every JSON route, the same convention
+// as the balanced model.
+impl serde::Serialize for MulticonductorNetwork {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        MulticonductorNetworkTables::serialize(
+            &self.tables,
+            powerio_core::__implementation::nonfinite::NonFiniteSer(serializer),
+        )
+    }
+}
 
-impl Default for DistNetwork {
+impl<'de> serde::Deserialize<'de> for MulticonductorNetwork {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        MulticonductorNetworkTables::deserialize(
+            powerio_core::__implementation::nonfinite::NonFiniteDe(deserializer),
+        )
+        .map(MulticonductorNetwork::from_tables)
+    }
+}
+
+#[cfg(feature = "schema")]
+impl schemars::JsonSchema for MulticonductorNetwork {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        <MulticonductorNetworkTables as schemars::JsonSchema>::schema_name()
+    }
+
+    fn schema_id() -> std::borrow::Cow<'static, str> {
+        <MulticonductorNetworkTables as schemars::JsonSchema>::schema_id()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <MulticonductorNetworkTables as schemars::JsonSchema>::json_schema(generator)
+    }
+}
+
+macro_rules! dist_table_accessors {
+    ($($field:ident, $field_mut:ident: $ty:ty;)+) => {
+        impl MulticonductorNetwork {
+            $(
+                #[must_use]
+                pub fn $field(&self) -> &$ty {
+                    &self.tables.$field
+                }
+
+                /// Mutable access to the same table; a shared handle copies
+                /// its tables once here, so no other handle observes the
+                /// change.
+                #[must_use]
+                pub fn $field_mut(&mut self) -> &mut $ty {
+                    &mut self.tables_mut().$field
+                }
+            )+
+        }
+    };
+}
+
+dist_table_accessors! {
+    name, name_mut: Option<String>;
+    geo, geo_mut: Option<DistGeoMeta>;
+    buses, buses_mut: Vec<DistBus>;
+    line_codes, line_codes_mut: Vec<DistLineCode>;
+    lines, lines_mut: Vec<DistLine>;
+    switches, switches_mut: Vec<DistSwitch>;
+    transformers, transformers_mut: Vec<DistTransformer>;
+    loads, loads_mut: Vec<DistLoad>;
+    generators, generators_mut: Vec<DistGenerator>;
+    ibrs, ibrs_mut: Vec<DistIbr>;
+    control_profiles, control_profiles_mut: Vec<DistControlProfile>;
+    shunts, shunts_mut: Vec<DistShunt>;
+    capacitors, capacitors_mut: Vec<DistCapacitor>;
+    sources, sources_mut: Vec<VoltageSource>;
+    untyped_objects, untyped_objects_mut: Vec<UntypedObject>;
+    commands, commands_mut: Vec<(String, String)>;
+    options, options_mut: Vec<(String, String)>;
+    defaulted, defaulted_mut: BTreeMap<String, Vec<&'static str>>;
+    source_format, source_format_mut: Option<DistSourceFormat>;
+    extras, extras_mut: Extras;
+}
+
+impl MulticonductorNetwork {
+    /// Hz.
+    #[must_use]
+    pub fn base_frequency(&self) -> f64 {
+        self.tables.base_frequency
+    }
+
+    #[must_use]
+    pub fn base_frequency_mut(&mut self) -> &mut f64 {
+        &mut self.tables_mut().base_frequency
+    }
+}
+
+impl Default for MulticonductorNetwork {
+    fn default() -> Self {
+        MulticonductorNetwork::from_tables(MulticonductorNetworkTables::default())
+    }
+}
+
+impl Default for MulticonductorNetworkTables {
     /// An empty network at the OpenDSS default frequency. A derived 0 Hz
     /// default would put NaN into every capacitance the dss writer converts
     /// through omega.
     fn default() -> Self {
-        DistNetwork {
+        MulticonductorNetworkTables {
             name: None,
             base_frequency: crate::dss::defaults::BASE_FREQUENCY,
             geo: None,
             buses: Vec::new(),
-            linecodes: Vec::new(),
+            line_codes: Vec::new(),
             lines: Vec::new(),
             switches: Vec::new(),
             transformers: Vec::new(),
@@ -804,20 +1074,19 @@ impl Default for DistNetwork {
             ibrs: Vec::new(),
             control_profiles: Vec::new(),
             shunts: Vec::new(),
+            capacitors: Vec::new(),
             sources: Vec::new(),
-            untyped: Vec::new(),
+            untyped_objects: Vec::new(),
             commands: Vec::new(),
             options: Vec::new(),
             defaulted: BTreeMap::new(),
-            warnings: Vec::new(),
-            source: None,
             source_format: None,
             extras: Extras::new(),
         }
     }
 }
 
-impl DistNetwork {
+impl MulticonductorNetwork {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -825,40 +1094,185 @@ impl DistNetwork {
 
     #[must_use]
     pub fn named(name: impl Into<String>) -> Self {
-        Self {
+        MulticonductorNetwork::from_tables(MulticonductorNetworkTables {
             name: Some(name.into()),
-            ..Self::default()
-        }
+            ..MulticonductorNetworkTables::default()
+        })
     }
 
     /// Case insensitive, matching the source formats' name semantics.
     pub fn bus(&self, id: &str) -> Option<&DistBus> {
-        self.buses.iter().find(|b| b.id.eq_ignore_ascii_case(id))
+        self.buses().iter().find(|b| b.id.eq_ignore_ascii_case(id))
     }
 
     /// Case insensitive, matching the source formats' name semantics.
     pub fn linecode(&self, name: &str) -> Option<&DistLineCode> {
-        self.linecodes
+        self.line_codes()
             .iter()
             .find(|c| c.name.eq_ignore_ascii_case(name))
     }
 }
 
-fn zero_mat(n: usize) -> Mat {
+/// Susceptance converts to a dss `cmatrix` at the network frequency, so a
+/// 50 Hz feeder read at the 60 Hz default loses a fifth of its line charging,
+/// and a stated 60 Hz is indistinguishable from a defaulted one downstream.
+/// Only a network carrying susceptance can lose anything, so a document that
+/// states no frequency and no charging stays quiet.
+pub(crate) fn warn_defaulted_frequency(
+    net: &MulticonductorNetwork,
+    field: &str,
+    diags: &mut crate::collect::Diagnostics,
+) {
+    let charging = net.line_codes().iter().any(|c| {
+        [&c.b_from, &c.b_to]
+            .iter()
+            .flat_map(|m| m.iter())
+            .flatten()
+            .any(|v| v.is_finite() && v.abs() > 0.0)
+    });
+    if charging {
+        diags.push(
+            &crate::diagnostics::codes::READ_MULTICONDUCTOR_VALUE_DEFAULTED,
+            format!(
+                "document states no {field} and carries line susceptance; read at {} Hz",
+                net.base_frequency()
+            ),
+        );
+    }
+}
+
+/// Push a warning for every dangling or empty cross-reference. Bus and
+/// linecode references are bare strings, a reader leaves an empty string
+/// where the field is missing, and the graph projection synthesizes a
+/// phantom bus for any unresolved id (the empty string included) — so a
+/// typo or an absent field would otherwise parse cleanly into a
+/// topologically wrong network. Comparison is ASCII case insensitive,
+/// matching [`MulticonductorNetwork::bus`] and [`MulticonductorNetwork::linecode`].
+/// The unresolved bus and linecode references of a network, as one message
+/// per finding: the same walk the reader's warning pass runs, exposed so a
+/// decoder can refuse a document whose network fails it.
+#[must_use]
+pub fn find_unresolved_references(net: &MulticonductorNetwork) -> Vec<String> {
+    let mut diags = crate::collect::Diagnostics::new();
+    warn_unresolved_references(net, &mut diags);
+    diags
+        .into_records()
+        .into_iter()
+        .map(|record| record.message().to_owned())
+        .collect()
+}
+
+pub(crate) fn warn_unresolved_references(
+    net: &MulticonductorNetwork,
+    diags: &mut crate::collect::Diagnostics,
+) {
+    use std::collections::BTreeSet;
+    let buses: BTreeSet<String> = net
+        .buses()
+        .iter()
+        .map(|b| b.id.to_ascii_lowercase())
+        .collect();
+    let linecodes: BTreeSet<String> = net
+        .line_codes()
+        .iter()
+        .map(|c| c.name.to_ascii_lowercase())
+        .collect();
+    let mut warnings = Vec::new();
+    {
+        let mut bus = |what: &str, field: &str, id: &str| {
+            if id.is_empty() {
+                warnings.push(format!("{what}: `{field}` reference is empty or missing"));
+            } else if !buses.contains(&id.to_ascii_lowercase()) {
+                warnings.push(format!("{what}: references undefined bus `{id}`"));
+            }
+        };
+        for l in net.lines() {
+            let what = format!("line {}", l.name);
+            bus(&what, "bus_from", &l.bus_from);
+            bus(&what, "bus_to", &l.bus_to);
+        }
+        for sw in net.switches() {
+            let what = format!("switch {}", sw.name);
+            bus(&what, "bus_from", &sw.bus_from);
+            bus(&what, "bus_to", &sw.bus_to);
+        }
+        for t in net.transformers() {
+            let what = format!("transformer {}", t.name);
+            for w in &t.windings {
+                bus(&what, "bus", &w.bus);
+            }
+        }
+        for (what, id) in std::iter::empty()
+            .chain(
+                net.loads()
+                    .iter()
+                    .map(|x| (format!("load {}", x.name), &x.bus)),
+            )
+            .chain(
+                net.generators()
+                    .iter()
+                    .map(|x| (format!("generator {}", x.name), &x.bus)),
+            )
+            .chain(
+                net.shunts()
+                    .iter()
+                    .map(|x| (format!("shunt {}", x.name), &x.bus)),
+            )
+            .chain(
+                net.capacitors()
+                    .iter()
+                    .map(|x| (format!("capacitor {}", x.name), &x.bus)),
+            )
+            .chain(
+                net.ibrs()
+                    .iter()
+                    .map(|x| (format!("ibr {}", x.name), &x.bus)),
+            )
+            .chain(
+                net.sources()
+                    .iter()
+                    .map(|x| (format!("voltage_source {}", x.name), &x.bus)),
+            )
+        {
+            bus(&what, "bus", id);
+        }
+    }
+    for l in net.lines() {
+        if l.linecode.is_empty() {
+            warnings.push(format!(
+                "line {}: `linecode` reference is empty or missing",
+                l.name
+            ));
+        } else if !linecodes.contains(&l.linecode.to_ascii_lowercase()) {
+            warnings.push(format!(
+                "line {}: references undefined linecode `{}`",
+                l.name, l.linecode
+            ));
+        }
+    }
+    for message in warnings {
+        diags.push(
+            &crate::diagnostics::codes::VALIDATE_MULTICONDUCTOR_REFERENCE_UNDEFINED,
+            message,
+        );
+    }
+}
+
+fn zero_mat(n: usize) -> ConductorMatrix {
     vec![vec![0.0; n]; n]
 }
 
-fn matrix_extent(m: &Mat) -> usize {
+fn matrix_extent(m: &ConductorMatrix) -> usize {
     m.iter().map(Vec::len).fold(m.len(), usize::max)
 }
 
 /// Windings per phase for an n-winding transformer terminal map: WYE counts
 /// the hot terminals (excluding the shared neutral), DELTA counts terminals
 /// directly except the phase to phase two terminal case.
-pub(crate) fn n_winding_phase_count(conn: WindingConn, terminal_map: &[String]) -> usize {
+pub(crate) fn n_winding_phase_count(conn: DistWindingConn, terminal_map: &[String]) -> usize {
     match conn {
-        WindingConn::Wye => terminal_map.len().saturating_sub(1).max(1),
-        WindingConn::Delta => {
+        DistWindingConn::Wye => terminal_map.len().saturating_sub(1).max(1),
+        DistWindingConn::Delta => {
             if terminal_map.len() == 2 {
                 1
             } else {
@@ -876,6 +1290,55 @@ pub(crate) fn n_winding_impedance_base(phases: usize, v_nom: f64, s: f64) -> Opt
         .then_some(phases * v_nom * v_nom / s)
 }
 
+/// The two phase conductors of a line to line regulating winding: exactly
+/// two terminals, both named 1..=3, distinct, in terminal map order.
+pub(crate) fn winding_phase_pair(winding: &DistWinding) -> Option<(u8, u8)> {
+    let [first, second] = winding.terminal_map.as_slice() else {
+        return None;
+    };
+    let phase = |term: &String| term.parse::<u8>().ok().filter(|n| (1..=3).contains(n));
+    match (phase(first), phase(second)) {
+        (Some(lead), Some(lag)) if lead != lag => Some((lead, lag)),
+        _ => None,
+    }
+}
+
+/// The GridLAB-D open delta connection two ordered line to line phase pairs
+/// spell (the naming the BMOPFTools schema extension uses), and whether the
+/// legs arrived in the swapped order. Any other orientation is `None`.
+pub(crate) fn open_delta_connection(a: (u8, u8), b: (u8, u8)) -> Option<(&'static str, bool)> {
+    match (a, b) {
+        ((1, 2), (2, 3)) => Some(("ABBC", false)),
+        ((2, 3), (1, 2)) => Some(("ABBC", true)),
+        ((2, 3), (1, 3)) => Some(("BCAC", false)),
+        ((1, 3), (2, 3)) => Some(("BCAC", true)),
+        ((3, 1), (2, 1)) => Some(("CABA", false)),
+        ((2, 1), (3, 1)) => Some(("CABA", true)),
+        _ => None,
+    }
+}
+
+/// Whether two single phase regulator legs are electrically identical, so
+/// one BMOPF `open_delta_regulator` object (which states one per regulator
+/// impedance and rating) can carry both without collapsing anything.
+pub(crate) fn open_delta_pairable(a: &DistTransformer, b: &DistTransformer) -> bool {
+    let ([a0, a1], [b0, b1]) = (a.windings.as_slice(), b.windings.as_slice()) else {
+        return false;
+    };
+    let eq = |x: f64, y: f64| x.to_bits() == y.to_bits();
+    eq(a0.v_ref, b0.v_ref)
+        && eq(a1.v_ref, b1.v_ref)
+        && eq(a0.s_rating, b0.s_rating)
+        && eq(a1.s_rating, b1.s_rating)
+        && eq(a0.r_pct, b0.r_pct)
+        && eq(a1.r_pct, b1.r_pct)
+        && a.xsc_pct.len() == b.xsc_pct.len()
+        && a.xsc_pct.iter().zip(&b.xsc_pct).all(|(x, y)| eq(*x, *y))
+        && ["%noloadloss", "%imag", "g_no_load", "b_no_load"]
+            .iter()
+            .all(|k| a.extras.get(*k) == b.extras.get(*k))
+}
+
 /// Upper triangular `(i, j)` winding index pairs for `n` windings, the order
 /// short circuit test pairs (`x_sc`/`xsc_pct`) are keyed by.
 pub(crate) fn pair_keys(n: usize) -> Vec<(usize, usize)> {
@@ -890,7 +1353,7 @@ pub(crate) fn pair_keys(n: usize) -> Vec<(usize, usize)> {
 
 /// Builds an `n`x`n` matrix from lower triangle rows (the OpenDSS matrix
 /// entry convention) or full rows; symmetric completion for the triangle.
-pub(crate) fn square_from_rows(rows: &[Vec<f64>], n: usize) -> Option<Mat> {
+pub(crate) fn square_from_rows(rows: &[Vec<f64>], n: usize) -> Option<ConductorMatrix> {
     let mut m = vec![vec![0.0; n]; n];
     if rows.len() != n {
         return None;
@@ -912,6 +1375,40 @@ pub(crate) fn square_from_rows(rows: &[Vec<f64>], n: usize) -> Option<Mat> {
         return None;
     }
     Some(m)
+}
+
+/// Actual coil voltage base, including the fixed winding tap.
+pub(crate) fn winding_coil_voltage(winding: &DistWinding, phases: usize) -> f64 {
+    let divisor = if winding.conn == DistWindingConn::Wye && matches!(phases, 2 | 3) {
+        3f64.sqrt()
+    } else {
+        1.0
+    };
+    winding.v_ref * winding.tap / divisor
+}
+
+/// OpenDSS no-load percentages for an explicit winding-2 terminal-coil shunt.
+/// Other winding locations cannot use the OpenDSS exciting-branch parameters.
+pub(crate) fn transformer_no_load_percentages(t: &DistTransformer) -> Option<(f64, f64)> {
+    let shunt = t.extras.get("no_load_shunt")?;
+    if shunt.get("winding")?.as_u64()? != 2 {
+        return None;
+    }
+    let g = shunt.get("g")?.as_f64()?;
+    let b = shunt.get("b")?.as_f64()?;
+    let voltage = winding_coil_voltage(t.windings.get(1)?, t.phases);
+    let rating = t.windings.first()?.s_rating;
+    if !voltage.is_finite()
+        || voltage <= 0.0
+        || !rating.is_finite()
+        || rating <= 0.0
+        || g < 0.0
+        || b > 0.0
+    {
+        return None;
+    }
+    let scale = 100.0 * t.phases.max(1) as f64 * voltage.powi(2) / rating;
+    Some((g * scale, -b * scale))
 }
 
 #[cfg(test)]
@@ -942,5 +1439,20 @@ mod tests {
     fn wrong_shape_is_rejected() {
         assert!(square_from_rows(&[vec![1.0], vec![2.0]], 2).is_none());
         assert!(square_from_rows(&[vec![1.0, 2.0]], 2).is_none());
+    }
+
+    #[test]
+    fn multiconductor_json_uses_only_final_nonfinite_spellings() {
+        let mut network = MulticonductorNetwork::named("strict-ir");
+        let mut code = DistLineCode::new("lc", vec![vec![0.1]], vec![vec![0.2]]);
+        code.i_max = Some(vec![f64::INFINITY]);
+        network.line_codes_mut().push(code);
+
+        let text = serde_json::to_string(&network).unwrap();
+        assert!(text.contains(r#""i_max":["Infinity"]"#), "{text}");
+
+        let invalid = text.replace(r#""i_max":["Infinity"]"#, r#""i_max":[null]"#);
+        let error = serde_json::from_str::<MulticonductorNetwork>(&invalid).unwrap_err();
+        assert!(error.to_string().contains("cannot be null"), "{error}");
     }
 }

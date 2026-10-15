@@ -1,18 +1,17 @@
-"""Multiconductor distribution networks in wire coordinates.
+"""Multiconductor distribution network values.
 
-Three formats, lossless three way conversion: OpenDSS ``.dss``,
-PowerModelsDistribution ENGINEERING JSON (``pmd-json``), and the draft BMOPF
-task force JSON (``bmopf-json``). The fidelity rules match the
-transmission surface: writing back to the source format echoes the retained
-source text byte for byte, and every cross format write reports each loss in
-the :class:`~powerio.Conversion` warnings instead of dropping it silently.
+The typed model uses wire coordinates. Supported formats are OpenDSS ``.dss``,
+PowerModelsDistribution ENGINEERING JSON (``pmd-json``), and BMOPF JSON
+(``bmopf-json``). Same format emissions can return retained source bytes. Cross
+format emissions report unsupported fields as diagnostics.
 
-    import powerio.dist as dist
+    import powerio
 
-    net = dist.parse_file("feeder.dss")
-    for w in net.warnings:
-        print("parse:", w)
-    conv = net.to_format("pmd-json")
+    module = powerio.parse("feeder.dss")
+    net = module.value
+    for diagnostic in module.diagnostics:
+        print("parse:", diagnostic)
+    conv = powerio.emit(module, "pmd-json")
 """
 
 from __future__ import annotations
@@ -20,25 +19,19 @@ from __future__ import annotations
 import json as _json
 from typing import Any, Optional
 
-from . import Conversion, _powerio
+from ._guard import guard_class as _guard_class
 
-__all__ = [
-    "DistNetwork",
-    "MulticonductorNetwork",
-    "parse_file",
-    "parse_str",
-    "convert_file",
-    "convert_str",
-]
+__all__ = ["MulticonductorNetwork"]
 
 
-class DistNetwork:
-    """A parsed multiconductor distribution network.
+@_guard_class
+class MulticonductorNetwork:
+    """A parsed multiconductor distribution network in wire coordinates.
 
     Buses carry named terminals, lines carry conductor impedance matrices, and
-    transformers carry per winding connections; nothing is collapsed to
-    positive sequence. Distinct from :class:`powerio.Network` (the
-    transmission model); the matrix builders do not accept it.
+    transformers carry per winding connections. This type is distinct from the
+    positive sequence :class:`powerio.BalancedNetwork`; balanced matrix calculations do not
+    accept it.
     """
 
     def __init__(self, inner) -> None:
@@ -55,9 +48,9 @@ class DistNetwork:
         return self._inner.source_format()
 
     @property
-    def warnings(self) -> "list[str]":
-        """Parse warnings: everything the reader could not represent or had to assume."""
-        return self._inner.warnings()
+    def base_frequency(self) -> float:
+        """System base frequency in hertz."""
+        return self._inner.base_frequency()
 
     @property
     def n_buses(self) -> int:
@@ -66,6 +59,14 @@ class DistNetwork:
     @property
     def n_lines(self) -> int:
         return self._inner.n_lines()
+
+    @property
+    def n_line_codes(self) -> int:
+        return self._inner.n_line_codes()
+
+    @property
+    def n_switches(self) -> int:
+        return self._inner.n_switches()
 
     @property
     def n_transformers(self) -> int:
@@ -80,69 +81,108 @@ class DistNetwork:
         return self._inner.n_generators()
 
     @property
-    def n_sources(self) -> int:
-        return self._inner.n_sources()
+    def n_ibrs(self) -> int:
+        return self._inner.n_ibrs()
 
-    def to_format(self, to: str) -> Conversion:
-        """Serialize to ``to`` (``dss``, ``pmd-json``, ``bmopf-json``).
+    @property
+    def n_control_profiles(self) -> int:
+        return self._inner.n_control_profiles()
 
-        Writing back to the source format echoes the retained source text byte
-        for byte; a cross format write regenerates from the typed model and
-        reports every fidelity loss in the warnings.
-        """
-        text, warnings = self._inner.to_format(to)
-        return Conversion(text, warnings)
+    @property
+    def n_shunts(self) -> int:
+        return self._inner.n_shunts()
 
-    def to_canonical_format(self, to: str) -> Conversion:
-        """Serialize to ``to`` from the typed model, bypassing source echo."""
-        text, warnings = self._inner.to_canonical_format(to)
-        return Conversion(text, warnings)
+    @property
+    def n_capacitors(self) -> int:
+        return self._inner.n_capacitors()
 
-    def graph(self) -> Any:
-        """Collapsed bus and terminal graph as Python data."""
+    @property
+    def n_voltage_sources(self) -> int:
+        """Number of grid forming voltage sources."""
+        return self._inner.n_voltage_sources()
+
+    @property
+    def n_untyped_objects(self) -> int:
+        return self._inner.n_untyped_objects()
+
+    # These properties are copies of the native model tables. Nested field
+    # names come from the Rust model's serialization, so this wrapper does not
+    # maintain a second distribution schema.
+
+    @property
+    def buses(self) -> "list[dict[str, Any]]":
+        return self._inner.buses()
+
+    @property
+    def line_codes(self) -> "list[dict[str, Any]]":
+        return self._inner.line_codes()
+
+    @property
+    def lines(self) -> "list[dict[str, Any]]":
+        return self._inner.lines()
+
+    @property
+    def switches(self) -> "list[dict[str, Any]]":
+        return self._inner.switches()
+
+    @property
+    def transformers(self) -> "list[dict[str, Any]]":
+        return self._inner.transformers()
+
+    @property
+    def loads(self) -> "list[dict[str, Any]]":
+        return self._inner.loads()
+
+    @property
+    def generators(self) -> "list[dict[str, Any]]":
+        return self._inner.generators()
+
+    @property
+    def ibrs(self) -> "list[dict[str, Any]]":
+        return self._inner.ibrs()
+
+    @property
+    def control_profiles(self) -> "list[dict[str, Any]]":
+        return self._inner.control_profiles()
+
+    @property
+    def shunts(self) -> "list[dict[str, Any]]":
+        return self._inner.shunts()
+
+    @property
+    def capacitors(self) -> "list[dict[str, Any]]":
+        return self._inner.capacitors()
+
+    @property
+    def voltage_sources(self) -> "list[dict[str, Any]]":
+        return self._inner.voltage_sources()
+
+    @property
+    def untyped_objects(self) -> "list[dict[str, Any]]":
+        return self._inner.untyped_objects()
+
+    def to_graph(self) -> Any:
+        """Transform the network to collapsed bus and terminal graph data."""
         return _json.loads(self._inner.graph_json())
+
+    def to_geo_layer(self) -> Any:
+        """Transform coordinates to a canonical GeoJSON FeatureCollection.
+
+        A network without coordinates produces an empty feature collection.
+        """
+        return _json.loads(self._inner.to_geo_layer_json())
+
+    def apply_geo_layer(
+        self, text: str, name_hint: Optional[str] = None
+    ) -> tuple["MulticonductorNetwork", Any]:
+        """Apply a geographic sidecar and return ``(placed, report)``.
+
+        ``text`` is any form :func:`powerio.parse_geo` accepts. This network
+        is unchanged; the placed copy drops the retained source text, so a
+        same-format emission re-serializes.
+        """
+        inner, report = self._inner.apply_geo_layer(text, name_hint)
+        return MulticonductorNetwork(inner), report
 
     def __repr__(self) -> str:
         return self._inner.__repr__()
-
-
-# v1 name for the wire coordinate distribution model. ``DistNetwork`` remains
-# available in 0.4 because it is the existing handle name.
-MulticonductorNetwork = DistNetwork
-
-
-def parse_file(path: Any, from_: Optional[str] = None) -> MulticonductorNetwork:
-    """Parse a distribution network file.
-
-    The format comes from ``from_`` when given, else from the file itself:
-    ``.dss`` is OpenDSS, and ``.json`` holding the ENGINEERING ``data_model``
-    key is PMD JSON, otherwise BMOPF JSON.
-    """
-    return DistNetwork(_powerio.dist_parse_file(str(path), from_))
-
-
-def parse_str(text: str, format: str) -> MulticonductorNetwork:
-    """Parse an in-memory distribution network of the named ``format``."""
-    return DistNetwork(_powerio.dist_parse_str(text, format))
-
-
-def convert_file(path: Any, to: str, from_: Optional[str] = None) -> Conversion:
-    """Convert a distribution network file to ``to`` in one call.
-
-    The warnings carry both the parse warnings and the writer's fidelity
-    losses (there is no :class:`DistNetwork` to query them from).
-    """
-    text, warnings = _powerio.dist_convert_file(str(path), to, from_)
-    return Conversion(text, warnings)
-
-
-def convert_str(text: str, to: str, format: str) -> Conversion:
-    """Convert an in-memory distribution network of the named ``format`` to ``to``.
-
-    The signature matches :func:`powerio.convert_str`: input, target, source,
-    except ``format`` is required (there is no extension to infer from and no
-    default). The warnings carry both the parse warnings and the writer's
-    fidelity losses (there is no :class:`DistNetwork` to query them from).
-    """
-    text, warnings = _powerio.dist_convert_str(text, to, format)
-    return Conversion(text, warnings)

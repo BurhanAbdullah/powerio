@@ -11,9 +11,9 @@ use std::time::Instant;
 
 use sprs::CsMat;
 
-use powerio_matrix::matrix::{MatrixStats, sddm_check};
-use powerio_matrix::network::Network;
-use powerio_matrix::pipeline::{MatrixKind, RhsKind, matrix_stats_for_kind};
+use powerio::BalancedNetwork;
+use powerio_matrix::matrix::{MatrixStats, check_sddm};
+use powerio_matrix::pipeline::{MatrixKind, RhsKind, calc_matrix_stats_for_kind};
 use powerio_matrix::synth::{SynthSpec, Topology};
 
 use super::log_pane::LogBuf;
@@ -66,7 +66,7 @@ pub struct MatrixCell {
 
 #[derive(Debug, Clone)]
 pub struct InspectState {
-    pub case: Network,
+    pub case: BalancedNetwork,
     pub kind: MatrixKind,
     pub kind_idx: usize,
     pub matrices: BTreeMap<MatrixKindOrd, MatrixCell>,
@@ -150,7 +150,7 @@ impl SynthField {
 pub struct SynthState {
     pub spec: SynthSpec,
     pub field: SynthField,
-    pub generated: Option<Network>,
+    pub generated: Option<BalancedNetwork>,
 }
 
 impl Default for SynthState {
@@ -207,64 +207,60 @@ impl App {
     }
 
     pub fn refresh_cases(&mut self) {
-        let mut entries = walkdir::WalkDir::new(&self.data_dir)
-            .max_depth(2)
+        // The discovered order is already sorted by path, which groups
+        // subfolders; display names keep the relative path and extension so
+        // same-stem cases in different formats stay distinguishable.
+        self.cases = crate::cases::discover_cases(&self.data_dir, Some(&self.out_dir))
             .into_iter()
-            .filter_map(std::result::Result::ok)
-            .filter(|e| e.file_type().is_file())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .is_some_and(|x| x.eq_ignore_ascii_case("m"))
-            })
-            .map(|e| {
-                let path = e.path().to_path_buf();
+            .map(|path| {
                 let display_name = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("?")
-                    .to_string();
+                    .strip_prefix(&self.data_dir)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .into_owned();
                 CaseEntry {
                     path,
                     display_name,
                     parsed: ParseStatus::NotLoaded,
                 }
             })
-            .collect::<Vec<_>>();
-        entries.sort_by(|a, b| a.display_name.cmp(&b.display_name));
-        self.cases = entries;
+            .collect();
         if self.selected >= self.cases.len() {
             self.selected = self.cases.len().saturating_sub(1);
         }
     }
 
     pub fn parse_selected(&mut self) {
-        if let Some(entry) = self.cases.get_mut(self.selected) {
-            if matches!(entry.parsed, ParseStatus::NotLoaded) {
-                entry.parsed = match powerio_matrix::parse_matpower_file(&entry.path) {
-                    Ok(case) => ParseStatus::Loaded {
-                        n_buses: case.buses.len(),
-                        n_branches: case.branches.len(),
-                        base_mva: case.base_mva,
-                    },
-                    Err(e) => ParseStatus::Failed(e.to_string()),
-                };
-            }
+        if let Some(entry) = self.cases.get_mut(self.selected)
+            && matches!(entry.parsed, ParseStatus::NotLoaded)
+        {
+            entry.parsed = match crate::cases::load_network(&entry.path) {
+                Ok(loaded) => {
+                    self.log.push_parse_warnings(&entry.path, &loaded.warnings);
+                    ParseStatus::Loaded {
+                        n_buses: loaded.network.buses().len(),
+                        n_branches: loaded.network.branches().len(),
+                        base_mva: loaded.network.base_mva(),
+                    }
+                }
+                Err(e) => ParseStatus::Failed(format!("{e:#}")),
+            };
         }
     }
 
-    pub fn open_inspect(&mut self) -> powerio_matrix::Result<()> {
+    pub fn open_inspect(&mut self) -> anyhow::Result<()> {
         let Some(entry) = self.cases.get(self.selected) else {
             return Ok(());
         };
-        let case = powerio_matrix::parse_matpower_file(&entry.path)?;
-        self.inspect = Some(self.build_inspect(case)?);
+        let loaded = crate::cases::load_network(&entry.path)?;
+        self.log.push_parse_warnings(&entry.path, &loaded.warnings);
+        self.inspect = Some(self.build_inspect(loaded.network)?);
         self.previous_screen = self.screen;
         self.screen = Screen::Inspect;
         Ok(())
     }
 
-    pub fn build_inspect(&self, case: Network) -> powerio_matrix::Result<InspectState> {
+    pub fn build_inspect(&self, case: BalancedNetwork) -> powerio_matrix::Result<InspectState> {
         let opts = powerio_matrix::matrix::BuildOptions {
             scheme: self.scheme,
             ..Default::default()
@@ -272,9 +268,9 @@ impl App {
         let view = powerio_matrix::IndexedNetwork::new(&case);
         let mut matrices = BTreeMap::new();
         for &kind in MatrixKind::ALL {
-            let mat = powerio_matrix::build_kind(&view, kind, &opts)?;
-            let stats = matrix_stats_for_kind(&mat, &view, kind, &opts);
-            let sddm = sddm_check(&mat);
+            let mat = powerio_matrix::calc_matrix(&view, kind, &opts)?;
+            let stats = calc_matrix_stats_for_kind(&mat, &view, kind, &opts);
+            let sddm = check_sddm(&mat);
             matrices.insert(
                 MatrixKindOrd::from_kind(kind),
                 MatrixCell {

@@ -1,330 +1,213 @@
-# The `.pio.json` format
+# PowerIO IR {#pio-ir}
 
-A `.pio.json` file is a compiled network case: one typed network model plus the
-record of how it was produced. The `model` field contains model JSON serialized
-exactly as the Rust structs define it, either `powerio::Network` (balanced) or
-`powerio_dist::DistNetwork` (multiconductor). The document metadata records
-provenance, source maps, structured diagnostics, validation results, lowering
-history, and optional operating points. `powerio_pkg::NetworkPackage` is the
-implementation type; [Compiler IR](compiler-ir.md) is the architecture note.
-
-## Why `.pio.json` exists
-
-Source formats carry data, not interpretation. A MATPOWER or OpenDSS file
-states the case; it cannot state how a parser read it: which fields were
-defaulted or inferred, what validation found, or how a multiconductor model was
-lowered to a balanced one. The metadata records that work next to the model, so
-a downstream tool can audit a conversion instead of trusting it.
-
-The `.pio.json` document is also the handoff object between PowerIO consumers:
-one artifact whose model kind is explicit, with provenance intact.
-
-## `.pio.json` is not a case format {#not-a-case-format}
-
-Case formats move cases between tools: MATPOWER, PSS/E, OpenDSS, PMD JSON,
-BMOPF, GOC3, and the other rows in the conversion tables. PowerIO reads and
-writes those formats at converter boundaries. A `.pio.json` document is
-PowerIO's compiled artifact: the model plus the record of how that model was
-produced.
-
-Pick a case format by what the receiving tool reads. Use `.pio.json` when the
-receiving consumer is PowerIO or a binding that wants provenance, diagnostics,
-operating points, and the explicit model kind. Use BMOPF, OpenDSS, PMD JSON, or
-another supported case format when the next tool expects that format.
-
-`powerio-json` remains supported in v0.6.2 for existing CLI, C ABI, Python,
-Julia, and MCP paths. It is bare balanced `Network` JSON, without package
-metadata or source maps, and is deprecated for CLI file handoffs. New
-PowerIO file handoffs should use `.pio.json`; external tool workflows should
-use the case format that external tool reads.
-
-A future v0.7.0 release may demote `powerio-json` from the public file handoff
-surface while keeping `Network::to_json` / `Network::from_json`, the C format
-token, and binding JSON paths available for internal and programmatic use.
-Removing the C format token or changing its documented behavior is a C
-compatibility change, separate from `.pio.json` schema evolution.
-
-## Two stability tiers
-
-A `.pio.json` file has two parts with different stability promises.
-
-1. **Metadata** — every field except `model`. This is the versioned,
-   documented surface; the metadata section below gives the policy and the
-   field table.
-
-2. **Model JSON** — the `model` field's `balanced_network` /
-   `multiconductor_network` object. The model JSON is a declared schema of its
-   own, named by the top-level `payload_schema` URL and versioned by
-   `payload_schema_version`. A consumer that computes on model fields pins the
-   model JSON version; a tool that routes or audits documents pins the metadata
-   version and can keep treating the model JSON as opaque.
-
-The two versions are independent because they change at different rates and
-break different consumers: the model JSON grows whenever the IR grows (a minor
-`payload_schema_version` bump), while the metadata bookkeeping barely moves.
-
-The schema URLs are JSON Schema `$id` identifiers. The docs site also serves a
-generated schema at each identifier path under `schema.json`, so consumers can
-fetch a machine readable view of the serde model shape. These generated schemas
-validate the model fields inside `.pio.json` documents and let consumers pin a
-payload major; they do not define standalone case formats.
-
-## The metadata: `pio-package/0.1` {#pio-package}
-
-The `schema` field on every `.pio.json` document names the metadata schema:
-`https://powerio.dev/schema/pio-package/0.1`. `schema_version` is semver; the
-current value is `0.1.1`.
-The generated schema is served at
-`https://powerio.dev/schema/pio-package/0.1/schema.json`.
-
-- Optional additive metadata fields (a reader that ignores them loses nothing
-  it relied on before) land without a version change; `operating_points` landed
-  this way. The minor version bumps when a reader needs to depend on a field
-  being present.
-- Metadata field moves or removals bump the major version, or ship a migration.
-- A reader tolerates unknown later top-level fields (they are ignored, not an
-  error), so a document from a newer producer still loads. A later version can
-  preserve them in an extras map instead of dropping them.
-- A reader accepts same major `schema_version` values and rejects a different
-  major version before using the model JSON.
-
-### Metadata Reference
-
-| field | type | required | notes |
-|---|---|---|---|
-| `schema` | string (URL) | yes | identifies the `.pio.json` document metadata; defaults to the current URL on read |
-| `schema_version` | string (semver) | yes | metadata version; defaults to current on read |
-| `producer` | object | yes | `{tool, version, git_commit?, features[]}` |
-| `package_id` | string | no | stable content id, e.g. `"sha256:..."`; unset by the scaffold |
-| `created_at` | string (RFC 3339) | no | unset by default for deterministic output |
-| `model_kind` | enum | yes | `balanced` \| `multiconductor`; authoritative |
-| `payload_schema` | string (URL) | no | declared model JSON schema for `model_kind`; absent on pre-0.1.1 documents |
-| `payload_schema_version` | string (semver) | no | model JSON version; a different major is rejected on read |
-| `model` | object | yes | `{kind, <kind>_network}`; the serialized Rust model JSON |
-| `origin` | object | yes | tagged by `kind`: `in_memory` \| `file` \| `folder` \| `binary_file` \| `derived` \| `composite` |
-| `sources` | array | no | declared source artifacts: `{id, kind, path?, format?, hash?}` |
-| `source_maps` | array | no | `{element_path, source_ref, mapping_kind, confidence}` |
-| `diagnostics` | array | no | structured findings (see below) |
-| `validation` | object | yes | `{status, counts, passes[]}` |
-| `summary` | object | yes | `{elements{}, topology?, units?}` |
-| `lowering_history` | array | no | `LoweringRecord` per pass |
-| `operating_points` | object | no | replayable updates over the one static model JSON |
-| `derived` | object | no | optional matrix stats, normalized solver table metadata, and cache keys |
-
-## Explicit model kind
-
-`model_kind` is a standalone top-level field and is authoritative. A reader
-**must** branch on it and **must not** infer the model kind from which field is
-present. The model JSON is additionally self-describing: `model` is tagged by
-`kind`, so `model.kind` and `model_kind` carry the same value.
-`NetworkPackage::kind_is_consistent` asserts the two agree; a reader should
-reject a document where they disagree.
-
-```json
-"model_kind": "balanced",
-"model": { "kind": "balanced", "balanced_network": { "...": "..." } }
-```
-
-`model_kind` values: `balanced`, `multiconductor` (the enum is non-exhaustive;
-later families can be added).
-
-## The Model JSON
-
-`payload_schema` names the model JSON schema per model kind and
-`payload_schema_version` versions it, currently `1.1.0` for both kinds.
-Additive optional fields bump the minor; field moves or removals bump the
-major. A reader rejects a different major (or a version that does not parse as
-semver) before computing on model fields. Both fields are absent on documents
-written before metadata version 0.1.1; such model JSON predates the declared
-schema and is accepted.
-
-Each payload is what its Rust model serializes. The generated JSON Schema is
-derived from those serde models and checked in CI against the committed
-`docs/schema/**/schema.json` files. The model's rustdoc is the field reference,
-and the balanced payload's wire form is additionally held to a committed
-golden file by `powerio/tests/snapshot_schema.rs`.
-
-### The Balanced Model JSON: `pio-payload-balanced/1` {#pio-payload-balanced}
-
-`https://powerio.dev/schema/pio-payload-balanced/1` names the serde form of
-`powerio::Network` under `model.balanced_network`, stamped when `model_kind`
-is `balanced`: the scalar positive-sequence transmission model. The tables are
-`buses`, `loads`, `shunts`, `branches`, `switches`, `generators`, `storage`,
-`hvdc`, `transformers_3w`, and `areas`, alongside `name`, `base_mva`,
-`base_frequency`, `source_format`, and optional solver metadata. Units follow
-the MATPOWER conventions: MW and MVAr power, per unit voltage magnitudes and
-impedances on the system base, degree angles. Every element carries an `extras`
-map for source format fields the model does not name. The field reference is the
-[`powerio::Network` rustdoc](../powerio/network/struct.Network.html).
-The generated schema is served at
-`https://powerio.dev/schema/pio-payload-balanced/1/schema.json`.
-
-### The Multiconductor Model JSON: `pio-payload-multiconductor/1` {#pio-payload-multiconductor}
-
-`https://powerio.dev/schema/pio-payload-multiconductor/1` names the serde form
-of `powerio_dist::DistNetwork` under `model.multiconductor_network`, stamped
-when `model_kind` is `multiconductor`: the wire-coordinate distribution model,
-in SI units with radian angles. [Compiler IR](compiler-ir.md) describes the
-model family. The field reference is the
-[`powerio_dist::DistNetwork` rustdoc](../powerio_dist/model/struct.DistNetwork.html).
-The generated schema is served at
-`https://powerio.dev/schema/pio-payload-multiconductor/1/schema.json`.
-Do not extract this object as a distribution case file. Use `.pio.json` for
-PowerIO artifacts; when a receiving tool expects BMOPF, PMD JSON, or OpenDSS,
-write that case format through `powerio convert`.
-
-## Row identity
-
-Every row of every balanced model table except `areas`
-carries a `uid` string: the source record uid where the format defines one
-(GOC3), and a `{table}:{row}` value synthesized at document build otherwise. A
-synthesized uid records the row the element had when the document was built and
-sticks to the element from then on. Uids are unique per table; a duplicate is a
-validation error. Operating point updates resolve against these identities
-(below). Rows in documents written before 0.1.1 carry no `uid`, which is what
-keeps their row-addressed operating points valid.
-
-## Operating points
-
-`operating_points` records a time axis and an ordered list of model field
-updates. A point names a table, a row identity and/or a zero based row, and the
-fields to overwrite. Materializing a point clones the static model, applies
-those field updates, and clears `operating_points` in the returned document.
-
-Updates resolve by identity first. When the referenced table carries `uid`
-values, `element.source_uid` is authoritative: it selects the row, a present
-`element.row` must agree with the resolved row, and an unknown or duplicated
-uid is an error (reported by validation and fatal to materialization). A
-producer that knows the identity can omit `row` entirely. When the table
-carries no uids (documents written before 0.1.1), `source_uid` is advisory and
-`row` addresses the update alone. An update may not overwrite `uid` itself, and
-an element ref with neither `row` nor `source_uid` does not parse.
-
-The block shape is:
-
-| field | type | notes |
-|---|---|---|
-| `time_axis.periods` | integer | number of available operating points |
-| `time_axis.duration_hours` | array of numbers | optional per period duration |
-| `time_axis.labels` | array of strings | optional labels, such as `"1"`, `"2"`, ... |
-| `points[]` | array | one replayable state |
-| `points[].index` | integer | zero based period index; addresses `time_axis.duration_hours` and `time_axis.labels` |
-| `points[].updates[]` | array | row field updates to apply for this point |
-| `updates[].element.table` | string | model table name, such as `generators`, `loads`, `branches`, or `hvdc` |
-| `updates[].element.row` | integer | zero based row; optional when `source_uid` is present, then a consistency check |
-| `updates[].element.source_uid` | string | the target row's model identity (`uid`); authoritative when the table carries uids |
-| `updates[].fields` | object | field names and JSON values to overwrite |
-| `metadata` | object | optional series or point metadata |
-
-GO Challenge 3 documents use this block for the scheduling time series. The
-static `model` reflects the first interval that can be represented by
-`Network`; `operating_points` carries replayable updates for every interval.
-`NetworkPackage::materialize_operating_point(index)` returns a new static
-document with `origin.kind = "derived"` and
-`origin.pass = "materialize-operating-point"`.
-
-```json
-"operating_points": {
-  "time_axis": { "periods": 2, "duration_hours": [1.0, 1.0], "labels": ["1", "2"] },
-  "points": [
-    { "index": 0, "updates": [] },
-    { "index": 1,
-      "updates": [
-        { "element": { "table": "loads", "row": 0, "source_uid": "device_1" },
-          "fields": { "p": 12.5, "q": 3.2 } }
-      ] }
-  ],
-  "metadata": { "source_format": "goc3-json" }
-}
-```
-
-## Derived metadata
-
-`derived.normalized_solver_tables` records the compact identity metadata for
-`powerio::Network::to_normalized_solver_tables()` without embedding every table
-row in the document. The full tables are a derived artifact; this metadata lets a
-compiler cache prove it was built from the same lowering pass and row order.
-
-The block carries:
-
-- `pass`: `"balanced-to-normalized-solver-tables"`;
-- `units`: per unit power, per unit voltage, radian angles, per unit impedance
-  and admittance, zero based dense indices;
-- `row_counts`: counts for buses, loads, shunts, branches, switches, arcs,
-  generators, storage, and HVDC rows;
-- `bus_ids`, `reference_bus_indices`, and `component_labels`;
-- `branch_from_arc_indices` and `branch_to_arc_indices`;
-- `source_rows`: source row indices for rows that survived normalization, with
-  `null` for synthetic rows such as 3-winding star buses and branches.
-
-## Diagnostics
-
-Each diagnostic carries a stable dotted `code`, a `severity` (`debug`, `info`,
-`warning`, `error`, `fatal`; ordered worst-last), the `stage` it came from
-(`parse`, `read`, `canonicalize`, `validate`, `lower`, `emit`, `bind`,
-`partner`), a human `message`, and where known an `element_path`, a `source_ref`,
-a `details` object, a `suggested_action`, and a `safe_to_ignore` list. Code
-namespaces by leading segment: `PARSE`, `READ`, `IR`, `VALIDATE`, `FIDELITY`,
-`LOWER`, `EMIT`, `BINDING`, `PARTNER`, `PERF`.
-
-## Source maps
-
-A `source_map` entry records where a canonical field came from: an `element_path`
-(a JSON pointer, or a best-effort locator in v0.1), a `source_ref` into a declared
-source, a `mapping_kind` (`exact`, `defaulted`, `inferred`, `converted_units`,
-`lowered`, `aggregated`, `split`, `synthetic`, `retained_extra`), and a
-`confidence` (`exact`, `high`, `medium`, `low`). Balanced documents emit source
-maps for stable bus, load, shunt, branch, and generator fields. Balanced
-`source_ref.field` values use the same canonical field names as the model JSON, so
-they can be compared directly with `element_path`. When a source format folds
-several canonical elements into one source row, the source map records that
-relation with another mapping kind; MATPOWER load and shunt fields use
-`mapping_kind = split` and point to the bus record while keeping fields such as
-`p`, `q`, `g`, and `b`. Values that the source format does not carry are not
-mapped as exact; MATPOWER `base_frequency` has no source map. When a
-multiconductor network is written as `.pio.json`, its `defaulted` fields lift into source maps
-with `mapping_kind = defaulted`, and its retained source becomes
-`origin.retained_source`. Validation diagnostics attach the matching `source_ref`
-when the document has a source map for the reported field.
-
-`NetworkPackage::lower_multiconductor_to_balanced(options)` returns a new
-balanced document with `origin.kind = derived` and
-`origin.pass = "multiconductor-to-balanced"`. It preserves the parent
-`lowering_history` and appends a `LoweringRecord` whose options, assumptions,
-approximations, dropped fields, diagnostics, and validation status describe the
-pass. Lowered balanced source maps use `lowered`, `aggregated`,
-`converted_units`, `synthetic`, and `defaulted` mapping kinds. The pass is never
-implicit during `.pio.json` readback, format conversion, matrix construction,
-bindings, or MCP operations.
-
-## Example
+A `.pio.json` file serializes one `PioModule<PioValue>`, which is one typed
+value together with its diagnostics, producer, sources, source mappings,
+history, and extensions. A current document begins like this:
 
 ```json
 {
-  "schema": "https://powerio.dev/schema/pio-package/0.1",
-  "schema_version": "0.1.1",
-  "producer": { "tool": "powerio", "version": "0.6.2" },
-  "model_kind": "multiconductor",
-  "payload_schema": "https://powerio.dev/schema/pio-payload-multiconductor/1",
-  "payload_schema_version": "1.1.0",
-  "model": {
-    "kind": "multiconductor",
-    "multiconductor_network": {
-      "base_frequency": 60.0,
-      "loads": [
-        { "name": "l1", "bus": "b1", "configuration": "wye",
-          "voltage_model": { "model": "zip", "v_nom": [230.0], "alpha_z": [0.5], "...": "..." } }
-      ]
-    }
-  },
-  "origin": { "kind": "file", "format": "dss", "retained_source": true },
-  "sources": [ { "id": "src0", "kind": "file", "format": "dss" } ],
-  "source_maps": [
-    { "element_path": "/model/multiconductor_network/vsource.source#basekv",
-      "source_ref": { "source_id": "src0", "field": "basekv" },
-      "mapping_kind": "defaulted", "confidence": "high" }
-  ],
-  "validation": { "status": "ok", "counts": { "fatal": 0, "error": 0, "warning": 0, "info": 0, "debug": 0 } },
-  "summary": { "elements": { "buses": 1, "loads": 1 }, "units": { "power": "W/var", "angle": "radians" } }
+  "schema": "pio-ir",
+  "version": 2,
+  "producer": { "name": "powerio", "version": "0.11.3" },
+  "value": {
+    "type": "powerio.BalancedNetwork",
+    "data": {}
+  }
 }
 ```
+
+Use `serialize` to produce it and `deserialize` to read it. PowerIO IR is not
+one of the grid exchange formats. MATPOWER, PSS/E, XIIDM, CGMES, OpenDSS, PMD
+JSON, BMOPF, and the other formats in the format registry exist to exchange
+power system data with other tools, and they enter through `parse` and leave
+through `emit`. PowerIO IR preserves PowerIO types and module records instead,
+and it is deliberately left out of grid exchange format discovery. Use it when
+both sides consume PowerIO values, including calculation instances, solutions,
+time series, and scenario sets.
+
+The generated JSON Schema is checked in at
+`docs/schema/pio-ir/2/0.11.5/schema.json` and served from
+`https://powerio.dev/schema/pio-ir/2/0.11.5/schema.json`. That schema, the
+serializer, and the deserializer are all tested from the same Rust types.
+`docs/schema/README.md` lists the earlier `pio-package` and
+`powerio.module` documents as one history under `pio-ir`.
+
+## Module records
+
+The document stores these common records when present:
+
+| field | meaning |
+|---|---|
+| `producer` | the software operation that created this module |
+| `sources` | source names, sizes, declared formats, and digests |
+| `source_map` | JSON Pointer paths in `value.data` mapped to source byte ranges |
+| `diagnostics` | structured findings with stable codes and severities |
+| `history` | ordered derivations that produced the current value |
+| `extensions` | namespaced data outside the PowerIO core schema |
+
+Source bytes retained at runtime are not serialized. A source record names a
+source without exposing a local absolute path; a parser may keep the bytes in
+memory for byte exact same format emission while the process runs, but that
+buffer is separate from the stored module.
+
+The deserializer checks the cross references before it returns a module:
+diagnostic source references and source mappings must name declared source
+IDs, byte ranges must fit the declared source length, and history references
+must name records in the same document. The MATPOWER and PSS/E readers attach
+the byte range of the record a finding is about to every diagnostic they raise
+at a known record, so a document serialized from one of their modules has
+those spans; the other readers attach none yet.
+
+## Typed values
+
+`value.type` is the canonical structural type name used by Rust, C, Python,
+Julia, and the document schema. Examples include:
+
+```text
+powerio.BalancedNetwork
+powerio.MulticonductorNetwork
+powerio.OperatingPoint<powerio.BalancedNetwork>
+powerio.TimeSeries<powerio.MulticonductorNetwork>
+powerio.ScenarioSet<powerio.TimeSeries<powerio.BalancedNetwork>>
+powerio.DcOpfInstance
+powerio.SocwrOpfSolution
+```
+
+`value.data` has the exact shape that type demands, and the deserializer
+rejects a document where the two disagree, as it rejects a wrong schema name
+or version, an unknown PowerIO type, duplicate IDs, invalid references,
+nonfinite values in untyped positions, or a collection whose entries disagree
+with its element type. [PowerIO IR reference](ir-reference.md) defines every
+structural type field by field: type, unit, sign convention, invariant, and
+the value a reader takes when a field is absent.
+
+Typed floating point fields spell nonfinite values as `"Infinity"`,
+`"-Infinity"`, and `"NaN"`. JSON `null` is not a floating point value.
+
+## Collections and operating points
+
+`TimeSeries<T>` stores ordered time points and values of `T`, and
+`ScenarioSet<T>` stores named alternatives of `T` with optional probabilities
+and no implied time order. Nested collections keep their structural type; the
+document does not invent a flattened name for each composition.
+
+An `OperatingPoint<N>` stores a shared base network and typed overrides keyed
+by stable component ID. The serializer preserves that relationship rather
+than expanding each entry into another complete static network.
+
+## Determinism
+
+`serialize` is a function of the module alone. Serializing one module twice
+produces identical text, and serializing the module that text deserializes to
+produces the same text again. Members are written in a fixed order, record
+fields in declaration order and map keys (`extras`, `quantities`,
+`extensions`, `details`) sorted. Diagnostic IDs are minted `d0`, `d1`, ... in
+record order for records that have none, so the minted IDs depend only on
+record order. Every float is written in the shortest decimal form that reads
+back to the same value, and nonfinite values use the three string spellings
+above. Equal modules therefore produce equal documents, which is what lets
+you use a document as a cache key, a golden file, or the input of a content
+digest.
+
+## Resource limits
+
+Before it retains large input data, deserialization applies explicit limits
+on source count and byte lengths, diagnostics, source map and history
+records, extension data, collection lengths, ID lengths, and nested value
+depth. Hitting a limit produces a structured PowerIO diagnostic rather than
+an allocation failure or a truncated result.
+
+Stored collections have two entry bounds. Operating point and solution
+vectors follow the network's dimensions: each `StoredQuantity`'s `identities`
+and `values`, and every bus, branch, generator, terminal, source, and
+conductor array of a DC, AC, SOCWR, multiconductor, or LinDist3Flow solution,
+optional arrays included, carries at most 4,194,304 (2^22) entries. A
+multiconductor solution has one entry per bus terminal, so solutions over up
+to 4,194,304 bus terminals round trip. The reader refuses the first entry
+past the bound with `READ.MODULE.INVALID`, and `serialize` refuses a longer
+vector with `EMIT.MODULE.RECORD_CAP` rather than write a document the reader
+refuses. Time series and scenario sets carry at most 65,536 entries each, as
+do the three winding transformer power records of a solution. A stored
+operating point names at most 64 quantities.
+
+These bounds count entries, not bytes. Byte limits apply when PowerIO reads
+a source. A file named by path, whether a raw format (including BMOPF) or
+stored IR, may hold up to 1 GiB; `POWERIO_MAX_PRIMARY_BYTES` sets a different
+positive decimal byte count. The files a case references and the files of a
+directory input share a cumulative limit, `POWERIO_MAX_REFERENCED_BYTES`, also
+1 GiB by default. Both settings come from the process environment. The MCP
+server sets both to 256 MiB when its operator leaves them unset; see
+[The MCP server](cli-mcp.md#the-mcp-server).
+
+CGMES XML counts against the referenced limit wherever it comes from. The
+profiles of one CGMES parse, read from files or expanded from ZIP archives,
+total at most `POWERIO_MAX_REFERENCED_BYTES`, and a CGMES XML document or
+archive larger than that limit is refused whether it comes from a path or
+from caller-owned memory. A CGMES file above 1 GiB named by path therefore
+needs both settings raised. An archive may hold at most 4,096 entries, a
+count read from its end records before the archive is indexed, and at most
+eight end records. Entries may not share a name or any bytes, and each must
+lie inside the archive's entry data. Each file entry may declare at most the
+referenced limit and at most 200 times its compressed size. An XML entry may
+declare no more than the budget the profiles before it left, and it must
+inflate to exactly the size it declares. Nested archives, symbolic link
+entries, unsafe entry names, document type and entity declarations, and
+invalid UTF-8 are refused. These archive checks are fixed; only the byte limit
+is configurable.
+
+Some readers keep fixed limits below these defaults. An XIIDM or JIIDM
+document holds at most 64 MiB, from a path or from memory. An OpenDSS case
+follows at most 4,096 includes and stops following them once they have loaded
+64 MiB of script text, counting a file again each time the case runs it.
+
+Python's `parse_display`, kept only for 0.11 compatibility, reads a display
+file whole without these limits; `parse` reads the same `.pwd` file under them.
+
+Apart from CGMES, caller-owned memory has no whole-document limit; format and
+record limits still apply. Stored solutions embed their instance and network,
+so they can exceed the raw input's size. Consumers should check the actual
+serialized byte length against their reload limit before saving, and choose a
+smaller limit for memory-constrained applications. The byte limits do not
+bound process memory.
+
+## IR versions
+
+The integer `version` is the IR version of the serialized representation. It
+is a property of the document alone, separate from the Rust memory layout,
+the PowerIO release, any grid exchange format, and the C ABI, and it changes
+only when an existing representation changes incompatibly. `producer.version` records the release
+that wrote the document; the reader reports it and ignores it when deciding
+compatibility.
+
+PowerIO 0.11.5 keeps IR version 2. `powerio::IR_VERSION` and
+`powerio::IR_MIN_VERSION` are both `2`. Additive structural types do not change
+the IR version: older readers continue to accept existing types and reject
+types they do not implement. An incompatible change to an existing record's
+representation or meaning requires a version bump and a release decision.
+
+Schema snapshots describe the structural types available in a release.
+`pio-ir/2/schema.json` is the frozen 0.11.0 catalog,
+`pio-ir/2/0.11.1/schema.json` adds the LinDist3Flow OPF instance and solution
+types, `pio-ir/2/0.11.3/schema.json` adds the three PSS/E contingency
+analysis files, and `pio-ir/2/0.11.4/schema.json` adds the fixed-dispatch
+LinDist3Flow instance and solution types.
+The release in that path identifies the snapshot, not another document version.
+Patch releases without catalog changes can reuse the same snapshot.
+A refused document is reported with the schema name,
+IR version, and producer it claims and the remedy: a later IR version needs a
+newer PowerIO, and an earlier schema name or IR version has to be regenerated
+from its source data.
+[`docs/schema/README.md`](https://github.com/eigenergy/powerio/blob/main/docs/schema/README.md)
+is the ledger of every IR version and the archive of every published schema.
+
+Two other intermediate representations answer the versioning question
+differently. LLVM bitcode carries no explicit version number, and a newer
+reader upgrades any older bitcode on load; there is no forward compatibility.
+MLIR bytecode carries an explicit version number with per-dialect upgrade
+hooks. PowerIO IR carries an explicit version integer and reads the window
+from `IR_MIN_VERSION` through `IR_VERSION`, both 2 in 0.11.3, so a version 1
+document from 0.10.x is refused rather than upgraded, and an upgrade path for
+those documents would be a later addition. Structural types are added without
+a version bump, and a type this build does not implement is rejected. The
+catalog snapshots under `pio-ir/2/<release>/` are the type catalogs of one IR
+version, published when a release adds types; they are not versions.

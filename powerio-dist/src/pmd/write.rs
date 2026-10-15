@@ -1,4 +1,4 @@
-//! [`DistNetwork`] into PMD ENGINEERING JSON.
+//! [`MulticonductorNetwork`] into PMD ENGINEERING JSON.
 //!
 //! The output reproduces what PMD's own dss2eng emits for the same network
 //! wherever the model carries the data: terminal integers, `ENABLED`
@@ -11,67 +11,248 @@
 //! impedance, tap arrays, polarity, inline line impedance) win over the
 //! recomputed defaults, so PMD in, PMD out does not alter fields.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value, json};
 
-use crate::convert::Conversion;
+use crate::convert::TextEmission;
+use crate::diagnostics::codes as C;
 use crate::geo::CoordinateSpace;
 use crate::model::{
-    Configuration, DistBus, DistLineCode, DistLoadVoltageModel, DistNetwork, DistTransformer,
-    Extras, Mat, VoltageSource, Winding, WindingConn,
+    ConductorMatrix, Configuration, DistBus, DistLine, DistLineCode, DistLoadVoltageModel,
+    DistTransformer, DistWinding, DistWindingConn, Extras, MulticonductorNetwork, VoltageSource,
 };
 
-/// Writes the ENGINEERING document.
+/// Emits the ENGINEERING document.
 ///
 /// # Panics
 ///
 /// Never in practice: the document is maps, strings, finite numbers, and
 /// nulls, which always serialize.
-pub fn write_pmd_json(net: &DistNetwork) -> Conversion {
+pub(crate) fn emit_pmd_json_text(net: &MulticonductorNetwork) -> TextEmission {
     let mut w = Writer {
-        warnings: Vec::new(),
+        warnings: crate::diagnostics::Diagnostics::new(),
+        renamed_terminals: renamed_terminals(net),
     };
+    for source in net
+        .sources()
+        .iter()
+        .filter(|source| source.energy_cost_rate.is_some())
+    {
+        w.warn(
+            &C::EMIT_PMD_FIELD_DROPPED,
+            format!(
+                "voltage source {}: energy_cost_rate has no target field",
+                source.name
+            ),
+        );
+    }
     let doc = w.document(net);
-    Conversion {
-        text: serde_json::to_string_pretty(&doc).expect("maps and finite numbers") + "\n",
-        sidecars: Vec::new(),
-        warnings: w.warnings,
-        diagnostics: Vec::new(),
+    TextEmission::new(
+        serde_json::to_string_pretty(&doc).expect("maps and finite numbers") + "\n",
+        Vec::new(),
+        w.warnings,
+    )
+}
+
+/// Upper bound on the conductor counts this writer expands quadratically:
+/// the switch series and shunt matrices and the voltage source Thevenin
+/// matrices are all sized from a terminal map, a linear model array. The
+/// readers cap the same quantity on their way in, but callers can construct a
+/// `MulticonductorNetwork` without those caps, and a linear-size model could
+/// otherwise demand O(n²) memory here. No physical element comes near this
+/// bound.
+const MAX_DIM: usize = 64;
+
+struct Writer {
+    warnings: crate::diagnostics::Diagnostics,
+    /// One id per terminal name that is not numeric, for the whole network.
+    renamed_terminals: BTreeMap<String, i64>,
+}
+
+/// One id for each terminal name in the network that PMD cannot spell.
+///
+/// PMD requires integer connections. A name such as `n` therefore needs an
+/// id, and that id must be the same everywhere the name appears, or two
+/// elements at one bus stop sharing a conductor. Each name takes the
+/// smallest positive integer that no numeric terminal name already uses, so
+/// the ids stay as small as the model allows: an id far above the conductor
+/// count would drive the `conductor_ids` enumeration to its cap and produce
+/// a document with 64 conductors for a 4 conductor network.
+///
+/// Counting up from the largest numeric name would look simpler, but a
+/// document may name a terminal `9223372036854775807`. That saturates every
+/// id to the same value, and two conductors then merge into one. Taking the
+/// smallest free integer cannot collide and cannot overflow: the search
+/// stops after at most one step per terminal already in the document.
+fn renamed_terminals(net: &MulticonductorNetwork) -> BTreeMap<String, i64> {
+    let mut used = BTreeSet::new();
+    let mut names = BTreeSet::new();
+    for terminal in all_terminal_names(net) {
+        match terminal.parse::<i64>() {
+            Ok(value) => {
+                used.insert(value);
+            }
+            Err(_) => {
+                names.insert(terminal.to_string());
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    let mut next = 1i64;
+    for name in names {
+        while used.contains(&next) {
+            next += 1;
+        }
+        used.insert(next);
+        out.insert(name, next);
+        next += 1;
+    }
+    out
+}
+
+/// Linecode lookup by name, built once rather than searched per line:
+/// `net.linecode()` is a linear scan, and a line runs it once each.
+fn linecodes_by_name(net: &MulticonductorNetwork) -> BTreeMap<String, &DistLineCode> {
+    let mut by_name = BTreeMap::new();
+    for c in net.line_codes() {
+        by_name.entry(c.name.to_ascii_lowercase()).or_insert(c);
+    }
+    by_name
+}
+
+/// Bus lookup by id, built once rather than searched per load: `net.bus()`
+/// is a linear scan, and a single phase load runs it once each.
+fn buses_by_id(net: &MulticonductorNetwork) -> BTreeMap<String, &DistBus> {
+    let mut by_id = BTreeMap::new();
+    for b in net.buses() {
+        by_id.entry(b.id.to_ascii_lowercase()).or_insert(b);
+    }
+    by_id
+}
+
+impl Writer {
+    /// Terminal names as PMD integer connections. A name that is not numeric
+    /// takes the id [`renamed_terminals`] gave it, so the same name is the
+    /// same conductor everywhere in the document.
+    fn conns(&mut self, map: &[String], what: &str) -> Vec<i64> {
+        map.iter()
+            .map(|t| {
+                if let Ok(value) = t.parse::<i64>() {
+                    return value;
+                }
+                let id = self.renamed_terminals.get(t).copied().unwrap_or(0);
+                self.warnings.push(
+                    &C::EMIT_PMD_VALUE_SUBSTITUTED,
+                    format!("{what}: terminal `{t}` is not numeric; emitted as {id}"),
+                );
+                id
+            })
+            .collect()
     }
 }
 
-struct Writer {
-    warnings: Vec<String>,
-}
-
-/// Terminal names as PMD integer connections; non numeric names count from
-/// 90 upward (PMD requires ints; the warning names the rename).
-fn conns(map: &[String], warnings: &mut Vec<String>, what: &str) -> Vec<i64> {
-    map.iter()
-        .enumerate()
-        .map(|(k, t)| {
-            t.parse::<i64>().unwrap_or_else(|_| {
-                let fallback = 90 + i64::try_from(k).unwrap_or(0);
-                warnings.push(format!(
-                    "{what}: terminal `{t}` is not numeric; emitted as {fallback}"
-                ));
-                fallback
-            })
-        })
-        .collect()
+fn all_terminal_names(net: &MulticonductorNetwork) -> impl Iterator<Item = &str> {
+    let maps = net
+        .lines()
+        .iter()
+        .flat_map(|l| [&l.terminal_map_from, &l.terminal_map_to])
+        .chain(
+            net.switches()
+                .iter()
+                .flat_map(|s| [&s.terminal_map_from, &s.terminal_map_to]),
+        )
+        .chain(net.loads().iter().map(|l| &l.terminal_map))
+        .chain(net.generators().iter().map(|g| &g.terminal_map))
+        .chain(net.capacitors().iter().map(|c| &c.terminal_map))
+        .chain(net.shunts().iter().map(|s| &s.terminal_map))
+        .chain(net.sources().iter().map(|s| &s.terminal_map))
+        .chain(net.ibrs().iter().map(|i| &i.terminal_map))
+        .chain(
+            net.transformers()
+                .iter()
+                .flat_map(|t| t.windings.iter().map(|w| &w.terminal_map)),
+        );
+    net.buses()
+        .iter()
+        .flat_map(|b| [&b.terminals, &b.grounded])
+        .chain(maps)
+        .flat_map(|m| m.iter().map(String::as_str))
 }
 
 /// A matrix as PMD serializes it: array of columns (`hcat` rebuilds it).
-fn matrix(m: &Mat) -> Value {
+/// Rows shorter than the row count read as 0, so a degenerate model matrix
+/// emits a square block instead of panicking.
+/// The susceptance matrix of one rated capacitor bank over its own
+/// conductors, siemens: the nameplate reactive power at the nameplate
+/// voltage, the same equivalence the multiconductor admittance builder
+/// stamps. Wye nameplate voltage is line to line with the neutral mapped
+/// last; delta couples successive phase pairs; single phase spans its two
+/// terminals.
+fn capacitor_susceptance(
+    c: &crate::model::DistCapacitor,
+) -> std::result::Result<ConductorMatrix, String> {
+    let finite_positive = |v: f64| v.is_finite() && v > 0.0;
+    if !finite_positive(c.v_nom) || !c.q_rated.is_finite() {
+        return Err("nameplate q_rated or v_nom is missing or nonpositive".into());
+    }
+    let n = c.terminal_map.len();
+    let mut bs = vec![vec![0.0; n]; n];
+    let mut couple = |a: usize, b: usize, y: f64| {
+        bs[a][a] += y;
+        bs[b][b] += y;
+        bs[a][b] -= y;
+        bs[b][a] -= y;
+    };
+    match c.configuration {
+        crate::model::Configuration::SinglePhase => {
+            if n != 2 {
+                return Err(format!("single phase bank maps {n} terminals"));
+            }
+            couple(0, 1, c.q_rated / (c.v_nom * c.v_nom));
+        }
+        crate::model::Configuration::Wye => {
+            let phases = n.saturating_sub(1);
+            if phases == 0 {
+                return Err("wye bank maps no phase terminal".into());
+            }
+            let v_ln = c.v_nom / 3f64.sqrt();
+            let b = c.q_rated / (phases as f64) / (v_ln * v_ln);
+            for phase in 0..phases {
+                couple(phase, phases, b);
+            }
+        }
+        crate::model::Configuration::Delta => {
+            if n < 2 {
+                return Err(format!("delta bank maps {n} terminals"));
+            }
+            // Two terminals form one phase-to-phase leg, not two; divide the
+            // rated power by the legs actually stamped.
+            let loops = if n == 2 { 1 } else { n };
+            let b = c.q_rated / (loops as f64) / (c.v_nom * c.v_nom);
+            for pair in 0..loops {
+                couple(pair, (pair + 1) % n, b);
+            }
+        }
+    }
+    Ok(bs)
+}
+
+fn matrix(m: &ConductorMatrix) -> Value {
     let n = m.len();
     let cols: Vec<Value> = (0..n)
-        .map(|j| Value::Array((0..n).map(|i| json!(m[i][j])).collect()))
+        .map(|j| {
+            Value::Array(
+                (0..n)
+                    .map(|i| json!(m[i].get(j).copied().unwrap_or(0.0)))
+                    .collect(),
+            )
+        })
         .collect();
     Value::Array(cols)
 }
 
-fn zero_matrix(n: usize) -> Mat {
+fn zero_matrix(n: usize) -> ConductorMatrix {
     vec![vec![0.0; n]; n]
 }
 
@@ -83,15 +264,32 @@ fn shunt_is_delta(extras: &Extras) -> bool {
         .is_some_and(|t| t.to_ascii_lowercase().starts_with('d') || t.eq_ignore_ascii_case("ll"))
 }
 
-fn scale(m: &Mat, k: f64) -> Mat {
+fn scale(m: &ConductorMatrix, k: f64) -> ConductorMatrix {
     m.iter()
         .map(|row| row.iter().map(|v| v * k).collect())
         .collect()
 }
 
 impl Writer {
-    fn warn(&mut self, msg: impl Into<String>) {
-        self.warnings.push(msg.into());
+    fn warn(&mut self, info: &'static crate::diagnostics::DiagnosticInfo, msg: impl Into<String>) {
+        self.warnings.push(info, msg);
+    }
+
+    /// The dimension a matrix is materialized at, clamped to [`MAX_DIM`]
+    /// with a diagnostic naming the element.
+    fn bounded_dim(&mut self, n: usize, what: &str) -> usize {
+        if n > MAX_DIM {
+            self.warn(
+                &C::EMIT_PMD_VALUE_CLAMPED,
+                format!(
+                    "{what}: {n} conductors exceed the supported maximum of \
+                 {MAX_DIM}; matrices emitted at {MAX_DIM}"
+                ),
+            );
+            MAX_DIM
+        } else {
+            n
+        }
     }
 
     /// Reports extras the ENGINEERING model has no field for. `consumed`
@@ -103,9 +301,10 @@ impl Writer {
             {
                 continue;
             }
-            self.warn(format!(
-                "{what}: `{key}` has no ENGINEERING field; dropped from the output"
-            ));
+            self.warn(
+                &C::EMIT_PMD_FIELD_DROPPED,
+                format!("{what}: `{key}` has no ENGINEERING field; dropped from the output"),
+            );
         }
     }
 
@@ -125,13 +324,18 @@ impl Writer {
             .unwrap_or_else(|| json!("ENABLED"))
     }
 
-    fn bus_coordinates(&mut self, o: &mut Map<String, Value>, b: &DistBus, net: &DistNetwork) {
+    fn bus_coordinates(
+        &mut self,
+        o: &mut Map<String, Value>,
+        b: &DistBus,
+        net: &MulticonductorNetwork,
+    ) {
         if let Some(location) = b.location {
             if !matches!(
-                net.geo.as_ref().map(|geo| &geo.space),
+                net.geo().as_ref().map(|geo| &geo.space),
                 Some(CoordinateSpace::Geographic { .. })
             ) {
-                self.warnings.push(format!(
+                self.warnings.push(&C::EMIT_PMD_FIELD_DROPPED, format!(
                     "bus {}: non-geographic or undeclared location is not emitted to PMD lon/lat",
                     b.id
                 ));
@@ -141,10 +345,13 @@ impl Writer {
                 o.insert("lon".into(), json!(location.x));
                 o.insert("lat".into(), json!(location.y));
             } else {
-                self.warnings.push(format!(
-                    "bus {}: nonfinite location is not emitted to PMD JSON",
-                    b.id
-                ));
+                self.warnings.push(
+                    &C::EMIT_PMD_FIELD_DROPPED,
+                    format!(
+                        "bus {}: nonfinite location is not emitted to PMD JSON",
+                        b.id
+                    ),
+                );
             }
             return;
         }
@@ -156,16 +363,19 @@ impl Writer {
         }
     }
 
-    fn document(&mut self, net: &DistNetwork) -> Value {
+    // One block per object field; splitting it would scatter a list that
+    // reads end to end.
+    #[expect(clippy::too_many_lines)]
+    fn document(&mut self, net: &MulticonductorNetwork) -> Value {
         let mut doc = Map::new();
         doc.insert("data_model".into(), json!("ENGINEERING"));
         doc.insert(
             "name".into(),
-            json!(net.name.clone().unwrap_or_default().to_lowercase()),
+            json!(net.name().clone().unwrap_or_default().to_lowercase()),
         );
         doc.insert(
             "files".into(),
-            net.extras
+            net.extras()
                 .get("pmd_files")
                 .cloned()
                 .unwrap_or_else(|| json!([])),
@@ -174,37 +384,54 @@ impl Writer {
         // The reader's stash wins; synthesis covers dss/bmopf sourced
         // models.
         let settings = net
-            .extras
+            .extras()
             .get("pmd_settings")
             .cloned()
             .unwrap_or_else(|| synthesized_settings(net));
         doc.insert("settings".into(), settings);
 
+        // `conductor_ids` enumerates 1..=max, so its length is the numeric
+        // value of a terminal name rather than a count of anything. A single
+        // terminal named `4444444444444444` would ask for petabytes, so the
+        // enumeration is clamped like every other model driven dimension.
+        // A terminal name that is not numeric holds an id from
+        // `renamed_terminals`. Those ids are the smallest free positive
+        // integers, so a numeric name does not bound them and the enumeration
+        // must include them explicitly. Without them the document lists fewer
+        // conductors than its own `connections` arrays use, and a read back
+        // and rewrite then produces a longer list.
         let max_conductor = net
-            .buses
+            .buses()
             .iter()
             .flat_map(|b| &b.terminals)
             .filter_map(|t| t.parse::<i64>().ok())
+            .chain(self.renamed_terminals.values().copied())
             .max()
-            .unwrap_or(4)
-            .max(4);
+            .unwrap_or(4);
+        let max_dim = i64::try_from(MAX_DIM).expect("MAX_DIM is small");
+        if max_conductor > max_dim {
+            self.warn(
+                &C::EMIT_PMD_VALUE_CLAMPED,
+                format!(
+                    "terminal {max_conductor} exceeds the supported maximum conductor id \
+                 of {MAX_DIM}; conductor_ids enumerated to {MAX_DIM}"
+                ),
+            );
+        }
+        let max_conductor = max_conductor.clamp(4, max_dim);
         doc.insert(
             "conductor_ids".into(),
             Value::Array((1..=max_conductor).map(|i| json!(i)).collect()),
         );
 
         let mut buses = Map::new();
-        for b in &net.buses {
+        for b in net.buses() {
             let mut o = Map::new();
             o.insert(
                 "terminals".into(),
-                json!(conns(
-                    &b.terminals,
-                    &mut self.warnings,
-                    &format!("bus {}", b.id)
-                )),
+                json!(self.conns(&b.terminals, &format!("bus {}", b.id))),
             );
-            let grounded = conns(&b.grounded, &mut self.warnings, &format!("bus {}", b.id));
+            let grounded = self.conns(&b.grounded, &format!("bus {}", b.id));
             // Nonzero grounding impedance rides in extras (the reader's
             // stash); zero vectors are the materialized default.
             for key in ["rg", "xg"] {
@@ -218,60 +445,100 @@ impl Writer {
             o.insert("grounded".into(), json!(grounded));
             o.insert("status".into(), Self::status(&b.extras));
             self.bus_coordinates(&mut o, b, net);
-            // Voltage bound families have no ENGINEERING fields in volts;
-            // they drop loudly (PMD bounds are per unit).
+            let phase_indices = b.phase_indices(net.extras().get("bmopf_terminal_conventions"));
+            for (key, scalar, phases, default) in [
+                ("vm_lb", b.v_min, &b.v_min_phase, 0.0),
+                ("vm_ub", b.v_max, &b.v_max_phase, f64::INFINITY),
+            ] {
+                let retained = b.extras.get(&format!("pmd_{key}"));
+                let mut values = retained
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .filter(|values| values.len() == b.terminals.len())
+                    .unwrap_or_else(|| vec![json!(default); b.terminals.len()]);
+                if scalar.is_some() || phases.is_some() {
+                    for (phase, &terminal) in phase_indices.iter().enumerate() {
+                        if let Some(v) =
+                            scalar.or_else(|| phases.as_ref().and_then(|v| v.get(phase)).copied())
+                        {
+                            values[terminal] = json!(v / 1e3);
+                        }
+                    }
+                    o.insert(key.into(), Value::Array(values));
+                } else if let Some(retained) = retained {
+                    o.insert(key.into(), retained.clone());
+                }
+            }
+            // The phase-to-neutral, phase-to-phase, and sequence bound families
+            // have no ENGINEERING analog; they drop loudly.
             for (key, present) in [
-                ("v_min", b.v_min.is_some()),
-                ("v_max", b.v_max.is_some()),
                 ("vpn_min", b.vpn_min.is_some()),
                 ("vpn_max", b.vpn_max.is_some()),
                 ("vpp_min", b.vpp_min.is_some()),
                 ("vpp_max", b.vpp_max.is_some()),
-                ("vsym_min", b.vsym_min.is_some()),
-                ("vsym_max", b.vsym_max.is_some()),
+                ("vpos_min", b.vpos_min.is_some()),
+                ("vpos_max", b.vpos_max.is_some()),
+                ("vneg_max", b.vneg_max.is_some()),
+                ("vzero_max", b.vzero_max.is_some()),
+                ("vn_max", b.vn_max.is_some()),
             ] {
                 if present {
-                    self.warn(format!(
-                        "bus {}: `{key}` volt bounds have no ENGINEERING field; dropped",
-                        b.id
-                    ));
+                    self.warn(
+                        &C::EMIT_PMD_FIELD_DROPPED,
+                        format!(
+                            "bus {}: `{key}` volt bounds have no ENGINEERING field; dropped",
+                            b.id
+                        ),
+                    );
                 }
             }
             buses.insert(b.id.to_lowercase(), Value::Object(o));
         }
         doc.insert("bus".into(), Value::Object(buses));
 
-        Self::linecodes(net, &mut doc);
+        self.line_codes(net, &mut doc);
         self.branches(net, &mut doc);
         self.injections(net, &mut doc);
         self.transformers(net, &mut doc);
 
-        for u in &net.untyped {
-            self.warn(format!(
-                "{} {}: class is not converted to ENGINEERING; dropped from the output",
-                u.class, u.name
-            ));
+        for u in net.untyped_objects() {
+            self.warn(
+                &C::EMIT_PMD_RECORD_DROPPED,
+                format!(
+                    "{} {}: class is not converted to ENGINEERING; dropped from the output",
+                    u.class, u.name
+                ),
+            );
         }
         Value::Object(doc)
     }
 
-    fn linecodes(net: &DistNetwork, doc: &mut Map<String, Value>) {
+    fn line_codes(&mut self, net: &MulticonductorNetwork, doc: &mut Map<String, Value>) {
         // Linecodes the reader materialized from inline line impedance
         // re-inline on the line; they are skipped here unless a line
         // without the marker also references them.
         let inlined = inlined_codes(net);
         let mut codes = Map::new();
-        for c in &net.linecodes {
+        for c in net.line_codes() {
             if inlined.contains(&c.name.to_lowercase()) {
                 continue;
             }
             let mut o = Map::new();
-            insert_impedance_matrices(&mut o, c, net.base_frequency);
+            insert_impedance_matrices(&mut o, c, net.base_frequency());
             if let Some(i_max) = &c.i_max {
                 o.insert("cm_ub".into(), json!(i_max));
             }
             if let Some(s_max) = &c.s_max {
                 o.insert("sm_ub".into(), json!(s_max));
+            }
+            if c.source.is_some() {
+                self.warn(
+                    &C::EMIT_PMD_FIELD_DROPPED,
+                    format!(
+                        "linecode {}: matrix provenance `source` has no ENGINEERING field; dropped",
+                        c.name
+                    ),
+                );
             }
             codes.insert(c.name.to_lowercase(), Value::Object(o));
         }
@@ -280,37 +547,56 @@ impl Writer {
         }
     }
 
-    fn branches(&mut self, net: &DistNetwork, doc: &mut Map<String, Value>) {
-        if !net.lines.is_empty() {
+    /// Line-level ratings (BMOPF `i_max`/`s_max`) map onto the ENGINEERING
+    /// line's own `cm_ub`/`sm_ub` slots.
+    fn line_ratings(o: &mut Map<String, Value>, l: &DistLine) {
+        if let Some(i_max) = &l.i_max {
+            o.insert("cm_ub".into(), json!(i_max));
+        }
+        if let Some(s_max) = &l.s_max {
+            o.insert("sm_ub".into(), json!(s_max));
+        }
+    }
+
+    // Two lines over the pedantic ceiling after the index lookup landed;
+    // the function is one linear pass and splitting it hides the flow.
+    #[allow(clippy::too_many_lines)]
+    fn branches(&mut self, net: &MulticonductorNetwork, doc: &mut Map<String, Value>) {
+        if !net.lines().is_empty() {
             let mut lines = Map::new();
-            for l in &net.lines {
+            let linecodes_by_name = linecodes_by_name(net);
+            for l in net.lines() {
                 let mut o = Map::new();
                 o.insert("f_bus".into(), json!(l.bus_from.to_lowercase()));
                 o.insert("t_bus".into(), json!(l.bus_to.to_lowercase()));
                 let what = format!("line {}", l.name);
                 o.insert(
                     "f_connections".into(),
-                    json!(conns(&l.terminal_map_from, &mut self.warnings, &what)),
+                    json!(self.conns(&l.terminal_map_from, &what)),
                 );
                 o.insert(
                     "t_connections".into(),
-                    json!(conns(&l.terminal_map_to, &mut self.warnings, &what)),
+                    json!(self.conns(&l.terminal_map_to, &what)),
                 );
                 o.insert("length".into(), json!(l.length));
                 // A line the reader materialized a linecode for re-inlines
                 // its impedance, the dss2eng shape for rmatrix defined
                 // lines: matrices on the line, no linecode key.
                 let inline = l.extras.get("pmd_inline").and_then(Value::as_bool) == Some(true);
-                match net.linecode(&l.linecode) {
+                let lc = linecodes_by_name.get(l.linecode.to_ascii_lowercase().as_str());
+                match lc.copied() {
                     Some(c) if inline => {
-                        insert_impedance_matrices(&mut o, c, net.base_frequency);
+                        insert_impedance_matrices(&mut o, c, net.base_frequency());
                         if let Some(i_max) = &c.i_max {
                             o.insert("cm_ub".into(), json!(i_max));
+                        }
+                        if let Some(s_max) = &c.s_max {
+                            o.insert("sm_ub".into(), json!(s_max));
                         }
                     }
                     _ => {
                         if inline {
-                            self.warn(format!(
+                            self.warn(&C::EMIT_PMD_VALUE_SUBSTITUTED, format!(
                                 "{what}: linecode `{}` is missing; emitted the reference instead of inline impedance",
                                 l.linecode
                             ));
@@ -318,6 +604,7 @@ impl Writer {
                         o.insert("linecode".into(), json!(l.linecode.to_lowercase()));
                     }
                 }
+                Self::line_ratings(&mut o, l);
                 o.insert("status".into(), Self::status(&l.extras));
                 o.insert(
                     "source_id".into(),
@@ -329,21 +616,21 @@ impl Writer {
             doc.insert("line".into(), Value::Object(lines));
         }
 
-        if !net.switches.is_empty() {
+        if !net.switches().is_empty() {
             let mut switches = Map::new();
-            for s in &net.switches {
+            for s in net.switches() {
                 let mut o = Map::new();
-                let n = s.terminal_map_from.len();
                 let what = format!("switch {}", s.name);
+                let n = self.bounded_dim(s.terminal_map_from.len(), &what);
                 o.insert("f_bus".into(), json!(s.bus_from.to_lowercase()));
                 o.insert("t_bus".into(), json!(s.bus_to.to_lowercase()));
                 o.insert(
                     "f_connections".into(),
-                    json!(conns(&s.terminal_map_from, &mut self.warnings, &what)),
+                    json!(self.conns(&s.terminal_map_from, &what)),
                 );
                 o.insert(
                     "t_connections".into(),
-                    json!(conns(&s.terminal_map_to, &mut self.warnings, &what)),
+                    json!(self.conns(&s.terminal_map_to, &what)),
                 );
                 // The reader's stash carries the source's series matrices;
                 // otherwise PMD models a dss switch as a tiny series
@@ -387,13 +674,14 @@ impl Writer {
         }
     }
 
-    fn loads(&mut self, net: &DistNetwork, doc: &mut Map<String, Value>) {
-        if !net.loads.is_empty() {
+    fn loads(&mut self, net: &MulticonductorNetwork, doc: &mut Map<String, Value>) {
+        if !net.loads().is_empty() {
             let mut loads = Map::new();
-            for l in &net.loads {
+            let buses_by_id = buses_by_id(net);
+            for l in net.loads() {
                 let mut o = Map::new();
                 let what = format!("load {}", l.name);
-                let connections = conns(&l.terminal_map, &mut self.warnings, &what);
+                let connections = self.conns(&l.terminal_map, &what);
                 // PMD types a two terminal load WYE when the return is the
                 // bus's grounded neutral and DELTA otherwise.
                 let configuration = match l.configuration {
@@ -403,7 +691,11 @@ impl Writer {
                         let grounded_return = l
                             .terminal_map
                             .last()
-                            .zip(net.bus(&l.bus))
+                            .zip(
+                                buses_by_id
+                                    .get(l.bus.to_ascii_lowercase().as_str())
+                                    .copied(),
+                            )
                             .is_some_and(|(t, b)| b.grounded.contains(t));
                         if grounded_return { "WYE" } else { "DELTA" }
                     }
@@ -448,7 +740,7 @@ impl Writer {
                     }
                     DistLoadVoltageModel::Exponential { v_nom, .. } => {
                         insert_vm_nom(v_nom);
-                        self.warn(format!(
+                        self.warn(&C::EMIT_PMD_VALUE_SUBSTITUTED, format!(
                             "{what}: exponential load model has no ENGINEERING field; emitted POWER"
                         ));
                         "POWER"
@@ -472,16 +764,16 @@ impl Writer {
         }
     }
 
-    fn generators(&mut self, net: &DistNetwork, doc: &mut Map<String, Value>) {
-        if !net.generators.is_empty() {
+    fn generators(&mut self, net: &MulticonductorNetwork, doc: &mut Map<String, Value>) {
+        if !net.generators().is_empty() {
             let mut gens = Map::new();
-            for g in &net.generators {
+            for g in net.generators() {
                 let mut o = Map::new();
                 let what = format!("generator {}", g.name);
                 o.insert("bus".into(), json!(g.bus.to_lowercase()));
                 o.insert(
                     "connections".into(),
-                    json!(conns(&g.terminal_map, &mut self.warnings, &what)),
+                    json!(self.conns(&g.terminal_map, &what)),
                 );
                 o.insert(
                     "configuration".into(),
@@ -506,9 +798,22 @@ impl Writer {
                     o.insert("pg_ub".into(), json!(kw(b)));
                 }
                 if g.cost.is_some() {
-                    self.warn(format!(
-                        "{what}: generation cost has no ENGINEERING field; dropped"
-                    ));
+                    self.warn(
+                        &C::EMIT_PMD_FIELD_DROPPED,
+                        format!("{what}: generation cost has no ENGINEERING field; dropped"),
+                    );
+                }
+                // The ENGINEERING generator carries kVA-scale sm_ub/cm_ub;
+                // that mapping is a #266 decision, so the drop stays loud.
+                for (key, present) in [("s_max", g.s_max.is_some()), ("i_max", g.i_max.is_some())] {
+                    if present {
+                        self.warn(
+                            &C::EMIT_PMD_FIELD_DROPPED,
+                            format!(
+                                "{what}: `{key}` has no ENGINEERING generator mapping yet; dropped"
+                            ),
+                        );
+                    }
                 }
                 o.insert("control_mode".into(), json!("FREQUENCYDROOP"));
                 o.insert("status".into(), Self::status(&g.extras));
@@ -523,18 +828,61 @@ impl Writer {
         }
     }
 
-    fn injections(&mut self, net: &DistNetwork, doc: &mut Map<String, Value>) {
+    fn injections(&mut self, net: &MulticonductorNetwork, doc: &mut Map<String, Value>) {
         self.loads(net, doc);
         self.generators(net, doc);
-        if !net.shunts.is_empty() {
-            let mut shunts = Map::new();
-            for s in &net.shunts {
+        // Typed capacitor banks convert to ENGINEERING shunts: the nameplate
+        // reactive power at the nameplate voltage becomes the susceptance
+        // matrix over the bank's own conductors, the same equivalence the
+        // admittance builder stamps.
+        let mut capacitor_shunts = Map::new();
+        for c in net.capacitors() {
+            let what = format!("capacitor {}", c.name);
+            match capacitor_susceptance(c) {
+                Ok(bs) => {
+                    let n = bs.len();
+                    let mut o = Map::new();
+                    o.insert("bus".into(), json!(c.bus.to_lowercase()));
+                    o.insert(
+                        "connections".into(),
+                        json!(self.conns(&c.terminal_map, &what)),
+                    );
+                    o.insert("gs".into(), matrix(&vec![vec![0.0; n]; n]));
+                    o.insert("bs".into(), matrix(&bs));
+                    o.insert(
+                        "configuration".into(),
+                        json!(match c.configuration {
+                            Configuration::Delta => "DELTA",
+                            _ => "WYE",
+                        }),
+                    );
+                    o.insert("model".into(), json!("CAPACITOR"));
+                    o.insert("dispatchable".into(), json!("NO"));
+                    o.insert("status".into(), Self::status(&c.extras));
+                    o.insert(
+                        "source_id".into(),
+                        json!(format!("capacitor.{}", c.name.to_lowercase())),
+                    );
+                    self.extras_dropped(&c.extras, &[], &what);
+                    capacitor_shunts.insert(c.name.to_lowercase(), Value::Object(o));
+                }
+                Err(reason) => {
+                    self.warn(
+                        &C::EMIT_PMD_RECORD_DROPPED,
+                        format!("{what}: {reason}; dropped"),
+                    );
+                }
+            }
+        }
+        if !net.shunts().is_empty() || !capacitor_shunts.is_empty() {
+            let mut shunts = capacitor_shunts;
+            for s in net.shunts() {
                 let mut o = Map::new();
                 let what = format!("shunt {}", s.name);
                 o.insert("bus".into(), json!(s.bus.to_lowercase()));
                 o.insert(
                     "connections".into(),
-                    json!(conns(&s.terminal_map, &mut self.warnings, &what)),
+                    json!(self.conns(&s.terminal_map, &what)),
                 );
                 o.insert("gs".into(), matrix(&s.g));
                 o.insert("bs".into(), matrix(&s.b));
@@ -561,7 +909,7 @@ impl Writer {
         }
 
         let mut sources = Map::new();
-        for vs in &net.sources {
+        for vs in net.sources() {
             sources.insert(vs.name.to_lowercase(), self.voltage_source(vs));
         }
         doc.insert("voltage_source".into(), Value::Object(sources));
@@ -570,8 +918,8 @@ impl Writer {
     fn voltage_source(&mut self, vs: &VoltageSource) -> Value {
         let mut o = Map::new();
         let what = format!("voltage source {}", vs.name);
-        let connections = conns(&vs.terminal_map, &mut self.warnings, &what);
-        let n = connections.len();
+        let connections = self.conns(&vs.terminal_map, &what);
+        let n = self.bounded_dim(connections.len(), &what);
         o.insert("bus".into(), json!(vs.bus.to_lowercase()));
         o.insert("connections".into(), json!(connections));
         o.insert("configuration".into(), json!("WYE"));
@@ -597,9 +945,10 @@ impl Writer {
         } else {
             let (rs, xs) = thevenin(vs, n);
             if rs.iter().flatten().all(|&v| v == 0.0) {
-                self.warn(format!(
-                    "{what}: no short circuit data; emitted an ideal source (zero rs/xs)"
-                ));
+                self.warn(
+                    &C::EMIT_PMD_VALUE_DEFAULTED,
+                    format!("{what}: no short circuit data; emitted an ideal source (zero rs/xs)"),
+                );
             }
             o.insert("rs".into(), matrix(&rs));
             o.insert("xs".into(), matrix(&xs));
@@ -633,12 +982,12 @@ impl Writer {
         Value::Object(o)
     }
 
-    fn transformers(&mut self, net: &DistNetwork, doc: &mut Map<String, Value>) {
-        if net.transformers.is_empty() {
+    fn transformers(&mut self, net: &MulticonductorNetwork, doc: &mut Map<String, Value>) {
+        if net.transformers().is_empty() {
             return;
         }
         let mut out = Map::new();
-        for t in &net.transformers {
+        for t in net.transformers() {
             out.insert(t.name.to_lowercase(), self.transformer(t));
         }
         doc.insert("transformer".into(), Value::Object(out));
@@ -659,11 +1008,11 @@ impl Writer {
         let mut connections: Vec<Value> = Vec::new();
         for (w_idx, w) in t.windings.iter().enumerate() {
             buses.push(json!(w.bus.to_lowercase()));
-            let mut c = conns(&w.terminal_map, &mut self.warnings, &what);
+            let mut c = self.conns(&w.terminal_map, &what);
             if !stashed
                 && w_idx > 0
-                && t.windings[0].conn == WindingConn::Delta
-                && w.conn == WindingConn::Wye
+                && t.windings[0].conn == DistWindingConn::Delta
+                && w.conn == DistWindingConn::Wye
                 && c.len() > 1
             {
                 let phases_part = c.len() - 1;
@@ -693,8 +1042,8 @@ impl Writer {
                     .iter()
                     .map(|w| {
                         json!(match w.conn {
-                            WindingConn::Wye => "WYE",
-                            WindingConn::Delta => "DELTA",
+                            DistWindingConn::Wye => "WYE",
+                            DistWindingConn::Delta => "DELTA",
                         })
                     })
                     .collect(),
@@ -726,28 +1075,47 @@ impl Writer {
             "vm_nom".into(),
             json!(t.windings.iter().map(|w| w.v_ref / 1e3).collect::<Vec<_>>()),
         );
-        let sm_ub =
-            Self::extras_f64(&t.extras, "emerghkva").unwrap_or(t.windings[0].s_rating / 1e3 * 1.5);
+        // A transformer with no windings is degenerate but reachable from
+        // untrusted input (a PMD or BMOPF document with the winding array
+        // absent), so derive the emergency rating default from the first
+        // winding only when one exists rather than indexing unconditionally.
+        let sm_ub = Self::extras_f64(&t.extras, "emerghkva")
+            .unwrap_or_else(|| t.windings.first().map_or(0.0, |w| w.s_rating / 1e3 * 1.5));
         o.insert("sm_ub".into(), json!(sm_ub));
         insert_tap_fields(&mut o, t, phases);
         if let Some(controls) = t.extras.get("controls") {
             o.insert("controls".into(), controls.clone());
         }
-        let noloadloss = Self::extras_f64(&t.extras, "%noloadloss").unwrap_or(0.0) / 100.0;
-        let cmag = Self::extras_f64(&t.extras, "%imag").unwrap_or(0.0) / 100.0;
-        o.insert("noloadloss".into(), json!(noloadloss));
-        o.insert("cmag".into(), json!(cmag));
+        self.transformer_no_load_fields(t, &mut o, &what);
         o.insert("status".into(), Self::status(&t.extras));
         o.insert(
             "source_id".into(),
             json!(format!("transformer.{}", t.name.to_lowercase())),
         );
-        self.extras_dropped(
-            &t.extras,
-            &["controls", "%loadloss", "%noloadloss", "%imag", "emerghkva"],
-            &what,
-        );
         Value::Object(o)
+    }
+    fn transformer_no_load_fields(
+        &mut self,
+        t: &DistTransformer,
+        o: &mut Map<String, Value>,
+        what: &str,
+    ) {
+        let explicit_shunt = crate::model::transformer_no_load_percentages(t);
+        let (loss, imag) = explicit_shunt.unwrap_or_else(|| {
+            (
+                Self::extras_f64(&t.extras, "%noloadloss").unwrap_or(0.0),
+                Self::extras_f64(&t.extras, "%imag").unwrap_or(0.0),
+            )
+        });
+        let noloadloss = loss / 100.0;
+        let cmag = imag / 100.0;
+        o.insert("noloadloss".into(), json!(noloadloss));
+        o.insert("cmag".into(), json!(cmag));
+        let mut allowed = vec!["controls", "%loadloss", "%noloadloss", "%imag", "emerghkva"];
+        if explicit_shunt.is_some() {
+            allowed.push("no_load_shunt");
+        }
+        self.extras_dropped(&t.extras, &allowed, what);
     }
 }
 
@@ -790,19 +1158,19 @@ fn insert_tap_fields(o: &mut Map<String, Value>, t: &DistTransformer, phases: us
 /// bmopf sourced), following the dss2eng conventions: the per bus vbase is
 /// the source's nominal line to neutral kV without the pu factor folded
 /// in, and sbase is basemva in kVA (default 100 MVA).
-fn synthesized_settings(net: &DistNetwork) -> Value {
+fn synthesized_settings(net: &MulticonductorNetwork) -> Value {
     let mut settings = Map::new();
-    settings.insert("base_frequency".into(), json!(net.base_frequency));
+    settings.insert("base_frequency".into(), json!(net.base_frequency()));
     settings.insert("power_scale_factor".into(), json!(1000.0));
     settings.insert("voltage_scale_factor".into(), json!(1000.0));
     let sbase = net
-        .sources
+        .sources()
         .first()
         .and_then(|vs| Writer::extras_f64(&vs.extras, "basemva"))
         .map_or(100_000.0, |mva| mva * 1e3);
     settings.insert("sbase_default".into(), json!(sbase));
     let mut vbases = Map::new();
-    for vs in &net.sources {
+    for vs in net.sources() {
         let phases = count_phases(vs).max(1) as f64;
         let vln_kv = Writer::extras_f64(&vs.extras, "basekv").map_or_else(
             || {
@@ -822,12 +1190,12 @@ fn synthesized_settings(net: &DistNetwork) -> Value {
 /// the reversed second half of a center tap secondary, 1 elsewhere. The
 /// reader compares the source against this to decide whether the file's
 /// polarity needs an extras stash.
-pub(super) fn lag_polarity(windings: &[Winding]) -> Vec<i64> {
+pub(super) fn lag_polarity(windings: &[DistWinding]) -> Vec<i64> {
     let nw = windings.len();
     let mut polarity = vec![1i64; nw];
     for (w_idx, w) in windings.iter().enumerate().skip(1) {
-        if windings[0].conn == WindingConn::Delta
-            && w.conn == WindingConn::Wye
+        if windings[0].conn == DistWindingConn::Delta
+            && w.conn == DistWindingConn::Wye
             && w.terminal_map.len() > 1
         {
             polarity[w_idx] = -1;
@@ -842,11 +1210,11 @@ pub(super) fn lag_polarity(windings: &[Winding]) -> Vec<i64> {
 
 /// Names (lowercased) of linecodes that re-inline on their lines: every
 /// referencing line carries the reader's `pmd_inline` marker.
-fn inlined_codes(net: &DistNetwork) -> BTreeSet<String> {
+fn inlined_codes(net: &MulticonductorNetwork) -> BTreeSet<String> {
     let mut inlined = BTreeSet::new();
-    for c in &net.linecodes {
+    for c in net.line_codes() {
         let mut refs = net
-            .lines
+            .lines()
             .iter()
             .filter(|l| l.linecode.eq_ignore_ascii_case(&c.name))
             .peekable();
@@ -883,7 +1251,7 @@ fn insert_impedance_matrices(o: &mut Map<String, Value>, c: &DistLineCode, base_
 /// (the same math the reference dss2eng inherits): sequence impedances from
 /// the short circuit levels, then self/mutual phase values filled over all
 /// conductors including the neutral.
-fn thevenin(vs: &VoltageSource, n_cond: usize) -> (Mat, Mat) {
+fn thevenin(vs: &VoltageSource, n_cond: usize) -> (ConductorMatrix, ConductorMatrix) {
     let get = |key: &str| Writer::extras_f64(&vs.extras, key);
     let basekv = get("basekv").unwrap_or_else(|| {
         // Reconstruct from the magnitude when basekv was defaulted.
@@ -935,10 +1303,9 @@ fn source_vm_nom(extras: &Extras, v_nom: &[f64]) -> Option<Value> {
     if let Some(kv) = raw
         .as_f64()
         .or_else(|| raw.as_str().and_then(|s| s.parse().ok()))
+        && v_nom.iter().all(|v| same_voltage(*v, kv * 1e3))
     {
-        if v_nom.iter().all(|v| same_voltage(*v, kv * 1e3)) {
-            return Some(json!(kv));
-        }
+        return Some(json!(kv));
     }
     let vals: Vec<f64> = raw
         .as_array()?

@@ -1,18 +1,26 @@
 # powerio-matrix
 
-`powerio-matrix` builds sparse matrices and graph outputs from `powerio::Network`.
-It re-exports the `powerio` data layer so one import covers parsing and matrix
-construction.
+`powerio-matrix` calculates sparse matrices and graph data from parsed
+networks of either family, and every numerical result comes with its element
+mappings. It sits over the component crates (`powerio-tx`, `powerio-dist`,
+`powerio-prob`), and the `powerio` facade re-exports it behind the `matrix`
+feature.
 
 ```rust
-use powerio_matrix::{BuildOptions, IndexedNetwork, build_bprime, parse_matpower_file};
+use powerio_matrix::{BuildOptions, IndexedNetwork, calc_bprime_matrix};
 
-let net = parse_matpower_file("case14.m")?;
-let view = IndexedNetwork::new(&net);
-let bprime = build_bprime(&view, &BuildOptions::default())?;
+let module = powerio::parse("case14.m")?;
+let powerio::PioValue::BalancedNetwork(network) = module.value() else {
+    panic!("expected a balanced network");
+};
+let view = IndexedNetwork::new(network);
+let bprime = calc_bprime_matrix(&view, &BuildOptions::default())?;
 ```
 
 Outputs include MATPOWER Bp/Bpp, Y_bus components, LACPF, signed incidence,
-weighted bus Laplacians, PTDF, LODF, DC OPF bundles, adjacency, and a petgraph
-graph. The workspace README has the full format and validation overview:
-<https://github.com/eigenergy/powerio>.
+weighted bus Laplacians, PTDF, LODF, adjacency, and a petgraph graph.
+`powerio-prob` builds the calculation instances, and this crate calculates
+the problem specific operators from them (`DcOperators::build`,
+`calc_power_flow_jacobian`, and `calc_multiconductor_admittance_matrix`). The
+[workspace README](https://github.com/eigenergy/powerio) lists the formats
+and validation commands.

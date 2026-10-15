@@ -4,7 +4,7 @@
 //! verified empirically against the engine (opendssdirect via
 //! `tools/verify_defaults.py`; rerun it when bumping the engine). The reader
 //! materializes these into explicit model values and records each
-//! materialization in `DistNetwork::defaulted`.
+//! materialization in `MulticonductorNetwork::defaulted`.
 //!
 //! The generator note: the constructor sets kW=1000, PF=0.88, kvar=60
 //! (`generator.cpp`, member init), while the property display strings claim
@@ -98,7 +98,7 @@ pub const BASE_FREQUENCY: f64 = 60.0;
 /// `GetUnitsCode` + `To_Meters` from Shared/LineUnits.cpp. The engine
 /// matches on the first two characters; `no*` and anything unrecognized
 /// are UNITS_NONE, which has no conversion factor.
-pub fn unit_to_meters(code: &str) -> Option<f64> {
+pub fn calc_meters_per_unit(code: &str) -> Option<f64> {
     let two: String = code
         .chars()
         .take(2)
@@ -115,4 +115,14 @@ pub fn unit_to_meters(code: &str) -> Option<f64> {
         "mm" => 0.001,
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn known_units_have_meter_factors() {
+        assert_eq!(calc_meters_per_unit("km"), Some(1000.0));
+    }
 }

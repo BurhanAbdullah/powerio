@@ -1,10 +1,15 @@
-use powerio_dist::{
-    DistLoadVoltageModel, parse_bmopf_str, parse_dss_str, parse_pmd_str, write_bmopf_json,
-    write_dss, write_pmd_json,
+use powerio_dist::DistLoadVoltageModel;
+
+mod helpers;
+use helpers::{
+    emit_bmopf_json, emit_dss, emit_pmd_json, parse_bmopf_str, parse_dss_str, parse_pmd_str,
 };
 
-fn load_model<'a>(net: &'a powerio_dist::DistNetwork, name: &str) -> &'a DistLoadVoltageModel {
-    &net.loads
+fn load_model<'a>(
+    net: &'a powerio_dist::MulticonductorNetwork,
+    name: &str,
+) -> &'a DistLoadVoltageModel {
+    &net.loads()
         .iter()
         .find(|l| l.name.eq_ignore_ascii_case(name))
         .unwrap_or_else(|| panic!("missing load {name}"))
@@ -35,29 +40,29 @@ fn rich_bmopf_load_voltage_models_preserve_all_variants() {
             "cp": {
                 "bus": "b1", "terminal_map": ["1", "2", "3", "4"],
                 "configuration": "WYE", "p_nom": [1.0, 1.0, 1.0], "q_nom": [0.1, 0.1, 0.1],
-                "model": "constant_power", "v_nom": [7200.0, 7200.0, 7200.0]
+                "model": "CONSTANT_POWER", "v_nom": [7200.0, 7200.0, 7200.0]
             },
             "ci": {
                 "bus": "b1", "terminal_map": ["1", "2", "3", "4"],
                 "configuration": "WYE", "p_nom": [1.0, 1.0, 1.0], "q_nom": [0.1, 0.1, 0.1],
-                "model": "constant_current", "v_nom": [7200.0, 7200.0, 7200.0]
+                "model": "CONSTANT_CURRENT", "v_nom": [7200.0, 7200.0, 7200.0]
             },
             "cz": {
                 "bus": "b1", "terminal_map": ["1", "2", "3", "4"],
                 "configuration": "WYE", "p_nom": [1.0, 1.0, 1.0], "q_nom": [0.1, 0.1, 0.1],
-                "model": "constant_impedance", "v_nom": [7200.0, 7200.0, 7200.0]
+                "model": "CONSTANT_IMPEDANCE", "v_nom": [7200.0, 7200.0, 7200.0]
             },
             "zip": {
                 "bus": "b1", "terminal_map": ["1", "2", "3", "4"],
                 "configuration": "WYE", "p_nom": [1.0, 2.0, 3.0], "q_nom": [0.1, 0.2, 0.3],
-                "model": "zip", "v_nom": [7200.0, 7200.0, 7200.0],
+                "model": "ZIP", "v_nom": [7200.0, 7200.0, 7200.0],
                 "alpha_z": [0.2, 0.2, 0.2], "alpha_i": [0.3, 0.3, 0.3], "alpha_p": [0.5, 0.5, 0.5],
                 "beta_z": [0.1, 0.1, 0.1], "beta_i": [0.4, 0.4, 0.4], "beta_p": [0.5, 0.5, 0.5]
             },
             "exp": {
                 "bus": "b1", "terminal_map": ["1", "2", "3", "4"],
                 "configuration": "WYE", "p_nom": [1.0, 1.0, 1.0], "q_nom": [0.0, 0.0, 0.0],
-                "model": "exponential", "v_nom": [7200.0, 7200.0, 7200.0],
+                "model": "EXPONENTIAL", "v_nom": [7200.0, 7200.0, 7200.0],
                 "gamma_p": [1.2, 1.3, 1.4], "gamma_q": [2.1, 2.2, 2.3]
             }
         }
@@ -86,10 +91,10 @@ fn rich_bmopf_load_voltage_models_preserve_all_variants() {
             if gamma_p == &vec![1.2, 1.3, 1.4] && gamma_q == &vec![2.1, 2.2, 2.3]
     ));
 
-    let out = write_bmopf_json(&net);
+    let out = emit_bmopf_json(&net);
     assert!(out.warnings.is_empty(), "{:?}", out.warnings);
     let back = parse_bmopf_str(&out.text).unwrap();
-    assert_eq!(net.loads, back.loads);
+    assert_eq!(net.loads(), back.loads());
     let doc: serde_json::Value = serde_json::from_str(&out.text).unwrap();
     assert_eq!(
         doc["load"]["exp"]["gamma_p"],
@@ -142,7 +147,7 @@ fn rich_pmd_load_voltage_models_keep_model_and_nominal_voltage() {
         DistLoadVoltageModel::Zip { v_nom, .. } if v_nom == &vec![7200.0, 7200.0, 7200.0]
     ));
 
-    let out = write_pmd_json(&net);
+    let out = emit_pmd_json(&net);
     assert!(out.warnings.is_empty(), "{:?}", out.warnings);
     let doc: serde_json::Value = serde_json::from_str(&out.text).unwrap();
     assert_eq!(
@@ -166,8 +171,8 @@ fn rich_opendss_load_models_and_switches_round_trip() {
         New Load.cp3 bus1=b2.1.2.3 phases=3 conn=wye kv=12.47 kw=90 kvar=45 model=3\n\
         New Load.zip bus1=b2.1.2.3 phases=3 conn=wye kv=12.47 kw=90 kvar=45 model=8 zipv=[0.2,0.3,0.5,0.1,0.4,0.5,0.8]\n";
     let net = parse_dss_str(dss);
-    assert_eq!(net.switches.len(), 1);
-    assert!(net.switches[0].open);
+    assert_eq!(net.switches().len(), 1);
+    assert!(net.switches()[0].open);
     let dss_v_nom = 12_470.0 / 3f64.sqrt();
     assert!(matches!(
         load_model(&net, "ci"),
@@ -182,7 +187,7 @@ fn rich_opendss_load_models_and_switches_round_trip() {
         DistLoadVoltageModel::Zip { alpha_z, beta_i, .. }
             if alpha_z == &vec![0.2, 0.2, 0.2] && beta_i == &vec![0.4, 0.4, 0.4]
     ));
-    let dss_direct = write_dss(&net);
+    let dss_direct = emit_dss(&net);
     assert!(
         dss_direct
             .text
@@ -196,23 +201,23 @@ fn rich_opendss_load_models_and_switches_round_trip() {
         dss_direct.text
     );
 
-    let bmopf = write_bmopf_json(&net);
+    let bmopf = emit_bmopf_json(&net);
     let bmopf_doc: serde_json::Value = serde_json::from_str(&bmopf.text).unwrap();
-    assert_eq!(bmopf_doc["load"]["ci"]["model"], "constant_current");
-    assert_eq!(bmopf_doc["load"]["cz"]["model"], "constant_impedance");
-    assert_eq!(bmopf_doc["load"]["zip"]["model"], "zip");
+    assert_eq!(bmopf_doc["load"]["ci"]["model"], "CONSTANT_CURRENT");
+    assert_eq!(bmopf_doc["load"]["cz"]["model"], "CONSTANT_IMPEDANCE");
+    assert_eq!(bmopf_doc["load"]["zip"]["model"], "ZIP");
     assert_eq!(
         bmopf_doc["load"]["zip"]["alpha_z"],
         serde_json::json!([0.2, 0.2, 0.2])
     );
     assert_eq!(bmopf_doc["switch"]["sw"]["open_switch"], true);
     let from_bmopf = parse_bmopf_str(&bmopf.text).unwrap();
-    assert_eq!(from_bmopf.switches[0].open, net.switches[0].open);
+    assert_eq!(from_bmopf.switches()[0].open, net.switches()[0].open);
     assert_eq!(load_model(&from_bmopf, "zip"), load_model(&net, "zip"));
 
-    let dss_back = write_dss(&from_bmopf);
+    let dss_back = emit_dss(&from_bmopf);
     let reparsed = parse_dss_str(&dss_back.text);
-    assert_eq!(reparsed.switches[0].open, net.switches[0].open);
+    assert_eq!(reparsed.switches()[0].open, net.switches()[0].open);
     assert_eq!(load_model(&reparsed, "ci"), load_model(&net, "ci"));
     assert_eq!(load_model(&reparsed, "cz"), load_model(&net, "cz"));
     assert_eq!(load_model(&reparsed, "zip"), load_model(&net, "zip"));

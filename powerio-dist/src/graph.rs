@@ -5,8 +5,12 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    DistBus, DistIbr, DistNetwork, DistTransformer, VoltageSource, Winding, pair_keys,
+    DistBus, DistIbr, DistTransformer, DistWinding, MulticonductorNetwork, VoltageSource, pair_keys,
 };
+
+/// Upper bound on the winding count the transformer edge expansion is
+/// materialized at, matching the readers' own winding cap.
+const MAX_WINDING_PAIRS_DIM: usize = 64;
 
 /// A collapsed bus graph with terminal level attachments and conductor maps.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -76,10 +80,10 @@ pub enum DistGraphEdgeKind {
     Transformer,
 }
 
-impl DistNetwork {
-    /// Project this network into a render ready bus and terminal graph.
+impl MulticonductorNetwork {
+    /// Transform this network into a render ready bus and terminal graph.
     #[must_use]
-    pub fn graph(&self) -> DistGraph {
+    pub fn to_graph(&self) -> DistGraph {
         DistGraph::from_network(self)
     }
 }
@@ -87,10 +91,10 @@ impl DistNetwork {
 impl DistGraph {
     /// Build the graph projection for one distribution network.
     #[must_use]
-    pub fn from_network(net: &DistNetwork) -> Self {
-        let mut builder = GraphBuilder::new(&net.buses);
+    pub fn from_network(net: &MulticonductorNetwork) -> Self {
+        let mut builder = GraphBuilder::new(net.buses());
 
-        for line in &net.lines {
+        for line in net.lines() {
             let from = builder.canonical_bus_id(&line.bus_from);
             let to = builder.canonical_bus_id(&line.bus_to);
             builder.edges.push(DistGraphEdge {
@@ -104,7 +108,7 @@ impl DistGraph {
             });
         }
 
-        for switch in &net.switches {
+        for switch in net.switches() {
             let from = builder.canonical_bus_id(&switch.bus_from);
             let to = builder.canonical_bus_id(&switch.bus_to);
             builder.edges.push(DistGraphEdge {
@@ -121,11 +125,11 @@ impl DistGraph {
             });
         }
 
-        for transformer in &net.transformers {
+        for transformer in net.transformers() {
             builder.add_transformer_edges(transformer);
         }
 
-        for load in &net.loads {
+        for load in net.loads() {
             builder.add_load(
                 &load.bus,
                 &load.terminal_map,
@@ -133,7 +137,7 @@ impl DistGraph {
                 watts_to_kw(&load.p_nom),
             );
         }
-        for generator in &net.generators {
+        for generator in net.generators() {
             builder.add_generator(
                 &generator.bus,
                 &generator.terminal_map,
@@ -141,10 +145,10 @@ impl DistGraph {
                 watts_to_kw(&generator.p_nom),
             );
         }
-        for ibr in &net.ibrs {
+        for ibr in net.ibrs() {
             builder.add_ibr(ibr);
         }
-        for shunt in &net.shunts {
+        for shunt in net.shunts() {
             builder.add_attachment(
                 &shunt.bus,
                 &shunt.terminal_map,
@@ -152,7 +156,18 @@ impl DistGraph {
                 &shunt.name,
             );
         }
-        for source in &net.sources {
+        // A rated capacitor bank attaches to a bus exactly like a raw
+        // admittance shunt. It projects as one, so connectivity and the geo
+        // layer see the bank.
+        for capacitor in net.capacitors() {
+            builder.add_attachment(
+                &capacitor.bus,
+                &capacitor.terminal_map,
+                DistGraphAttachmentKind::Shunt,
+                &capacitor.name,
+            );
+        }
+        for source in net.sources() {
             builder.add_source(source);
         }
 
@@ -227,7 +242,12 @@ impl GraphBuilder {
     }
 
     fn add_transformer_edges(&mut self, transformer: &DistTransformer) {
-        for (from_idx, to_idx) in pair_keys(transformer.windings.len()) {
+        // One edge per winding pair, so the winding count expands
+        // quadratically. Every reader caps it at the same bound, but a
+        // callers can construct a `MulticonductorNetwork` without those caps.
+        // No physical transformer comes near it.
+        let n_windings = transformer.windings.len().min(MAX_WINDING_PAIRS_DIM);
+        for (from_idx, to_idx) in pair_keys(n_windings) {
             let Some(from_winding) = transformer.windings.get(from_idx) else {
                 continue;
             };
@@ -314,8 +334,8 @@ fn transformer_edge(
     transformer: &DistTransformer,
     from: String,
     to: String,
-    from_winding: &Winding,
-    to_winding: &Winding,
+    from_winding: &DistWinding,
+    to_winding: &DistWinding,
 ) -> DistGraphEdge {
     DistGraphEdge {
         kind: DistGraphEdgeKind::Transformer,
@@ -370,6 +390,7 @@ fn number_extra(extras: &BTreeMap<String, serde_json::Value>, names: &[&str]) ->
 
 #[cfg(test)]
 mod tests {
+    use crate::model::MulticonductorNetworkTables;
     use std::path::Path;
 
     use super::*;
@@ -407,8 +428,9 @@ mod tests {
 
     #[test]
     fn graph_projects_open_switch_fixture() {
-        let net = crate::parse_file(fixture("micro/switch.dss"), None).expect("parse switch");
-        let graph = net.graph();
+        let net =
+            crate::testkit::parse_file(fixture("micro/switch.dss"), None).expect("parse switch");
+        let graph = net.to_graph();
 
         let open = edge(&graph, DistGraphEdgeKind::Switch, "sw_open");
         assert!(!open.closed);
@@ -446,9 +468,9 @@ mod tests {
 
     #[test]
     fn graph_projects_one_edge_per_transformer_winding_pair() {
-        let net =
-            crate::parse_file(fixture("micro/xfmr_center_tap.dss"), None).expect("parse xfmr");
-        let graph = net.graph();
+        let net = crate::testkit::parse_file(fixture("micro/xfmr_center_tap.dss"), None)
+            .expect("parse xfmr");
+        let graph = net.to_graph();
         let transformer_edges: Vec<_> = graph
             .edges
             .iter()
@@ -478,11 +500,11 @@ mod tests {
 
     #[test]
     fn graph_projects_bmopf_fixture() {
-        let net =
-            crate::parse_file(fixture("bmopf/example_ieee13.json"), None).expect("parse bmopf");
-        let graph = net.graph();
+        let net = crate::testkit::parse_file(fixture("bmopf/example_ieee13.json"), None)
+            .expect("parse bmopf");
+        let graph = net.to_graph();
 
-        assert!(graph.buses.len() >= net.buses.len());
+        assert!(graph.buses.len() >= net.buses().len());
         assert!(
             graph
                 .edges
@@ -499,10 +521,10 @@ mod tests {
 
     #[test]
     fn graph_accumulates_terminal_attachments_and_generation() {
-        let mut net = DistNetwork::new();
-        net.buses
+        let mut net = MulticonductorNetwork::new();
+        net.buses_mut()
             .push(DistBus::new("b1", strings(&["a", "b", "n"])));
-        net.loads.push(DistLoad::new(
+        net.loads_mut().push(DistLoad::new(
             "load",
             "b1",
             strings(&["a", "n"]),
@@ -510,7 +532,7 @@ mod tests {
             vec![1000.0],
             vec![0.0],
         ));
-        net.generators.push(DistGenerator::new(
+        net.generators_mut().push(DistGenerator::new(
             "gen",
             "b1",
             strings(&["b", "n"]),
@@ -518,7 +540,7 @@ mod tests {
             vec![2000.0],
             vec![0.0],
         ));
-        net.sources.push(VoltageSource::new(
+        net.sources_mut().push(VoltageSource::new(
             "source",
             "b1",
             strings(&["a", "b", "n"]),
@@ -526,7 +548,7 @@ mod tests {
             vec![0.0, 0.0, 0.0],
         ));
 
-        let graph = net.graph();
+        let graph = net.to_graph();
         let b1 = bus(&graph, "b1");
 
         assert_close(b1.load_kw, 1.0);
@@ -542,17 +564,47 @@ mod tests {
     }
 
     #[test]
+    fn transformer_edge_expansion_is_bounded() {
+        // One edge per winding pair. Every reader caps the winding count,
+        // but callers can construct a `MulticonductorNetwork` without those
+        // caps, so a linear-size model must not force quadratic work.
+        let n = 4000;
+        let windings: Vec<DistWinding> = (0..n)
+            .map(|i| {
+                DistWinding::new(
+                    format!("b{i}"),
+                    strings(&["1", "2", "3", "n"]),
+                    crate::model::DistWindingConn::Wye,
+                    12470.0,
+                    5e6,
+                )
+            })
+            .collect();
+        let net = MulticonductorNetwork::from_tables(MulticonductorNetworkTables {
+            transformers: vec![DistTransformer::new("t1", windings, Vec::new(), 3)],
+            ..MulticonductorNetworkTables::default()
+        });
+
+        let graph = net.to_graph();
+        let pairs = MAX_WINDING_PAIRS_DIM * (MAX_WINDING_PAIRS_DIM - 1) / 2;
+        assert_eq!(graph.edges.len(), pairs);
+        // Uncapped this would be n(n-1)/2 edges, three orders of magnitude
+        // more than the winding array that produced them.
+        assert!(pairs < n);
+    }
+
+    #[test]
     fn graph_uses_extra_coordinates_when_present() {
         let mut bus = DistBus::new("b1", strings(&["1"]));
         bus.extras
             .insert("longitude".into(), serde_json::json!(-80.0));
         bus.extras
             .insert("latitude".into(), serde_json::json!(35.0));
-        let net = DistNetwork {
+        let net = MulticonductorNetwork::from_tables(MulticonductorNetworkTables {
             buses: vec![bus],
-            ..DistNetwork::new()
-        };
+            ..MulticonductorNetworkTables::default()
+        });
 
-        assert_eq!(net.graph().buses[0].xy, Some([-80.0, 35.0]));
+        assert_eq!(net.to_graph().buses[0].xy, Some([-80.0, 35.0]));
     }
 }

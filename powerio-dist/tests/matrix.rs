@@ -8,10 +8,10 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use powerio_dist::{
-    Conversion, ConversionSidecar, DistLoadVoltageModel, DistNetwork, DistTargetFormat, Result,
-    parse_bmopf_str, parse_dss_file, parse_pmd_str,
-};
+use powerio_dist::{DistLoadVoltageModel, DistTargetFormat, MulticonductorNetwork, Result};
+
+mod helpers;
+use helpers::{Conv as Emission, Sidecar, parse_bmopf_str, parse_dss_file, parse_pmd_str};
 
 fn fixture(rel: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -35,15 +35,11 @@ impl Fmt {
         }
     }
 
-    fn parse_conversion(self, conv: &Conversion) -> Result<DistNetwork> {
+    fn parse_emission(self, conv: &Emission) -> Result<helpers::Parsed> {
         self.parse_text_and_sidecars(&conv.text, &conv.sidecars)
     }
 
-    fn parse_text_and_sidecars(
-        self,
-        text: &str,
-        sidecars: &[ConversionSidecar],
-    ) -> Result<DistNetwork> {
+    fn parse_text_and_sidecars(self, text: &str, sidecars: &[Sidecar]) -> Result<helpers::Parsed> {
         match self {
             Fmt::Dss => {
                 // Unique path per call: the harness tests run in parallel
@@ -63,7 +59,7 @@ impl Fmt {
                     }
                     std::fs::write(sidecar_path, &sidecar.text).unwrap();
                 }
-                let parsed = powerio_dist::dss::parse_dss_file(&path);
+                let parsed = helpers::parse_dss_file(&path);
                 let _ = std::fs::remove_dir_all(&dir);
                 parsed
             }
@@ -225,12 +221,12 @@ const CASES: &[Case] = &[
     },
 ];
 
-fn parse_case(case: &Case) -> DistNetwork {
+fn parse_case(case: &Case) -> helpers::Parsed {
     let path = fixture(case.rel);
     match case.fmt {
         Fmt::Dss => parse_dss_file(&path).unwrap(),
-        Fmt::Bmopf => powerio_dist::parse_bmopf_file(&path).unwrap(),
-        Fmt::Pmd => powerio_dist::parse_pmd_file(&path).unwrap(),
+        Fmt::Bmopf => helpers::parse_bmopf_file(&path).unwrap(),
+        Fmt::Pmd => helpers::parse_pmd_file(&path).unwrap(),
     }
 }
 
@@ -313,11 +309,20 @@ fn close_power(x: f64, y: f64) -> bool {
     (x - y).abs() <= 4.0 * f64::EPSILON * x.abs().max(y.abs())
 }
 
-fn assert_loads_eq(a: &DistNetwork, b: &DistNetwork, what: &str, allow_derived_v_nom: bool) {
-    assert_eq!(a.loads.len(), b.loads.len(), "{what}: loads");
-    for ((_, x), (_, y)) in by_name(&a.loads, |l| &l.name)
+fn assert_loads_eq(
+    a: &MulticonductorNetwork,
+    b: &MulticonductorNetwork,
+    what: &str,
+    allow_derived_v_nom: bool,
+) {
+    if target_is_dss_leg(what) {
+        assert_dss_loads_eq(a, b, what);
+        return;
+    }
+    assert_eq!(a.loads().len(), b.loads().len(), "{what}: loads");
+    for ((_, x), (_, y)) in by_name(a.loads(), |l| &l.name)
         .iter()
-        .zip(&by_name(&b.loads, |l| &l.name))
+        .zip(&by_name(b.loads(), |l| &l.name))
     {
         for (p, q) in x.p_nom.iter().zip(&y.p_nom) {
             assert!(close_power(*p, *q), "{what}: load {} p {p} vs {q}", x.name);
@@ -325,10 +330,11 @@ fn assert_loads_eq(a: &DistNetwork, b: &DistNetwork, what: &str, allow_derived_v
         for (p, q) in x.q_nom.iter().zip(&y.q_nom) {
             assert!(close_power(*p, *q), "{what}: load {} q {p} vs {q}", x.name);
         }
-        assert_eq!(
-            x.terminal_map, y.terminal_map,
-            "{what}: load {} map",
-            x.name
+        assert_maps_eq(
+            &x.terminal_map,
+            &y.terminal_map,
+            what,
+            &format!("load {} map", x.name),
         );
         assert!(
             same_load_voltage_model(&x.voltage_model, &y.voltage_model, allow_derived_v_nom),
@@ -340,27 +346,157 @@ fn assert_loads_eq(a: &DistNetwork, b: &DistNetwork, what: &str, allow_derived_v
     }
 }
 
-fn target_may_materialize_v_nom(what: &str) -> bool {
+/// Loads over a dss leg (#266 item 2).
+///
+/// A load whose phases carry different power has no single `Load` expression,
+/// so the writer splits it into one single phase `Load` per terminal, named
+/// `<load>_<terminal>`. The count therefore grows, and what has to survive is
+/// the per phase profile: each source load is matched by its own name when it
+/// came back whole, or by its parts, and the two must state the same power.
+fn assert_dss_loads_eq(a: &MulticonductorNetwork, b: &MulticonductorNetwork, what: &str) {
+    let mut matched = 0usize;
+    for x in a.loads() {
+        let parts: Vec<&powerio_dist::DistLoad> = b
+            .loads()
+            .iter()
+            .filter(|y| {
+                y.name == x.name
+                    || y.name
+                        .strip_prefix(&format!("{}_", x.name))
+                        .is_some_and(|rest| x.terminal_map.iter().any(|t| t == rest))
+            })
+            .collect();
+        assert!(
+            !parts.is_empty(),
+            "{what}: load {} has no counterpart",
+            x.name
+        );
+        matched += parts.len();
+
+        let mut want: Vec<(f64, f64)> = x
+            .p_nom
+            .iter()
+            .copied()
+            .zip(x.q_nom.iter().copied())
+            .collect();
+        let mut got: Vec<(f64, f64)> = parts
+            .iter()
+            .flat_map(|y| y.p_nom.iter().copied().zip(y.q_nom.iter().copied()))
+            .collect();
+        if parts.len() == 1 && got.len() != want.len() {
+            // Came back whole: one balanced object states the total, which is
+            // all a balanced source load ever said.
+            let sum = |v: &[(f64, f64)]| {
+                v.iter()
+                    .fold((0.0, 0.0), |(p, q), (dp, dq)| (p + dp, q + dq))
+            };
+            let (wp, wq) = sum(&want);
+            let (gp, gq) = sum(&got);
+            assert!(
+                close_power(wp, gp) && close_power(wq, gq),
+                "{what}: load {} totals ({wp}, {wq}) vs ({gp}, {gq})",
+                x.name
+            );
+            continue;
+        }
+        let by_power = |v: &mut Vec<(f64, f64)>| {
+            v.sort_by(|l, r| l.partial_cmp(r).expect("no NaN power in a fixture"));
+        };
+        by_power(&mut want);
+        by_power(&mut got);
+        assert_eq!(
+            want.len(),
+            got.len(),
+            "{what}: load {} phase count {want:?} vs {got:?}",
+            x.name
+        );
+        for ((wp, wq), (gp, gq)) in want.iter().zip(&got) {
+            assert!(
+                close_power(*wp, *gp) && close_power(*wq, *gq),
+                "{what}: load {} phase ({wp}, {wq}) vs ({gp}, {gq})",
+                x.name
+            );
+        }
+    }
+    assert_eq!(
+        matched,
+        b.loads().len(),
+        "{what}: {} loads came back unmatched",
+        b.loads().len() - matched
+    );
+}
+
+/// The dss round trip leg of the harness.
+fn target_is_dss_leg(what: &str) -> bool {
     what.contains("→ dss → back")
+}
+
+/// dss flattens per-load voltage profiles, so v_nom can materialize on the
+/// way back.
+fn target_may_materialize_v_nom(what: &str) -> bool {
+    target_is_dss_leg(what)
+}
+
+/// dss spells terminals as numeric node positions and PMD requires integer
+/// connections, so non numeric terminal names do not survive those legs.
+fn target_renumbers_terminals(what: &str) -> bool {
+    what.contains("→ dss → back") || what.contains("→ PMD → back")
+}
+
+/// Strict name equality. A renumbering leg (dss node positions, PMD integer
+/// connections) falls back to arity, but only when a non numeric name is
+/// involved: purely numeric maps survive those legs verbatim, so a silent
+/// permutation cannot hide behind the fallback. The renumbering scheme
+/// itself still needs its dedicated pin (#266).
+#[track_caller]
+fn assert_maps_eq(x: &[String], y: &[String], what: &str, ctx: &str) {
+    if x == y {
+        return;
+    }
+    let numeric = |m: &[String]| m.iter().all(|t| t.parse::<u32>().is_ok());
+    assert!(
+        target_renumbers_terminals(what) && x.len() == y.len() && !(numeric(x) && numeric(y)),
+        "{what}: {ctx} {x:?} vs {y:?}"
+    );
 }
 
 /// The model fields every format carries; the per cell comparisons run on
 /// this projection, with transformer carve outs where BMOPF restates them.
-fn assert_projection_eq(a: &DistNetwork, b: &DistNetwork, what: &str, transformers: bool) {
+fn assert_projection_eq(
+    a: &MulticonductorNetwork,
+    b: &MulticonductorNetwork,
+    what: &str,
+    transformers: bool,
+) {
     // JSON formats key elements by name, so order is not preserved across
     // a round trip; compare per name.
-    assert_eq!(a.buses.len(), b.buses.len(), "{what}: bus count");
-    let buses_a = by_name(&a.buses, |b| &b.id);
-    let buses_b = by_name(&b.buses, |b| &b.id);
+    assert_eq!(a.buses().len(), b.buses().len(), "{what}: bus count");
+    let buses_a = by_name(a.buses(), |b| &b.id);
+    let buses_b = by_name(b.buses(), |b| &b.id);
     for ((_, x), (_, y)) in buses_a.iter().zip(&buses_b) {
         assert!(x.id.eq_ignore_ascii_case(&y.id), "{what}: bus set");
-        assert_eq!(x.terminals, y.terminals, "{what}: bus {} terminals", x.id);
-        assert_eq!(x.grounded, y.grounded, "{what}: bus {} grounding", x.id);
+        assert_maps_eq(
+            &x.terminals,
+            &y.terminals,
+            what,
+            &format!("bus {} terminals", x.id),
+        );
+        // dss has no standalone grounding statement (grounding is a node 0
+        // reference) and its reader materializes source bus grounding, so
+        // grounding equality only holds off the dss legs.
+        if !target_is_dss_leg(what) {
+            assert_maps_eq(
+                &x.grounded,
+                &y.grounded,
+                what,
+                &format!("bus {} grounding", x.id),
+            );
+        }
     }
-    assert_eq!(a.switches.len(), b.switches.len(), "{what}: switches");
-    for ((_, x), (_, y)) in by_name(&a.switches, |s| &s.name)
+    assert_eq!(a.switches().len(), b.switches().len(), "{what}: switches");
+    for ((_, x), (_, y)) in by_name(a.switches(), |s| &s.name)
         .iter()
-        .zip(&by_name(&b.switches, |s| &s.name))
+        .zip(&by_name(b.switches(), |s| &s.name))
     {
         assert_eq!(x.open, y.open, "{what}: switch {}", x.name);
     }
@@ -369,10 +505,10 @@ fn assert_projection_eq(a: &DistNetwork, b: &DistNetwork, what: &str, transforme
     // exactly.
     let allow_derived_v_nom = target_may_materialize_v_nom(what);
     assert_loads_eq(a, b, what, allow_derived_v_nom);
-    assert_eq!(a.lines.len(), b.lines.len(), "{what}: lines");
-    for ((_, x), (_, y)) in by_name(&a.lines, |l| &l.name)
+    assert_eq!(a.lines().len(), b.lines().len(), "{what}: lines");
+    for ((_, x), (_, y)) in by_name(a.lines(), |l| &l.name)
         .iter()
-        .zip(&by_name(&b.lines, |l| &l.name))
+        .zip(&by_name(b.lines(), |l| &l.name))
     {
         assert!(
             x.name.eq_ignore_ascii_case(&y.name),
@@ -392,26 +528,28 @@ fn assert_projection_eq(a: &DistNetwork, b: &DistNetwork, what: &str, transforme
             "{what}: line {} length",
             x.name
         );
-        assert_eq!(
-            x.terminal_map_from, y.terminal_map_from,
-            "{what}: line {} from map",
-            x.name
+        assert_maps_eq(
+            &x.terminal_map_from,
+            &y.terminal_map_from,
+            what,
+            &format!("line {} from map", x.name),
         );
-        assert_eq!(
-            x.terminal_map_to, y.terminal_map_to,
-            "{what}: line {} to map",
-            x.name
+        assert_maps_eq(
+            &x.terminal_map_to,
+            &y.terminal_map_to,
+            what,
+            &format!("line {} to map", x.name),
         );
     }
     if transformers {
         assert_eq!(
-            a.transformers.len(),
-            b.transformers.len(),
+            a.transformers().len(),
+            b.transformers().len(),
             "{what}: transformers"
         );
-        for ((_, x), (_, y)) in by_name(&a.transformers, |t| &t.name)
+        for ((_, x), (_, y)) in by_name(a.transformers(), |t| &t.name)
             .iter()
-            .zip(&by_name(&b.transformers, |t| &t.name))
+            .zip(&by_name(b.transformers(), |t| &t.name))
         {
             assert_eq!(
                 x.windings.len(),
@@ -436,11 +574,15 @@ fn assert_projection_eq(a: &DistNetwork, b: &DistNetwork, what: &str, transforme
 /// Linecode matrices compare to within one ULP scale relative error: a
 /// basis change (the PMD capacitance form, the dss per length form) costs
 /// at most one rounding per direction.
-fn assert_linecodes_close(a: &DistNetwork, b: &DistNetwork, what: &str) {
-    assert_eq!(a.linecodes.len(), b.linecodes.len(), "{what}: linecodes");
+fn assert_linecodes_close(a: &MulticonductorNetwork, b: &MulticonductorNetwork, what: &str) {
+    assert_eq!(
+        a.line_codes().len(),
+        b.line_codes().len(),
+        "{what}: linecodes"
+    );
     let close = |x: f64, y: f64| (x - y).abs() <= 1e-12 * x.abs().max(y.abs()).max(1e-300);
-    let mut xs: Vec<_> = a.linecodes.iter().collect();
-    let mut ys: Vec<_> = b.linecodes.iter().collect();
+    let mut xs: Vec<_> = a.line_codes().iter().collect();
+    let mut ys: Vec<_> = b.line_codes().iter().collect();
     xs.sort_by_key(|c| c.name.to_ascii_lowercase());
     ys.sort_by_key(|c| c.name.to_ascii_lowercase());
     for (x, y) in xs.iter().zip(&ys) {
@@ -478,10 +620,10 @@ fn assert_linecodes_close(a: &DistNetwork, b: &DistNetwork, what: &str) {
 
 /// Replaces every grounded terminal name with "G", on buses and in the
 /// terminal maps of the elements referencing them.
-fn normalize_grounded(net: &DistNetwork) -> DistNetwork {
+fn normalize_grounded(net: &MulticonductorNetwork) -> MulticonductorNetwork {
     let mut net = net.clone();
     let grounded: BTreeMap<String, Vec<String>> = net
-        .buses
+        .buses()
         .iter()
         .map(|b| (b.id.to_ascii_lowercase(), b.grounded.clone()))
         .collect();
@@ -494,7 +636,7 @@ fn normalize_grounded(net: &DistNetwork) -> DistNetwork {
             }
         }
     };
-    for b in &mut net.buses {
+    for b in net.buses_mut() {
         let g = b.grounded.clone();
         for t in b.terminals.iter_mut().chain(b.grounded.iter_mut()) {
             if g.contains(t) {
@@ -502,18 +644,18 @@ fn normalize_grounded(net: &DistNetwork) -> DistNetwork {
             }
         }
     }
-    for l in &mut net.lines {
+    for l in net.lines_mut() {
         fix(&l.bus_from.clone(), &mut l.terminal_map_from);
         fix(&l.bus_to.clone(), &mut l.terminal_map_to);
     }
-    for s in &mut net.switches {
+    for s in net.switches_mut() {
         fix(&s.bus_from.clone(), &mut s.terminal_map_from);
         fix(&s.bus_to.clone(), &mut s.terminal_map_to);
     }
-    for l in &mut net.loads {
+    for l in net.loads_mut() {
         fix(&l.bus.clone(), &mut l.terminal_map);
     }
-    for t in &mut net.transformers {
+    for t in net.transformers_mut() {
         for w in &mut t.windings {
             fix(&w.bus.clone(), &mut w.terminal_map);
         }
@@ -521,7 +663,10 @@ fn normalize_grounded(net: &DistNetwork) -> DistNetwork {
     net
 }
 
-fn normalize_bmopf_bus_metadata(net: &DistNetwork, usage_net: &DistNetwork) -> DistNetwork {
+fn normalize_bmopf_bus_metadata(
+    net: &MulticonductorNetwork,
+    usage_net: &MulticonductorNetwork,
+) -> MulticonductorNetwork {
     let mut net = net.clone();
     let mut usage: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut add = |bus: &str, terms: &[String]| {
@@ -530,39 +675,41 @@ fn normalize_bmopf_bus_metadata(net: &DistNetwork, usage_net: &DistNetwork) -> D
             .or_default()
             .extend(terms.iter().cloned());
     };
-    for l in &usage_net.lines {
+    for l in usage_net.lines() {
         add(&l.bus_from, &l.terminal_map_from);
         add(&l.bus_to, &l.terminal_map_to);
     }
-    for s in &usage_net.switches {
+    for s in usage_net.switches() {
         add(&s.bus_from, &s.terminal_map_from);
         add(&s.bus_to, &s.terminal_map_to);
     }
-    for l in &usage_net.loads {
+    for l in usage_net.loads() {
         add(&l.bus, &l.terminal_map);
     }
-    for g in &usage_net.generators {
+    for g in usage_net.generators() {
         add(&g.bus, &g.terminal_map);
     }
-    for s in &usage_net.shunts {
+    for s in usage_net.shunts() {
         add(&s.bus, &s.terminal_map);
     }
-    for s in &usage_net.sources {
+    for s in usage_net.sources() {
         add(&s.bus, &s.terminal_map);
     }
-    for t in &usage_net.transformers {
+    for t in usage_net.transformers() {
         for w in &t.windings {
             add(&w.bus, &w.terminal_map);
         }
     }
 
-    net.buses.retain(|b| usage.contains_key(&b.id));
-    for b in &mut net.buses {
+    net.buses_mut().retain(|b| usage.contains_key(&b.id));
+    for b in net.buses_mut() {
         let Some(used) = usage.get(&b.id) else {
             continue;
         };
+        // Grounded terminals count as used: the writers keep them (ground
+        // references them), so the projection must too.
+        let used: BTreeSet<&String> = used.iter().chain(&b.grounded).collect();
         b.terminals.retain(|term| used.contains(term));
-        b.grounded.retain(|term| used.contains(term));
     }
     net
 }
@@ -572,10 +719,24 @@ fn diagonal_byte_identity() {
     for case in CASES {
         let net = parse_case(case);
         let original = std::fs::read_to_string(fixture(case.rel)).unwrap();
-        let echoed = net.to_format(case.fmt.target());
+        let echoed = net.emit(case.fmt.target());
         assert_eq!(echoed.text, original, "{}: diagonal echo", case.label);
         assert!(echoed.warnings.is_empty(), "{}: echo warns", case.label);
     }
+}
+
+/// The (case, target) pairs whose first canonical write is not yet a fixed
+/// point. Each entry needs a source construct that explains it, because the
+/// general rule is that one write reaches the canonical form. The second
+/// write must then be a fixed point, which the test still checks.
+const LATE_CONVERGENCE: &[(&str, &str)] = &[
+    // The BMOPF ieee13 example declares a single_phase transformer with
+    // three phase terminal maps; dss narrows it to its real phase count.
+    ("BMOPF IEEE 13 example", "dss"),
+];
+
+fn converges_on_the_second_write(label: &str, target: &str) -> bool {
+    LATE_CONVERGENCE.contains(&(label, target))
 }
 
 #[test]
@@ -584,26 +745,49 @@ fn canonical_writers_are_idempotent() {
         let net = parse_case(case);
         for target in [Fmt::Dss, Fmt::Bmopf, Fmt::Pmd] {
             let first = match target {
-                Fmt::Dss => powerio_dist::write_dss(&net),
-                Fmt::Bmopf => powerio_dist::write_bmopf_json(&net),
-                Fmt::Pmd => powerio_dist::write_pmd_json(&net),
+                Fmt::Dss => helpers::emit_dss(&net),
+                Fmt::Bmopf => helpers::emit_bmopf_json(&net),
+                Fmt::Pmd => helpers::emit_pmd_json(&net),
             };
-            let reparsed = match target.parse_conversion(&first) {
+            let reparsed = match target.parse_emission(&first) {
                 Ok(n) => n,
                 Err(e) => panic!("{} → {}: reparse failed: {e}", case.label, target.name()),
             };
             let second = match target {
-                Fmt::Dss => powerio_dist::write_dss(&reparsed),
-                Fmt::Bmopf => powerio_dist::write_bmopf_json(&reparsed),
-                Fmt::Pmd => powerio_dist::write_pmd_json(&reparsed),
+                Fmt::Dss => helpers::emit_dss(&reparsed),
+                Fmt::Bmopf => helpers::emit_bmopf_json(&reparsed),
+                Fmt::Pmd => helpers::emit_pmd_json(&reparsed),
             };
-            assert_eq!(
-                first.text,
-                second.text,
-                "{} → {}: canonical output is not idempotent",
-                case.label,
-                target.name()
-            );
+            if first.text != second.text {
+                assert!(
+                    converges_on_the_second_write(case.label, target.name()),
+                    "{} → {}: the first canonical write is not a fixed point, and this \
+                     pair is not a known one-step canonicalization; add it to \
+                     LATE_CONVERGENCE only with the construct that explains it",
+                    case.label,
+                    target.name()
+                );
+                // A degenerate source construct can canonicalize once through
+                // the target (the BMOPF ieee13 example carries a single_phase
+                // transformer with three phase terminal maps, which dss
+                // narrows to its actual phase count); the canonical form must
+                // then be a fixed point.
+                let reparsed2 = target.parse_emission(&second).unwrap_or_else(|e| {
+                    panic!("{} → {}: reparse failed: {e}", case.label, target.name())
+                });
+                let third = match target {
+                    Fmt::Dss => helpers::emit_dss(&reparsed2),
+                    Fmt::Bmopf => helpers::emit_bmopf_json(&reparsed2),
+                    Fmt::Pmd => helpers::emit_pmd_json(&reparsed2),
+                };
+                assert_eq!(
+                    second.text,
+                    third.text,
+                    "{} → {}: canonical output does not converge",
+                    case.label,
+                    target.name()
+                );
+            }
         }
     }
 }
@@ -617,18 +801,20 @@ fn off_diagonal_round_trips() {
                 continue;
             }
             let what = format!("{} → {} → back", case.label, target.name());
-            let out = net.to_format(target.target());
+            let out = net.emit(target.target());
             let back = target
-                .parse_conversion(&out)
+                .parse_emission(&out)
                 .unwrap_or_else(|e| panic!("{what}: {e}"));
             let transformers = !(target == Fmt::Bmopf && case.bmopf_restates_transformers);
-            let (expected, actual) = if target == Fmt::Bmopf {
-                (
+            let (expected, actual) = match target {
+                Fmt::Bmopf => (
                     normalize_bmopf_bus_metadata(&net, &back),
                     normalize_bmopf_bus_metadata(&back, &back),
-                )
-            } else {
-                (net.clone(), back)
+                ),
+                // A dss leg only materializes referenced or grounded
+                // terminals, so project the source the same way.
+                Fmt::Dss => (normalize_bmopf_bus_metadata(&net, &net), (*back).clone()),
+                Fmt::Pmd => ((*net).clone(), (*back).clone()),
             };
             if target == Fmt::Dss && case.dss_renames_grounded {
                 // Grounded phase terminals fold into node 0 on the way
@@ -670,8 +856,8 @@ fn write_conversion_matrix() {
                 cells.push("echo".to_string());
                 continue;
             }
-            let out = net.to_format(target.target());
-            match target.parse_conversion(&out) {
+            let out = net.emit(target.target());
+            match target.parse_emission(&out) {
                 Ok(_) => {
                     if out.warnings.is_empty() {
                         cells.push("ok".to_string());
@@ -713,23 +899,152 @@ fn emit_for_physics_check() {
             .replace(".dss", "")
             .replace(".json", "");
         // The canonical dss regeneration (echo bypassed on purpose).
-        let dss = powerio_dist::write_dss(&net);
+        let dss = helpers::emit_dss(&net);
         std::fs::write(dir.join(format!("{stem}.canonical.dss")), &dss.text).unwrap();
         if case.fmt == Fmt::Dss {
             // Through each JSON format and back to dss.
             for (suffix, text) in [
-                ("via_bmopf", powerio_dist::write_bmopf_json(&net).text),
-                ("via_pmd", powerio_dist::write_pmd_json(&net).text),
+                ("via_bmopf", helpers::emit_bmopf_json(&net).text),
+                ("via_pmd", helpers::emit_pmd_json(&net).text),
             ] {
-                let mid: DistNetwork = if suffix == "via_bmopf" {
+                let mid = if suffix == "via_bmopf" {
                     parse_bmopf_str(&text).unwrap()
                 } else {
                     parse_pmd_str(&text).unwrap()
                 };
-                let out = powerio_dist::write_dss(&mid);
+                let out = helpers::emit_dss(&mid);
                 std::fs::write(dir.join(format!("{stem}.{suffix}.dss")), &out.text).unwrap();
             }
         }
     }
     let _ = Arc::new(());
+}
+
+/// Every terminal map of one network as `(element key, bus id, map)`, in a
+/// stable order. The bus id matters because the rename is per bus: dss
+/// spells a terminal as its node position within its own bus.
+fn terminal_maps(net: &MulticonductorNetwork) -> Vec<(String, String, Vec<String>)> {
+    let key = |s: &str| s.to_lowercase();
+    // Element maps only. A bus's own terminal list is not a rename: dss
+    // spells perfect grounding as node 0, so a grounded terminal legitimately
+    // leaves the list on that leg (the `dss_renames_grounded` carve-out).
+    let mut out = Vec::new();
+    for line in net.lines() {
+        let name = key(&line.name);
+        out.push((
+            format!("line {name} from"),
+            key(&line.bus_from),
+            line.terminal_map_from.clone(),
+        ));
+        out.push((
+            format!("line {name} to"),
+            key(&line.bus_to),
+            line.terminal_map_to.clone(),
+        ));
+    }
+    for switch in net.switches() {
+        let name = key(&switch.name);
+        out.push((
+            format!("switch {name} from"),
+            key(&switch.bus_from),
+            switch.terminal_map_from.clone(),
+        ));
+        out.push((
+            format!("switch {name} to"),
+            key(&switch.bus_to),
+            switch.terminal_map_to.clone(),
+        ));
+    }
+    for load in net.loads() {
+        out.push((
+            format!("load {}", key(&load.name)),
+            key(&load.bus),
+            load.terminal_map.clone(),
+        ));
+    }
+    for generator in net.generators() {
+        out.push((
+            format!("generator {}", key(&generator.name)),
+            key(&generator.bus),
+            generator.terminal_map.clone(),
+        ));
+    }
+    for shunt in net.shunts() {
+        out.push((
+            format!("shunt {}", key(&shunt.name)),
+            key(&shunt.bus),
+            shunt.terminal_map.clone(),
+        ));
+    }
+    out.sort();
+    out
+}
+
+/// Supplied conductor positions form a bijection per bus across OpenDSS and
+/// PMD renumbering. OpenDSS can append a grounded neutral to a WYE generator
+/// whose map lists only its phases; that addition must carry a diagnostic.
+#[test]
+fn renumbering_legs_are_position_stable_bijections() {
+    for case in CASES {
+        let net = parse_case(case);
+        let before = terminal_maps(&net);
+        for target in [Fmt::Dss, Fmt::Pmd] {
+            let conv = match target {
+                Fmt::Dss => helpers::emit_dss(&net),
+                Fmt::Pmd => helpers::emit_pmd_json(&net),
+                Fmt::Bmopf => unreachable!("BMOPF keeps terminal names"),
+            };
+            let round_tripped = target
+                .parse_emission(&conv)
+                .unwrap_or_else(|e| panic!("{} → {}: {e}", case.label, target.name()));
+            let after = terminal_maps(&round_tripped);
+            let what = format!("{} → {} → back", case.label, target.name());
+
+            // Keyed by `(bus, name)`: the rename is per bus.
+            let mut forward: BTreeMap<(String, String), String> = BTreeMap::new();
+            let mut backward: BTreeMap<(String, String), String> = BTreeMap::new();
+            let after_by_key: BTreeMap<&str, &Vec<String>> =
+                after.iter().map(|(k, _, v)| (k.as_str(), v)).collect();
+
+            for (key, bus, source_map) in &before {
+                let Some(target_map) = after_by_key.get(key.as_str()) else {
+                    // Element identity across the leg is `assert_projection_eq`'s
+                    // job; this test only pins the rename.
+                    continue;
+                };
+                let grounded_generator_return = matches!(target, Fmt::Dss)
+                    && key.starts_with("generator ")
+                    && target_map.len() == source_map.len() + 1
+                    && round_tripped
+                        .bus(bus)
+                        .is_some_and(|b| target_map.last().is_some_and(|t| b.grounded.contains(t)))
+                    && conv
+                        .warnings
+                        .iter()
+                        .any(|d| d.starts_with("EMIT.DSS.VALUE_COLLAPSED:") && d.contains(key));
+                assert!(
+                    source_map.len() == target_map.len() || grounded_generator_return,
+                    "{what}: {key} changed arity: {source_map:?} vs {target_map:?}"
+                );
+                for (position, (source, renamed)) in
+                    source_map.iter().zip(target_map.iter()).enumerate()
+                {
+                    let previous = forward.insert((bus.clone(), source.clone()), renamed.clone());
+                    assert!(
+                        previous.as_ref().is_none_or(|p| p == renamed),
+                        "{what}: {key} position {position}: at bus `{bus}` terminal \
+                         `{source}` became `{renamed}` here and `{}` elsewhere",
+                        previous.unwrap_or_default()
+                    );
+                    let previous = backward.insert((bus.clone(), renamed.clone()), source.clone());
+                    assert!(
+                        previous.as_ref().is_none_or(|p| p == source),
+                        "{what}: {key} position {position}: at bus `{bus}` `{renamed}` \
+                         stands for both `{source}` and `{}`",
+                        previous.unwrap_or_default()
+                    );
+                }
+            }
+        }
+    }
 }

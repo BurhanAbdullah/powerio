@@ -3,7 +3,7 @@ name = "powerio-capi"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "C ABI for powerio: parse, query, convert, and extract numeric tables."
+description = "C ABI for PowerIO modules, grid exchange formats, and calculations."
 license.workspace = true
 repository.workspace = true
 publish = false
@@ -15,37 +15,23 @@ name = "powerio_capi"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [features]
-# Distribution and package support are first class: every default powerio build
-# ships the pio_dist_* and pio_package_* surfaces. Opt out with
-# --no-default-features for a transmission-only library.
-default = ["dist", "pkg"]
-# Zero-copy raw network export over the Arrow C Data Interface (`pio_to_arrow`).
-# Off by default so the base ABI pulls in nothing but `powerio`.
-arrow = ["dep:arrow"]
-# Sparse balanced matrix tables over `pio_to_arrow`. Enable with `arrow` for
-# the export symbol itself; `pio_matrix_available()` reports whether both are on.
-matrix = ["dep:powerio-matrix"]
-# Multiconductor distribution formats (OpenDSS, PMD ENGINEERING JSON, BMOPF
-# JSON): the pio_dist_* entry points. On by default (see `default` above).
-dist = ["dep:powerio-dist"]
-# gridfm-datakit Parquet reader (`pio_read_dir` / `pio_scenario_ids`).
-# Off by default so the base ABI pulls in nothing but `powerio`; enabling it pulls
-# in powerio-matrix (arrow + parquet) for the reader.
-gridfm = ["dep:powerio-matrix", "powerio-matrix/gridfm"]
-# `.pio.json` document API (`pio_package_*`). On by default.
-pkg = ["dep:powerio-pkg"]
+default = []
+# Retained build-feature names for release tooling. ABI 7 exposes one fixed
+# symbol set; none of these names gates a C function.
+arrow = []
+matrix = []
+dist = []
+prob = []
+gridfm = ["powerio/gridfm", "powerio-matrix/gridfm"]
 
 [dependencies]
+powerio-core = { workspace = true }
+powerio-dist.workspace = true
 powerio.workspace = true
-powerio-dist = { workspace = true, optional = true }
-powerio-pkg = { workspace = true, optional = true }
-# Only the C Data Interface (`ffi`) is needed; the heavy arrow defaults stay off.
-arrow = { workspace = true, features = ["ffi"], optional = true }
-# Pulled in only by the `gridfm` feature: the reader lives in powerio-matrix.
-# It re-exports powerio, so `Network` is the same type `make_network` already takes.
-powerio-matrix = { workspace = true, optional = true }
+powerio-tx.workspace = true
+powerio-matrix.workspace = true
+powerio-prob.workspace = true
 serde_json = { workspace = true }
 
 [dev-dependencies]
-# Only the gridfm C-ABI test uses it (write a dataset to a temp dir, read it back).
 tempfile = "3"

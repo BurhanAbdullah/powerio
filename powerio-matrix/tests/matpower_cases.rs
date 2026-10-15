@@ -1,13 +1,16 @@
 //! Integration tests against real MATPOWER fixtures vendored from
 //! `https://github.com/MATPOWER/matpower/tree/master/data`.
+mod helpers;
+#[allow(unused_imports)]
+use helpers::*;
 
 use std::path::PathBuf;
 
 use powerio_matrix::matrix::{
-    BuildOptions, MatrixStats, build_bdoubleprime, build_bprime, build_lacpf, build_ybus,
-    sddm_check,
+    BuildOptions, MatrixStats, calc_admittance_matrix, calc_bdoubleprime_matrix,
+    calc_bprime_matrix, calc_lacpf_matrix, check_sddm,
 };
-use powerio_matrix::{BusId, IndexedNetwork, parse_matpower_file};
+use powerio_matrix::{BusId, IndexedNetwork};
 
 fn fixture(name: &str) -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -19,9 +22,9 @@ fn fixture(name: &str) -> PathBuf {
 #[test]
 fn case9_parses_correctly() {
     let net = parse_matpower_file(fixture("case9.m")).unwrap();
-    assert_eq!(net.buses.len(), 9);
-    assert_eq!(net.branches.len(), 9);
-    assert!((net.base_mva - 100.0).abs() < 1e-12);
+    assert_eq!(net.buses().len(), 9);
+    assert_eq!(net.branches().len(), 9);
+    assert!((net.base_mva() - 100.0).abs() < 1e-12);
     // case9 buses are contiguous 1..=9.
     let g = IndexedNetwork::new(&net);
     for i in 1..=9 {
@@ -32,14 +35,14 @@ fn case9_parses_correctly() {
 #[test]
 fn case14_parses_correctly() {
     let net = parse_matpower_file(fixture("case14.m")).unwrap();
-    assert_eq!(net.buses.len(), 14);
-    assert!(net.branches.len() >= 20);
+    assert_eq!(net.buses().len(), 14);
+    assert!(net.branches().len() >= 20);
 }
 
 #[test]
 fn case30_parses_correctly() {
     let net = parse_matpower_file(fixture("case30.m")).unwrap();
-    assert_eq!(net.buses.len(), 30);
+    assert_eq!(net.buses().len(), 30);
 }
 
 #[test]
@@ -47,7 +50,7 @@ fn bprime_is_singular_laplacian_on_real_cases() {
     for name in ["case9.m", "case14.m", "case30.m", "case57.m"] {
         let net = parse_matpower_file(fixture(name)).unwrap();
         let view = IndexedNetwork::new(&net);
-        let b = build_bprime(&view, &BuildOptions::default()).unwrap();
+        let b = calc_bprime_matrix(&view, &BuildOptions::default()).unwrap();
         let stats = MatrixStats::from_csr(&b);
         assert!(stats.m_matrix_sign, "{name}: Bp must have M-matrix signs");
         // Singular Laplacian: diag exactly equals row-sum of |off-diag|.
@@ -57,8 +60,8 @@ fn bprime_is_singular_laplacian_on_real_cases() {
             stats.min_dd_margin
         );
         assert!(stats.min_diag > 0.0);
-        assert_eq!(b.rows(), net.buses.len());
-        assert_eq!(b.cols(), net.buses.len());
+        assert_eq!(b.rows(), net.buses().len());
+        assert_eq!(b.cols(), net.buses().len());
     }
 }
 
@@ -66,18 +69,18 @@ fn bprime_is_singular_laplacian_on_real_cases() {
 fn case2869pegase_bprime_is_asymmetric_and_not_sddm() {
     let net = parse_matpower_file(fixture("case2869pegase.m")).unwrap();
     let view = IndexedNetwork::new(&net);
-    let b = build_bprime(&view, &BuildOptions::default()).unwrap();
+    let b = calc_bprime_matrix(&view, &BuildOptions::default()).unwrap();
     let stats = MatrixStats::from_csr(&b);
 
-    assert_eq!(b.rows(), net.buses.len());
-    assert_eq!(b.cols(), net.buses.len());
+    assert_eq!(b.rows(), net.buses().len());
+    assert_eq!(b.cols(), net.buses().len());
     assert!(stats.m_matrix_sign, "pegase Bp should keep M-matrix signs");
     assert!(
         !is_symmetric(&b),
         "phase shifters make pegase Bp asymmetric"
     );
     assert!(
-        !sddm_check(&b),
+        !check_sddm(&b),
         "asymmetric pegase Bp must not be labeled SDDM"
     );
 }
@@ -86,7 +89,7 @@ fn case2869pegase_bprime_is_asymmetric_and_not_sddm() {
 fn bdoubleprime_includes_shunts_on_case30() {
     let net = parse_matpower_file(fixture("case30.m")).unwrap();
     let view = IndexedNetwork::new(&net);
-    let bpp = build_bdoubleprime(&view, &BuildOptions::default()).unwrap();
+    let bpp = calc_bdoubleprime_matrix(&view, &BuildOptions::default()).unwrap();
     let stats = MatrixStats::from_csr(&bpp);
     // case30 has explicit bus shunts → strict diagonal dominance.
     assert!(
@@ -99,16 +102,53 @@ fn bdoubleprime_includes_shunts_on_case30() {
 fn ybus_split_matches_complex_invariants() {
     let net = parse_matpower_file(fixture("case14.m")).unwrap();
     let view = IndexedNetwork::new(&net);
-    let parts = build_ybus(&view, &BuildOptions::default()).unwrap();
-    assert_eq!(parts.g.rows(), net.buses.len());
-    assert_eq!(parts.b.rows(), net.buses.len());
+    let parts = calc_admittance_matrix(&view, &BuildOptions::default()).unwrap();
+    assert_eq!(parts.g.rows(), net.buses().len());
+    assert_eq!(parts.b.rows(), net.buses().len());
     // Without phase shifters case14 should yield symmetric Y_bus.
     let g = parts.g.to_dense();
     let b = parts.b.to_dense();
-    for i in 0..net.buses.len() {
-        for j in (i + 1)..net.buses.len() {
+    for i in 0..net.buses().len() {
+        for j in (i + 1)..net.buses().len() {
             assert!((g[[i, j]] - g[[j, i]]).abs() < 1e-12);
             assert!((b[[i, j]] - b[[j, i]]).abs() < 1e-12);
+        }
+    }
+}
+
+#[test]
+fn ybus_leaves_out_an_out_of_service_shunt() {
+    // A shunt switched out (PSS/E STATUS 0) keeps its record but adds no
+    // admittance. case30 has bus shunts, so taking one out of service must
+    // lower that bus's diagonal by exactly its admittance and leave every
+    // other entry alone.
+    let net = parse_matpower_file(fixture("case30.m")).unwrap();
+    let mut off = net.clone();
+    let shunt = off
+        .shunts_mut()
+        .iter_mut()
+        .find(|s| s.b != 0.0)
+        .expect("case30 has a bus shunt");
+    shunt.in_service = false;
+    let (g, b, bus) = (shunt.g, shunt.b, shunt.bus);
+    let opts = BuildOptions::default();
+    let view = IndexedNetwork::new(&net);
+    let k = view.bus_index(bus).unwrap();
+    let base = view.per_unit_base();
+    let on = calc_admittance_matrix(&view, &opts).unwrap();
+    let out = calc_admittance_matrix(&IndexedNetwork::new(&off), &opts).unwrap();
+    let (g_on, g_out) = (on.g.to_dense(), out.g.to_dense());
+    let (b_on, b_out) = (on.b.to_dense(), out.b.to_dense());
+    let n = net.buses().len();
+    for i in 0..n {
+        for j in 0..n {
+            let (dg, db) = if i == k && j == k {
+                (g / base, b / base)
+            } else {
+                (0.0, 0.0)
+            };
+            assert!((g_on[[i, j]] - g_out[[i, j]] - dg).abs() < 1e-12);
+            assert!((b_on[[i, j]] - b_out[[i, j]] - db).abs() < 1e-12);
         }
     }
 }
@@ -122,13 +162,13 @@ fn ybus_invariant_to_normalization_on_case30() {
     // double-scale (~base x) without per_unit_base.
     let raw = parse_matpower_file(fixture("case30.m")).unwrap();
     let norm = raw.to_normalized().unwrap();
-    assert_eq!(norm.buses.len(), raw.buses.len(), "no buses dropped");
+    assert_eq!(norm.buses().len(), raw.buses().len(), "no buses dropped");
     let opts = BuildOptions::default();
-    let yr = build_ybus(&IndexedNetwork::new(&raw), &opts).unwrap();
-    let yn = build_ybus(&IndexedNetwork::new(&norm), &opts).unwrap();
+    let yr = calc_admittance_matrix(&IndexedNetwork::new(&raw), &opts).unwrap();
+    let yn = calc_admittance_matrix(&IndexedNetwork::new(&norm), &opts).unwrap();
     let (gr, gn) = (yr.g.to_dense(), yn.g.to_dense());
     let (br, bn) = (yr.b.to_dense(), yn.b.to_dense());
-    let n = raw.buses.len();
+    let n = raw.buses().len();
     for i in 0..n {
         for j in 0..n {
             assert!(
@@ -147,9 +187,9 @@ fn ybus_invariant_to_normalization_on_case30() {
 fn lacpf_block_dimensions() {
     let net = parse_matpower_file(fixture("case14.m")).unwrap();
     let view = IndexedNetwork::new(&net);
-    let j = build_lacpf(&view, &BuildOptions::default()).unwrap();
-    assert_eq!(j.rows(), 2 * net.buses.len());
-    assert_eq!(j.cols(), 2 * net.buses.len());
+    let j = calc_lacpf_matrix(&view, &BuildOptions::default()).unwrap();
+    assert_eq!(j.rows(), 2 * net.buses().len());
+    assert_eq!(j.cols(), 2 * net.buses().len());
 }
 
 #[test]
@@ -186,10 +226,10 @@ fn pipeline_writes_expected_files_for_case9() {
     // Sanity check: re-read Bp from disk and verify its sign pattern.
     let bprime_path = tmp.join("case9_bprime.mtx");
     let reread = powerio_matrix::io::read_mtx(&bprime_path).unwrap();
-    assert!(sddm_check(&reread) || MatrixStats::from_csr(&reread).m_matrix_sign);
+    assert!(check_sddm(&reread) || MatrixStats::from_csr(&reread).m_matrix_sign);
 
     let view = IndexedNetwork::new(&net);
-    let ybus = build_ybus(&view, &BuildOptions::default()).unwrap();
+    let ybus = calc_admittance_matrix(&view, &BuildOptions::default()).unwrap();
     let real = powerio_matrix::io::read_mtx(tmp.join("case9_ybus_real.mtx")).unwrap();
     assert_csr_eq(&real, &ybus.g);
 

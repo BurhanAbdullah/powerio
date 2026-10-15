@@ -1,44 +1,49 @@
 # IEEE cases in BMOPF JSON
 
-Reference encodings of IEEE distribution test cases in the draft IEEE PES BMOPF
-schema (v0.0.1), produced by `powerio-dist`. They give the BMOPF task force
-canonical inputs that validate against the schema and pass the fidelity gates,
-for parsers and data profilers such as `BMOPFTools.jl`. Regenerate them rather
-than editing by hand.
+Reference encodings of IEEE distribution test cases in draft BMOPF 0.2,
+produced by `powerio-dist`. They validate against that schema and
+exercise parsers and validation tools. Regenerate them
+rather than editing by hand.
 
-| Case | Source `.dss` | Size | Fidelity notes (parse + write) |
+| Case | Source `.dss` | Size | Write diagnostics |
 |---|---|---|---|
-| IEEE 34 | `tests/data/dist/opendss/ieee34/ieee34Mod1.dss` (vendored) | 73 KB | 411 |
-| IEEE 123 | `tests/data/dist/opendss/ieee123/IEEE123Master.dss` (vendored) | 111 KB | 607 |
-| 4 bus delta wye | `4Bus-DY-Bal/4Bus-DY-Bal.DSS` from the OpenDSS distribution | 7 KB | 17 |
+| IEEE 34 | `tests/data/dist/opendss/ieee34/ieee34Mod1.dss` (vendored) | 80,995 bytes | 23 |
+| IEEE 123 | `tests/data/dist/opendss/ieee123/IEEE123Master.dss` (vendored) | 120,920 bytes | 43 |
+| 4 bus delta wye | `4Bus-DY-Bal/4Bus-DY-Bal.DSS` from the OpenDSS distribution | 15,138 bytes | 0 |
 
 34 and 123 are recognizable feeders. The Kersting 4 bus case isolates a single
 delta to wye service transformer, the four wire winding that the BMOPF schema's
 transformer subtypes exist to model and that the feeders' regulator transformers
-do not show on their own. Each was generated with:
+do not show on their own. Regenerate or check all three with:
 
 ```
-powerio convert <case>.dss --to bmopf-json -o <case>.json
+cargo run -p powerio-dist --example regen_bmopf_examples
+cargo run -p powerio-dist --example regen_bmopf_examples -- --check
 ```
 
 Every document validates against the vendored schema
-(`tests/data/dist/bmopf/draft_bmopf_schema.json`), and the writer reports each
-field the schema cannot carry as a fidelity warning on stderr, so nothing drops
-silently. The dss reader materializes every OpenDSS class default explicitly, so
-the output is fully explicit, and writing back to `.dss` reproduces the source
-byte for byte.
+(`powerio-dist/schemas/bmopf/0.2.0/bmopf.schema.json`), and the writer reports each
+field or conversion the selected target cannot represent. Diagnostic counts
+count aggregated records; each record retains its occurrence count. These are
+canonical conversions. Re-emitting them as OpenDSS does not reconstruct the
+source file bytes. Byte-exact preservation applies only to an unchanged module
+emitted in the same format in which that module was parsed.
 
-Each document carries a top level `meta` block (BMOPF v0.0.1): `meta.generator`
-names the writing tool and version, and `meta.$schema` pins the schema vintage.
-The block is deterministic (no timestamp) so output stays byte stable. Per phase
-generator `cost` is an array, as v0.0.1 requires.
 
-## Provenance and licensing
+Each document carries a top level `meta` block. `meta.case_study_generator`
+names the writing tool and version. `meta.$schema` gives a PowerIO archive commit
+retrieval URL, while `meta.provenance.powerio_bmopf` records its canonical
+identity, commit, schema digest and proposal status.
+The block is deterministic (no timestamp) so output stays byte stable. Generator `energy_cost_rate` is a per-phase array in $/kWh.
+
+## Source provenance
 
 The IEEE node test feeders and the Kersting 4 bus transformer cases ship with the
-OpenDSS distribution under the BSD 3-Clause license (EPRI / DSS-Extensions). The
-vendored `.dss` sources retain that notice
-(`tests/data/dist/opendss/License.txt`); these derived BMOPF JSON encodings are
-released under the same terms. The 4 bus case is regenerable from the OpenDSS
+OpenDSS distribution under its BSD 3-Clause terms (EPRI / DSS-Extensions). This
+is the license of the source case data, not the BMOPF format. The vendored `.dss`
+sources retain the upstream notice, and these converted JSON representations
+carry it in
+[`NOTICE-OPENDSS-BSD-3-CLAUSE`](NOTICE-OPENDSS-BSD-3-CLAUSE). The 4 bus case is
+regenerable from the OpenDSS
 `Distrib/IEEETestCases/4Bus-DY-Bal` directory (also mirrored at
 `github.com/tshort/OpenDSS`).

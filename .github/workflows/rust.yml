@@ -3,8 +3,26 @@ name: Rust
 on:
   push:
     branches: [ "main" ]
+  # No branch filter on pull_request: stacked PRs target another PR's branch,
+  # and retargeting to main after the parent merges fires only `edited`, which
+  # never re-triggers filtered workflows. Run on every PR instead.
   pull_request:
-    branches: [ "main" ]
+
+# One run per workflow per branch. A force push to a stacked pull request
+# otherwise leaves the superseded run going: it finishes, it fails or it
+# passes, and it emails every watcher a second time for a commit nobody is
+# reviewing.
+#
+# Only a pull request run is ever superseded, so only a pull request run is
+# cancelled. A push to `main` is a release candidate whose result must stand
+# on its own, and a release run is the release itself: `python.yml` publishes
+# wheels to PyPI from one, behind an environment whose reviewer gate can hold
+# it for a long time. Keying the switch on the ref instead would make every
+# tag run cancellable, and a re-published release or a re-run of the same tag
+# would then cancel a publish in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -17,12 +35,14 @@ jobs:
     name: Encoding (no BOM, no mojibake)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     # Windows editors have twice corrupted text files in PRs: CRLF in vendored
     # fixtures (#73, now pinned via .gitattributes) and UTF-8 re-encoded as
     # cp1252 plus a BOM (#77). .gitattributes can't catch the latter two, so
     # reject them here. tests/data is exempt: vendored fixtures keep their
     # committed bytes.
+    - name: Check the BMOPF schema archive
+      run: python3 scripts/check-bmopf-archive.py
     - name: No UTF-8 BOM
       run: |
         if git grep -Iln $'\xef\xbb\xbf' -- .; then
@@ -54,36 +74,123 @@ jobs:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
-    - uses: dtolnay/rust-toolchain@stable
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       with:
         components: rustfmt
     # The tree is rustfmt-clean (style_edition 2024); keep it that way.
     - name: Check formatting
       run: cargo fmt --all --check
 
+  # The declared rust-version must build the locked dependency graph, or a
+  # consumer on that toolchain cannot use the published crates.
+  msrv:
+    name: MSRV (rust-version)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Read rust-version
+      id: msrv
+      run: echo "version=$(grep -oE '^rust-version = "[0-9.]+"' Cargo.toml | grep -oE '[0-9.]+')" >> "$GITHUB_OUTPUT"
+    - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+      with:
+        toolchain: ${{ steps.msrv.outputs.version }}
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+    - name: Check the publishable crates on the minimum toolchain
+      run: cargo check --locked --workspace --exclude powerio-py --exclude powerio-capi
+
+  # A RUSTSEC advisory against the dependency graph must fail its own job
+  # rather than hide inside a build. deny.toml records the one accepted
+  # finding. The action ships a prebuilt binary, so this needs no toolchain
+  # and no cache.
+  advisories:
+    name: Advisories (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      with:
+        command: check advisories
+
+  # Own job so a stale schema fails in parallel with clippy and the tests
+  # instead of masking them (the #255 merge failure hid both).
+  schemas:
+    name: Generated schemas match
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+    - name: Check generated JSON schemas
+      # `git status --porcelain` catches both an edited schema and an
+      # accidentally untracked schema file.
+      run: |
+        cargo run -p powerio --example generate_schemas --features schema -- docs/schema
+        if [ -n "$(git status --porcelain -- docs/schema)" ]; then
+          git status --porcelain -- docs/schema
+          git diff -- docs/schema
+          echo "docs/schema does not contain the generated current PowerIO IR schema" >&2
+          exit 1
+        fi
+    - name: Check generated BMOPF examples
+      run: cargo run -p powerio-dist --example regen_bmopf_examples -- --check
+
+  archives:
+    name: Published crate archives
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+    - name: Build publishable crate archives
+      run: cargo package --workspace --exclude powerio-capi --exclude powerio-py --locked --no-verify
+    - name: Audit licenses and excluded fixtures
+      run: python3 scripts/audit-release-archives.py target/package/*.crate
+    - name: Check packaged BMOPF schemas
+      run: python3 scripts/check-bmopf-archive.py --archive target/package/powerio-dist-*.crate
+
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
-    - uses: dtolnay/rust-toolchain@stable
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       with:
         components: clippy
-    - uses: Swatinem/rust-cache@v2
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
     - name: Build
       run: cargo build --verbose
-    - name: Check generated JSON schemas
-      run: |
-        cargo run -p powerio-pkg --example generate_schemas --features schema -- docs/schema
-        git diff --exit-code -- docs/schema
     # Deny the workspace pedantic lints on the non-extension crates. The PyO3
     # ext crates are linted in the Python workflow with their feature enabled.
     - name: Clippy
       run: bash scripts/ci-clippy.sh workspace
+    - name: Terminology gate
+      run: bash scripts/terminology-gate.sh
+    - name: Documentation symbols
+      run: python3 scripts/check-doc-symbols.py
+    - name: Architecture map
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q --no-install-recommends graphviz
+        python3 scripts/check-architecture-map.py
+    - name: No deprecated items
+      run: bash scripts/deprecated-inventory.sh --assert-empty
+    # The release decision paths a tag event would run, exercised on every
+    # pull request without writing anything.
+    - name: Release preflight
+      run: bash scripts/release-preflight.sh
     # Bare `cargo test` only covers the default-members; name the C ABI crate
     # explicitly so its end-to-end ABI tests run in CI too.
     - name: Run tests
-      run: cargo test -p powerio -p powerio-matrix -p powerio-cli -p powerio-capi -p powerio-dist -p powerio-pkg --verbose
+      run: cargo test -p powerio -p powerio-tx -p powerio-core -p powerio-matrix -p powerio-prob -p powerio-cli -p powerio-capi -p powerio-dist --verbose
+    - name: Test problem matrix feature
+      run: cargo test -p powerio --features matrix --verbose
+    - name: Test gridfm reader feature
+      run: cargo test -p powerio --features gridfm --verbose
+    - name: Check problem dependency boundaries
+      run: |
+        cargo check -p powerio-prob --no-default-features
+        if cargo tree -p powerio-prob --no-default-features --edges normal | grep -q powerio-matrix; then
+          echo "powerio-prob reaches powerio-matrix" >&2; exit 1
+        fi
     # The gridfm Parquet export is behind a cargo feature; exercise it (and its
     # clippy) explicitly so coverage doesn't depend on CLI feature unification.
     - name: Clippy + tests (gridfm feature)
@@ -91,27 +198,77 @@ jobs:
         bash scripts/ci-clippy.sh matrix-gridfm
         cargo test -p powerio-matrix --features gridfm --verbose
 
+  # The no-replace output commit has one implementation per platform
+  # (renamex_np, renameat2, MoveFileExW); its refusal tests and the C smoke's
+  # directory-write collision assertion run on every platform that ships one.
+  output-commit-platforms:
+    name: output commit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+    - name: Test powerio-core
+      run: cargo test -p powerio-core --verbose
+    - name: Build powerio-capi (dist feature)
+      run: cargo build -p powerio-capi --release --features dist
+    - name: Compile and run the C smoke test (Unix)
+      if: runner.os == 'macOS'
+      run: |
+        cc -DPIO_DIST -I powerio-capi/include powerio-capi/examples/smoke.c            -L target/release -lpowerio_capi -o pio_smoke
+        DYLD_LIBRARY_PATH=target/release ./pio_smoke tests/data/case9.m
+    - name: Compile and run the C smoke test (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        # cargo reaches the MSVC toolset through the cc crate, but a bare
+        # cl.exe is not on PATH until the developer shell is entered.
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $vsPath = & $vswhere -latest -products * `
+          -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+          -property installationPath
+        if (-not $vsPath) { throw 'no Visual Studio C++ toolset on this runner' }
+        Import-Module "$vsPath\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+        Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation `
+          -DevCmdArguments '-arch=x64 -host_arch=x64'
+        $importLib = Get-ChildItem target/release -Filter '*powerio_capi*.dll.lib' |
+          Select-Object -First 1 -ExpandProperty FullName
+        if (-not $importLib) { throw 'powerio-capi import library is missing' }
+        cl.exe /nologo /std:c11 /DPIO_DIST /Ipowerio-capi/include `
+          powerio-capi/examples/smoke.c `
+          $importLib `
+          /Fe:pio_smoke.exe
+        Copy-Item target/release/powerio_capi.dll .
+        ./pio_smoke.exe tests/data/case9.m
+
   wasm32:
     name: wasm32 check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
-    - uses: dtolnay/rust-toolchain@stable
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       with:
         targets: wasm32-unknown-unknown
-    - uses: Swatinem/rust-cache@v2
-    - name: Check wasm32 parser crates
-      run: cargo check --target wasm32-unknown-unknown -p powerio -p powerio-dist -p powerio-pkg
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+    - name: Check wasm32 component crates
+      run: |
+        cargo check --target wasm32-unknown-unknown -p powerio -p powerio-tx -p powerio-dist \
+          -p powerio-core -p powerio-prob -p powerio-matrix
+        cargo check --target wasm32-unknown-unknown -p powerio --features matrix
 
   c-abi:
     name: C ABI (core no-default + C smoke test)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
-    - uses: dtolnay/rust-toolchain@stable
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       with:
         components: clippy
-    - uses: Swatinem/rust-cache@v2
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
     - name: Build powerio-capi --no-default-features
       run: cargo build -p powerio-capi --release --no-default-features
     # Every `pio_` export in the Rust source must be declared in the checked-in
@@ -119,6 +276,24 @@ jobs:
     # of sync with include/powerio.h.
     - name: Header symbol parity
       run: bash scripts/capi-header-parity.sh
+    - name: ABI 7 surface
+      run: POWERIO_JL_OPTIONAL=1 bash scripts/check-capi-v7.sh
+    - name: Structural value type parity
+      run: bash scripts/check-value-types.sh
+    - name: Diagnostic parity
+      run: bash scripts/check-diagnostic-parity.sh
+    # Doc comments render verbatim into powerio.h; check they agree with the
+    # signatures, table ids, and ownership verbs they describe.
+    - name: Doc comment integrity
+      run: python3 scripts/capi-doc-integrity.py
+    # Symbol parity compares names only. Regenerating and diffing catches what
+    # names can't: a reordered argument, a changed type, a struct field. cbindgen
+    # gates optional features behind #ifdef, so one run covers every feature set
+    # and this step belongs in exactly one job.
+    - name: Install cbindgen
+      run: cargo install cbindgen --locked
+    - name: Header matches cbindgen output
+      run: bash scripts/capi-header-regen.sh
     # Drive the ABI from C against the built library: proves the header is valid
     # C, the symbols link, and the exercised signatures match. Dynamic-linked so
     # the platform resolves the Rust runtime deps.
@@ -127,6 +302,28 @@ jobs:
         cc -I powerio-capi/include powerio-capi/examples/smoke.c \
            -L target/release -lpowerio_capi -o pio_smoke
         LD_LIBRARY_PATH=target/release ./pio_smoke tests/data/case9.m
+    # The same smoke under address and undefined behavior sanitizers: the ABI
+    # v6 ownership paths (retain/release orders, spans after parent release)
+    # must be clean, not merely not crash.
+    - name: C smoke test under ASan and UBSan
+      run: |
+        clang -fsanitize=address,undefined -fno-sanitize-recover=all \
+           -I powerio-capi/include powerio-capi/examples/smoke.c \
+           -L target/release -lpowerio_capi -o pio_smoke_san
+        LD_LIBRARY_PATH=target/release ./pio_smoke_san tests/data/case9.m
+    # A small Go client drives the same ownership paths through cgo, so the
+    # handle rules hold from a third runtime.
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: stable
+    - name: Go client exercises the ABI ownership paths
+      run: |
+        cd powerio-capi/examples/go-client
+        CGO_CFLAGS="-I $GITHUB_WORKSPACE/powerio-capi/include" \
+        CGO_LDFLAGS="-L $GITHUB_WORKSPACE/target/release -lpowerio_capi" \
+        go run . "$GITHUB_WORKSPACE/tests/data/case9.m"
+      env:
+        LD_LIBRARY_PATH: ${{ github.workspace }}/target/release
     - name: Compile and run the C++ header sanity check
       run: |
         c++ -std=c++17 -I powerio-capi/include powerio-capi/examples/header_cpp.cpp \
@@ -137,15 +334,29 @@ jobs:
         cargo test -p powerio-capi --no-default-features --verbose
         bash scripts/ci-clippy.sh capi-no-default
 
+  capi-miri:
+    name: Miri (C ABI handle core)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly
+      with:
+        components: miri
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+    # The unsafe ownership helpers behind every ABI v6 handle, under Miri.
+    # FFI entry points cannot run under Miri; the pure handle core can.
+    - name: Miri over the handle lifecycle
+      run: cargo +nightly miri test -p powerio-capi handle_lifecycle_is_sound
+
   c-abi-arrow:
     name: C ABI (arrow feature)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
-    - uses: dtolnay/rust-toolchain@stable
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       with:
         components: clippy
-    - uses: Swatinem/rust-cache@v2
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
     - name: Build powerio-capi --features arrow
       run: cargo build -p powerio-capi --release --features arrow
     # The cfg-gated pio_to_arrow still appears in the source symbol grep, so
@@ -168,13 +379,13 @@ jobs:
     name: C ABI (release features)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
-    - uses: dtolnay/rust-toolchain@stable
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       with:
         components: clippy
-    - uses: Swatinem/rust-cache@v2
-    - name: Build powerio-capi --features arrow,matrix,gridfm,dist,pkg
-      run: cargo build -p powerio-capi --release --features arrow,matrix,gridfm,dist,pkg
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+    - name: Build powerio-capi --features arrow,matrix,gridfm,dist,prob
+      run: cargo build -p powerio-capi --release --features arrow,matrix,gridfm,dist,prob
     # The cfg-gated optional symbols still appear in the source symbol grep,
     # so they must be declared in the header (inside their PIO_* guards);
     # parity holds for the release feature set.
@@ -186,30 +397,30 @@ jobs:
       run: |
         rm -rf /tmp/pio-gridfm-smoke
         cargo run -p powerio-cli -- gridfm tests/data/case9.m -o /tmp/pio-gridfm-smoke
-        cc -DPIO_ARROW -DPIO_MATRIX -DPIO_GRIDFM -DPIO_DIST -DPIO_PKG \
+        cc -DPIO_ARROW -DPIO_MATRIX -DPIO_GRIDFM -DPIO_DIST -DPIO_PROB \
            -I powerio-capi/include powerio-capi/examples/smoke.c \
            -L target/release -lpowerio_capi -o pio_smoke_gridfm
         LD_LIBRARY_PATH=target/release ./pio_smoke_gridfm tests/data/case9.m /tmp/pio-gridfm-smoke/case9/raw
     - name: Compile and run the C++ header sanity check (release features)
       run: |
-        c++ -std=c++17 -DPIO_ARROW -DPIO_MATRIX -DPIO_GRIDFM -DPIO_DIST -DPIO_PKG \
+        c++ -std=c++17 -DPIO_ARROW -DPIO_MATRIX -DPIO_GRIDFM -DPIO_DIST -DPIO_PROB \
            -I powerio-capi/include powerio-capi/examples/header_cpp.cpp \
            -L target/release -lpowerio_capi -o pio_header_cpp_release
         LD_LIBRARY_PATH=target/release ./pio_header_cpp_release
     - name: Tests + clippy (release features)
       run: |
-        cargo test -p powerio-capi --features arrow,matrix,gridfm,dist,pkg --verbose
+        cargo test -p powerio-capi --features arrow,matrix,gridfm,dist,prob --verbose
         bash scripts/ci-clippy.sh capi-release
 
   c-abi-dist:
     name: C ABI (dist feature)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
-    - uses: dtolnay/rust-toolchain@stable
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       with:
         components: clippy
-    - uses: Swatinem/rust-cache@v2
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
     - name: Build powerio-capi --features dist
       run: cargo build -p powerio-capi --release --features dist
     # The cfg-gated pio_dist_* entry points still appear in the source symbol
@@ -228,3 +439,13 @@ jobs:
       run: |
         cargo test -p powerio-capi --features dist --verbose
         bash scripts/ci-clippy.sh capi-dist
+
+  core-freebsd:
+    name: Core (FreeBSD)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      with:
+        targets: x86_64-unknown-freebsd
+    - run: cargo check -p powerio-core --target x86_64-unknown-freebsd --locked

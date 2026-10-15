@@ -1,56 +1,47 @@
 # powerio-dist
 
-`powerio-dist` parses multiconductor distribution network cases into a typed
-model in wire coordinates and converts between OpenDSS `.dss`,
-PowerModelsDistribution ENGINEERING JSON, and the draft BMOPF schema from the
-IEEE PES Task Force on Benchmarking Multiconductor OPF
-(<https://github.com/frederikgeth/bmopf-report>).
+`powerio-dist` parses multiconductor distribution networks into a typed model
+in wire coordinates. It converts between OpenDSS `.dss`,
+PowerModelsDistribution ENGINEERING JSON, and BMOPF JSON, the schema of the
+IEEE PES Task Force on Benchmarking Multiconductor OPF published at
+<https://github.com/distribution-system-opt/dsopt-schema>. It reads schema
+0.1.0 and 0.2.0 and writes 0.2.0.
 
-Distribution CIM (IEC 61968-13 / the GridAPPS-D CIMHub profile, CIM100 CIMXML)
-reads and writes through the `cim` format name (`parse_cim_file` /
-`write_cim_xml`), so a CIM feeder converts to and from OpenDSS, PMD, and
-BMOPF like any other member of the hub. The writer emits one CIM100 document
-with deterministic mRIDs (write → read → write is byte stable, and
-single-document parses keep the byte-exact echo tier). The reader reads the per-phase equipment CIM
-distribution uses — `ConnectivityNode` buses, `ACLineSegment` with
-`ACLineSegmentPhase` and `PerLengthPhaseImpedance`/`PerLengthSequenceImpedance`,
-`EnergyConsumer`, `LinearShuntCompensator`, the switch family, `EnergySource`,
-and two-winding `PowerTransformer` — mapping `SinglePhaseKind` A/B/C/N to the
-wire-coordinate terminal names 1/2/3/4. `TransformerTank` transformers,
-three-winding banks, and wire-geometry impedance are reported, not silently
-dropped, and are tracked follow-up work.
-
-Writing back to the source format reproduces the file byte for byte; every
-cross format conversion reports each field the target cannot represent in its
-warnings. The dss reader materializes every OpenDSS class default into an
-explicit model value (verified against the OpenDSS source and empirically
-against `opendssdirect`) and records which fields were defaulted, so BMOPF
-output is always fully explicit. The per fixture conversion matrix is generated
-into `powerio-dist/docs/conversion-matrix.md`.
+Emitting back to the source format reproduces the retained bytes; emitting to
+a different format reports the fields the target cannot represent. The DSS
+reader expands OpenDSS class defaults into explicit model values and remembers
+which ones came from defaults, which is why BMOPF output has explicit values
+for those fields. The generated [conversion matrix](docs/conversion-matrix.md)
+shows the behavior for each fixture.
 
 ```rust
-let net = powerio_dist::parse_file("feeder.dss", None)?;
-let pmd = net.to_format(powerio_dist::DistTargetFormat::PmdJson);
-for w in &pmd.warnings {
-    eprintln!("fidelity: {w}");
+let source = powerio_core::Source::open("feeder.dss")?;
+let module = powerio_dist::parse(source)?;
+let emitted = powerio_dist::emit(
+    &module,
+    powerio_dist::DistTargetFormat::PmdJson,
+    powerio_core::Destination::memory("feeder.pmd.json")?,
+)?;
+for line in powerio_dist::diagnostics::render_diagnostics(emitted.diagnostics()) {
+    eprintln!("fidelity: {line}");
 }
 ```
 
-The same surface is available from the `powerio` CLI
+The same parse and emit are available from the `powerio` CLI
 (`powerio convert feeder.dss --to pmd-json`), the Python package
-(`powerio.dist`), and the C ABI (`pio_dist_*`, behind the `dist` cargo
-feature of `powerio-capi`).
+(`powerio.parse` and `powerio.emit`), and the C ABI (`pio_source_open`,
+`pio_parse`, typed value access, and `pio_emit`).
 
-Fixtures live in `tests/data/dist/` at the workspace root with provenance
-recorded in its README. The oracle harnesses under `tools/` re-solve emitted
-`.dss` in OpenDSS and validate emitted PMD JSON against
+Fixtures live in `tests/data/dist/` at the workspace root, with their
+provenance recorded in the README there. The oracle harnesses under `tools/`
+solve emitted `.dss` again in OpenDSS and validate emitted PMD JSON against
 PowerModelsDistribution; CI runs the schema validation and round trip suites.
-For a local OpenDSS corpus, set `POWERIO_DIST_LOCAL_DSS_CORPUS` to a directory
-tree and run `cargo test -p powerio-dist --test local_dss_corpus -- --nocapture`;
-the test parses every `.dss`, writes BMOPF JSON, validates it against the
-vendored schema, reparses it, writes DSS, reparses that DSS, and checks that
-the second BMOPF JSON remains schema valid and stable up to JSON numeric
-rounding.
+If you have a local OpenDSS corpus, set `POWERIO_DIST_LOCAL_DSS_CORPUS` to the
+directory tree and run
+`cargo test -p powerio-dist --test local_dss_corpus -- --nocapture`. That
+test parses every `.dss`, emits BMOPF JSON, validates it against the vendored
+schema, reparses it, emits DSS, reparses that DSS, and checks that the second
+BMOPF JSON is still schema valid and stable up to JSON numeric rounding.
 
 The workspace README covers the CLI, Python package, C ABI, and the
 transmission crates: <https://github.com/eigenergy/powerio>.

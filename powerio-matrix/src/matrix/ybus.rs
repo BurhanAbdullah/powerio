@@ -15,8 +15,8 @@
 use num_complex::Complex64;
 use sprs::CsMat;
 
+use crate::Result;
 use crate::indexed::IndexedNetwork;
-use crate::{Error, Result};
 
 use super::triplet::CooBuilder;
 
@@ -30,32 +30,27 @@ pub struct YbusParts {
 
 /// Internal flags used to derive MATPOWER `Bp` and `Bpp` from `Y_bus`.
 // Six independent on/off switches into one Y_bus kernel; an enum per pair
-// would just spread the same state across more types.
+// would just spread the same data across more types.
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct YbusFlags {
     pub zero_resistance: bool,
     pub zero_charging: bool,
     pub unity_taps: bool,
     pub zero_shifts: bool,
     pub skip_bus_shunts: bool,
+    /// Matches `BuildOptions::default()`: false, so a zero impedance branch
+    /// (preserved in networks and instances) errors the physical admittances
+    /// unless a caller opts into skipping it.
     pub skip_zero_impedance: bool,
 }
 
-impl Default for YbusFlags {
-    fn default() -> Self {
-        Self {
-            zero_resistance: false,
-            zero_charging: false,
-            unity_taps: false,
-            zero_shifts: false,
-            skip_bus_shunts: false,
-            skip_zero_impedance: true,
-        }
-    }
-}
-
-pub fn build_ybus(case: &IndexedNetwork, opts: &super::BuildOptions) -> Result<YbusParts> {
+/// Calculate the bus admittance matrix, returned as separate real and
+/// imaginary sparse matrices.
+pub fn calc_admittance_matrix(
+    case: &IndexedNetwork,
+    opts: &super::BuildOptions,
+) -> Result<YbusParts> {
     let flags = YbusFlags {
         zero_resistance: false,
         zero_charging: false,
@@ -71,16 +66,23 @@ pub fn build_ybus(case: &IndexedNetwork, opts: &super::BuildOptions) -> Result<Y
 // the standard makeYbus notation and the math reads worse spelled out.
 #[allow(clippy::many_single_char_names)]
 pub(crate) fn build_ybus_with_flags(case: &IndexedNetwork, flags: YbusFlags) -> Result<YbusParts> {
+    // The bus shunt block divides by `per_unit_base()`. A zero or non-finite
+    // base made that `0.0/0.0`, storing NaN on every diagonal — including
+    // shunt-free buses, since `CooBuilder::add` skips only exact zero — and
+    // the matrix shipped with no error.
+    case.network().check_base_mva()?;
     let n = case.n();
     let mut g_coo = CooBuilder::with_capacity(n, 4 * case.branches().len() + n);
     let mut b_coo = CooBuilder::with_capacity(n, 4 * case.branches().len() + n);
 
     for (row_idx, br) in case.in_service_branches() {
-        let i = case.bus_index(br.from).ok_or(Error::UnknownBus {
-            bus_id: br.from,
-            element_index: row_idx,
-        })?;
-        let j = case.bus_index(br.to).ok_or(Error::UnknownBus {
+        let i = case
+            .bus_index(br.from)
+            .ok_or(powerio_tx::Error::UnknownBus {
+                bus_id: br.from,
+                element_index: row_idx,
+            })?;
+        let j = case.bus_index(br.to).ok_or(powerio_tx::Error::UnknownBus {
             bus_id: br.to,
             element_index: row_idx,
         })?;
@@ -88,7 +90,7 @@ pub(crate) fn build_ybus_with_flags(case: &IndexedNetwork, flags: YbusFlags) -> 
         let shift_rad = if flags.zero_shifts {
             0.0
         } else {
-            case.angle_radians(br.shift)
+            case.to_radians(br.shift)
         };
         let Some([y_ii, y_ij, y_ji, y_jj]) = branch_admittance(br, flags, shift_rad, row_idx)?
         else {
@@ -137,12 +139,15 @@ pub(crate) fn build_ybus_with_flags(case: &IndexedNetwork, flags: YbusFlags) -> 
 /// `flags` lets the Y_bus builder zero taps/shifts/charging; pass
 /// [`YbusFlags::default`] for the physical admittances (taps and shifts on).
 ///
-/// Returns `Ok(None)` for a zero-impedance branch (`r² + x² = 0`), which the
-/// callers skip (Y_bus) or zero out (gridfm). `row` only labels the error.
+/// Returns `Ok(None)` for a zero-impedance branch — one whose impedance
+/// magnitude is under [`MIN_DIVISIBLE_MAGNITUDE`](super::MIN_DIVISIBLE_MAGNITUDE) —
+/// which the callers skip (Y_bus) or zero out (gridfm). `row` only labels the
+/// error.
 ///
 /// # Errors
-/// [`Error::NonFiniteSusceptance`] when `r`/`x` are NaN/Inf, so a bad value can't
-/// slip a NaN into Y_bus or a Parquet column.
+/// [`powerio_tx::Error::NonFiniteSusceptance`] when `r`/`x` are NaN/Inf, so a bad value can't
+/// slip a NaN into Y_bus or a Parquet column. [`powerio_tx::Error::DegenerateTap`] when the
+/// tap ratio is one the four admittances cannot be divided by.
 #[allow(clippy::many_single_char_names)]
 pub(crate) fn branch_admittance(
     br: &crate::network::Branch,
@@ -152,33 +157,31 @@ pub(crate) fn branch_admittance(
 ) -> Result<Option<[Complex64; 4]>> {
     let r = if flags.zero_resistance { 0.0 } else { br.r };
     let x = br.x;
-    let denom = r * r + x * x;
-    if denom == 0.0 {
+    // Zero impedance in every sense the builder can act on; exact zero used to
+    // be the whole test. The guard and the division are shared with the AC
+    // path, so the two cannot drift; only the skip-vs-error policy is local.
+    let Some((g, b)) = powerio_tx::calc_series_admittance_of(r, x, row)? else {
         if flags.skip_zero_impedance {
             return Ok(None);
         }
-        return Err(Error::ZeroImpedance { row });
-    }
-    // NaN/Inf r or x makes `denom` non-finite (and slips past `== 0.0`), which
-    // would write NaN into Y_bus and silently break the downstream M-matrix/SDDM
-    // checks. Reject it the same way `incidence` does.
-    if !denom.is_finite() {
-        return Err(Error::NonFiniteSusceptance { row });
-    }
-    let y_series = Complex64::new(r / denom, -x / denom);
+        return Err(powerio_tx::Error::ZeroImpedance { row }.into());
+    };
+    let y_series = Complex64::new(g, b);
 
     let charging = if flags.zero_charging {
         crate::network::BranchCharging::new(0.0, 0.0, 0.0, 0.0)
     } else {
-        br.terminal_charging()
+        br.calc_terminal_charging()
     };
     let y_fr = Complex64::new(charging.g_fr, charging.b_fr);
     let y_to = Complex64::new(charging.g_to, charging.b_to);
 
+    // A tap of 1e-200 underflows `a_norm_sqr` to zero and scatters +/-Inf
+    // through the four admittances.
     let tap_mag = if flags.unity_taps {
         1.0
     } else {
-        br.effective_tap()
+        br.calc_divisible_tap(row)?
     };
     // `shift_rad` is supplied already in radians and already zeroed when
     // `flags.zero_shifts` is set (the caller has the network, so it knows whether
@@ -190,7 +193,13 @@ pub(crate) fn branch_admittance(
     let y_tt = y_series + y_to;
     let y_ft = -y_series / a.conj();
     let y_tf = -y_series / a;
-    Ok(Some([y_ff, y_ft, y_tf, y_tt]))
+    let out = [y_ff, y_ft, y_tf, y_tt];
+    // Each input is bounded on its own above; the products can still overflow
+    // when several sit near their bound at once.
+    if out.iter().any(|y| !y.re.is_finite() || !y.im.is_finite()) {
+        return Err(powerio_tx::Error::NonFiniteSusceptance { row }.into());
+    }
+    Ok(Some(out))
 }
 
 /// Complex from/to power injections for one branch at the given bus voltages, in

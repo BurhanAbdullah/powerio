@@ -4,133 +4,213 @@ pragma_once = false
 cpp_compat = true
 tab_width = 4
 style = "type"
-# Emit `size_t`/`ptrdiff_t` for `usize`/`isize` (not `uintptr_t`), so the count
-# and length parameters read as the C integer types a consumer expects.
 usize_is_size_t = true
 
-# File preamble. cbindgen generates the rest from the Rust source, so the only
-# hand-written prose lives here; per-symbol docs come from the Rust doc comments.
 header = """
-/* powerio C ABI, version 4: parse any power system case format, query it,
- * convert it, and extract the numeric tables for matrix assembly. Check
- * pio_abi_version() against PIO_ABI_VERSION at load; the integer is the
- * compatibility check, the version string is informational.
+/* PowerIO C ABI 7.
  *
- * Naming grammar (fixed; the C API evolves additively from here):
- * - Verb-led names are operations and the verb fixes the return family:
- *   parse/read/normalize return a new handle, write has a filesystem effect,
- *   convert transcodes without keeping a handle, free destroys.
- * - to_ marks a representation change of the same network (the strtol/htons
- *   lineage). The target is a format string unless the output type differs:
- *   pio_to_format returns text for every named format, pio_to_arrow fills
- *   Arrow C Data Interface structs.
- * - Noun phrases are queries (no get_); n_ prefixes counts, is_ predicates.
- * - Format names never appear in symbols. Formats are strings ("matpower",
- *   "psse", "powerio-json", ...), so a new format never changes this ABI.
+ * Grid exchange data enters through PioSource and pio_parse. pio_emit writes
+ * a selected grid exchange format. PowerIO IR uses pio_module_serialize and
+ * pio_module_deserialize. Every input and returned span carries a byte or
+ * element count.
  *
- * Vocabulary (one meaning per word, transmission and distribution alike):
- * - bus: a named connection point, any number of phases. This API is bus
- *   granular (pio_n_buses, pio_bus_ids, pio_bus_demand, ...).
- * - node: one conductor's point at a bus (OpenDSS bus.1.2.3). Reserved for
- *   the multiconductor API; never a synonym for bus here.
- * - branch: any two-terminal series element, lines and transformers alike
- *   (circuit theory; MATPOWER mpc.branch; the Branch Flow Model). "line" is
- *   the transformer-excluding subset and never names the umbrella table.
+ * Values use canonical structural type names. pio_value_is_type performs an
+ * exact comparison, and the typed accessors return owner-rooted views without
+ * serializing or copying the module value.
  *
- * Conventions:
- * - Array extractors write up to `cap` values per output array and return the
- *   total available; NULL out (or cap 0) is a pure count query, so a short
- *   read is detectable and a caller buffer can never silently overflow.
- * - Bus ids are int64 in the range 1..2^63-1 (a v4 invariant). pio_bus_ids and
- *   every per-bus column keyed to its ordering are int64; a source whose ids are
- *   strings or exceed 2^63-1 has no representation in this API and is mapped
- *   to dense int64 at read (with a warning) or routed through the multiconductor
- *   API. Never hand a raw oversized id to this API.
- * - errbuf/errlen caller buffers (the libpcap/curl idiom: allocation-free
- *   across the boundary, no thread-local state). NULL or length 0 discards
- *   the message; a long message truncates on a UTF-8 character boundary and
- *   is always NUL-terminated. PIO_ERRBUF_MIN is a comfortable size. The ABI
- *   reports errors as messages and defines no error codes.
- * - Warnings attach to the network handle; query them with pio_warnings,
- *   which returns the byte length needed (call with NULL/0 to size). Only
- *   functions returning no handle (pio_to_format, pio_convert_*,
- *   pio_write_dir) take a warnbuf.
- * - Strings returned by pio_to_format / pio_convert_file / pio_convert_str
- *   are owned by the library; free them with pio_string_free. Handles from
- *   pio_parse_file / pio_parse_str / pio_read_dir / pio_normalize are freed
- *   with pio_network_free. Arrow buffers are freed through their own release
- *   callbacks (the C Data Interface release rule).
- * - A handle is immutable after construction unless a function takes it
- *   non-const (pio_package_validate rewrites its diagnostics): concurrent
- *   reads from any number of threads are safe; a non-const entry point, and
- *   pio_network_free, need exclusive access, and free exactly once.
- * - Every entry point catches Rust panics at the boundary and returns the
- *   documented failure value (NULL, 0, -1, 0.0) rather than unwinding across
- *   the ABI (requires the default panic = "unwind"; a panic = "abort" build
- *   aborts the process instead).
+ * Each opaque handle has retain and release functions. A child value,
+ * network, collection entry, or artifact keeps its owner alive. Concurrent
+ * immutable access is allowed; releasing one raw handle concurrently with a
+ * call that uses that same raw handle is caller error. pio_apply_updates and
+ * pio_apply_bus_load_active_power need exclusive access to their PioModule
+ * handle for the duration of the call, and they invalidate every plain
+ * Pio*View struct previously read from that handle; owner rooted handles
+ * stay valid. Every pointer a caller passes must be aligned for its type and
+ * must address at most PTRDIFF_MAX bytes.
  *
- * Evolution policy: existing signatures and documented behavior are frozen.
- * New data means new symbols; rich or multiconductor data rides the Arrow C
- * Data Interface (pio_to_arrow), `.pio.json` packages, or format-specific JSON
- * payloads with their own schema/version rules. The dense extractors are the
- * frozen balanced positive-sequence projection, complete as-is. The Arrow
- * tables are append-only: existing PIO_ARROW_TABLE_* ids and each table's
- * column order are frozen, a new table takes the next id and new columns append
- * at the end, and a consumer addresses columns by name, never by position.
- * Removing a supported format token or changing its documented C behavior
- * requires a PIO_ABI_VERSION bump.
+ * Every fallible operation reports through PioError **. A NULL error
+ * parameter discards the error. Branch on pio_error_code, not on message
+ * text. No Rust panic crosses the ABI boundary.
  *
- * Optional: build with `--features arrow` for pio_to_arrow (guarded by
- * PIO_ARROW), add `--features matrix` for the balanced matrix Arrow tables,
- * `--features gridfm` for pio_read_dir / pio_scenario_ids
- * (guarded by PIO_GRIDFM), `--features dist` for the pio_dist_* entry
- * points (guarded by PIO_DIST): multiconductor distribution cases (OpenDSS,
- * PMD ENGINEERING JSON, BMOPF JSON) behind their own PioDistNetwork handle,
- * freed with pio_dist_network_free, string outputs freed with pio_string_free,
- * and `--features pkg` for the pio_package_* entry points (guarded by
- * PIO_PKG): `.pio.json` compiler packages behind their own PioPackage handle,
- * freed with pio_package_free.
- * The distribution C API is EXPERIMENTAL while the IEEE BMOPF schema is a
- * draft: supported dist C usage starts at PIO_DIST_ABI_VERSION = 1, with
- * pio_dist_convert_*(input, from, to, ...). Dist C signature changes bump
- * PIO_DIST_ABI_VERSION, not PIO_ABI_VERSION. Its JSON payloads (bmopf-json,
- * powerio-dist-json) carry their own meta.version and may evolve; pin a
- * vintage from the payload meta.
- * Probe optional features at runtime with
- * pio_has_feature("arrow"|"matrix"|"gridfm"|"dist"|"pkg").
- *
- * Checked in and generated; regenerate from the Rust source with
- *   cbindgen --config cbindgen.toml --crate powerio-capi --output include/powerio.h
+ * Generated from the Rust declarations with cbindgen using this file.
  */"""
 
-# pio_to_arrow takes arrow-rs's FFI_ArrowArray/FFI_ArrowSchema, which are
-# #[repr(C)] and layout-identical to the Arrow C Data Interface structs. Present
-# them under the standard ArrowArray/ArrowSchema names so a consumer can pass the
-# structs from arrow_c_data_interface.h (forward-declared below, gated on
-# PIO_ARROW since the dep isn't parsed).
 after_includes = """
-#if defined(PIO_ARROW)
-struct ArrowArray;
-struct ArrowSchema;
-#endif"""
+typedef struct PioArtifact PioArtifact;
+typedef struct PioActivePower PioActivePower;
+typedef struct PioAcOpfPreparation PioAcOpfPreparation;
+typedef struct PioDcOpfPreparation PioDcOpfPreparation;
+typedef struct PioDcOperators PioDcOperators;
+typedef struct PioApparentPower PioApparentPower;
+typedef struct PioBalancedNetwork PioBalancedNetwork;
+typedef struct PioCalculationUpdate PioCalculationUpdate;
+typedef struct PioCalculationInstance PioCalculationInstance;
+typedef struct PioCalculationSolution PioCalculationSolution;
+typedef struct PioComponentId PioComponentId;
+typedef struct PioContingencyResolution PioContingencyResolution;
+typedef struct PioContingencySet PioContingencySet;
+typedef struct PioDestination PioDestination;
+typedef struct PioDetailedConnectivity PioDetailedConnectivity;
+typedef struct PioDiagnostics PioDiagnostics;
+typedef struct PioEmitResult PioEmitResult;
+typedef struct PioError PioError;
+typedef struct PioGeoApplyReport PioGeoApplyReport;
+typedef struct PioGeoLayer PioGeoLayer;
+typedef struct PioJsonValue PioJsonValue;
+typedef struct PioModule PioModule;
+typedef struct PioMonitoredSet PioMonitoredSet;
+typedef struct PioMulticonductorNetwork PioMulticonductorNetwork;
+typedef struct PioNetworkUpdate PioNetworkUpdate;
+typedef struct PioOperatingPoint PioOperatingPoint;
+typedef struct PioOperatingPointUpdate PioOperatingPointUpdate;
+typedef struct PioReactivePower PioReactivePower;
+typedef struct PioScenarioSetHandle PioScenarioSetHandle;
+typedef struct PioSource PioSource;
+typedef struct PioSparseMatrix PioSparseMatrix;
+typedef struct PioString PioString;
+typedef struct PioSubsystemSet PioSubsystemSet;
+typedef struct PioTimeSeriesHandle PioTimeSeriesHandle;
+typedef struct PioUpdateChange PioUpdateChange;
+typedef struct PioUpdateReport PioUpdateReport;
+typedef struct PioValueHandle PioValueHandle;
+typedef struct PioVector PioVector;"""
 
 [export]
 prefix = ""
-include = ["PioNetwork", "PioDistNetwork", "PioPackage"]
-
-[export.rename]
-"FFI_ArrowArray" = "struct ArrowArray"
-"FFI_ArrowSchema" = "struct ArrowSchema"
-
-# Gate the optional features behind #ifdef (PIO_ARROW for `arrow`, PIO_DIST
-# for `dist`, PIO_GRIDFM for `gridfm`, PIO_PKG for `pkg`): cbindgen emits the
-# cfg-gated symbols inside `#if defined(...)` even on a default (no-feature)
-# generation, so the checked-in header always carries every block.
-[defines]
-"feature = arrow" = "PIO_ARROW"
-"feature = dist" = "PIO_DIST"
-"feature = gridfm" = "PIO_GRIDFM"
-"feature = pkg" = "PIO_PKG"
+include = [
+    "PioAcOpfBranchView",
+    "PioAcOpfBusView",
+    "PioAcOpfGeneratorView",
+    "PioAcOpfPreparationView",
+    "PioAcOpfStorageView",
+    "PioDcOpfBranchView",
+    "PioDcOpfBusView",
+    "PioDcOpfGeneratorView",
+    "PioDcOpfPreparationView",
+    "PioBalancedBranchView",
+    "PioBalancedBusView",
+    "PioBalancedGeoView",
+    "PioBalancedLocationView",
+    "PioBalancedGeneratorView",
+    "PioBalancedLoadView",
+    "PioBalancedLoadVoltageModelView",
+    "PioBalancedShuntView",
+    "PioBalancedStorageView",
+    "PioBalancedStaticVarCompensatorView",
+    "PioBalancedSwitchView",
+    "PioBalancedHvdcConverterView",
+    "PioBalancedHvdcView",
+    "PioBalancedThreeWindingTransformerView",
+    "PioThreeWindingTransformerWindingView",
+    "PioThreeWindingTransformerImpedanceView",
+    "PioBalancedAreaView",
+    "PioDetailedConnectivityCountsView",
+    "PioOmittedFieldView",
+    "PioCaseMetadataView",
+    "PioSubnetworkView",
+    "PioReactiveCapabilityCurvePointView",
+    "PioReactiveLimitsView",
+    "PioEquipmentReactiveLimitsView",
+    "PioBoundaryLineGenerationView",
+    "PioBoundaryLineView",
+    "PioTieLineView",
+    "PioComponentMetadataView",
+    "PioComponentAliasView",
+    "PioExternalIdentifierView",
+    "PioStringPropertyView",
+    "PioSubstationView",
+    "PioVoltageLevelView",
+    "PioConnectivityNodeView",
+    "PioBusBreakerBusView",
+    "PioCalculatedBusView",
+    "PioBusbarSectionView",
+    "PioDetailedTerminalView",
+    "PioTopologySwitchView",
+    "PioInternalConnectionView",
+    "PioOperationalLimitGroupView",
+    "PioTemporaryLimitView",
+    "PioTapChangerView",
+    "PioTapChangerStepView",
+    "PioDcTerminalView",
+    "PioDcEquipmentView",
+    "PioDcNodeView",
+    "PioDcConverterUnitView",
+    "PioDroopCurveSegmentView",
+    "PioAcDcConverterView",
+    "PioMulticonductorLocationView",
+    "PioMulticonductorGeoView",
+    "PioMulticonductorNetworkCountsView",
+    "PioMulticonductorBusView",
+    "PioMulticonductorLineCodeView",
+    "PioMulticonductorLineView",
+    "PioMulticonductorSwitchView",
+    "PioMulticonductorTransformerView",
+    "PioMulticonductorTransformerWindingView",
+    "PioMulticonductorLoadView",
+    "PioMulticonductorGeneratorView",
+    "PioInverterBasedResourceView",
+    "PioControlProfileView",
+    "PioMulticonductorShuntView",
+    "PioMulticonductorCapacitorView",
+    "PioVoltageSourceView",
+    "PioMulticonductorUntypedObjectView",
+    "PioMulticonductorUntypedPropertyView",
+    "PioMulticonductorCommandView",
+    "PioAcBusSpecificationView",
+    "PioActiveConstraintView",
+    "PioActiveControlView",
+    "PioActivePowerControlView",
+    "PioBranchRatingView",
+    "PioByteView",
+    "PioF64View",
+    "PioGeneratorCapabilityView",
+    "PioGeneratorCostView",
+    "PioDcBusSpecificationView",
+    "PioDiagnosticSpanView",
+    "PioJsonObjectEntryView",
+    "PioJsonValueView",
+    "PioIsolatedTerminalView",
+    "PioObjectiveTermView",
+    "PioModuleExtensionView",
+    "PioModuleHistoryEntryView",
+    "PioModuleHistoryParameterView",
+    "PioModuleProducerView",
+    "PioModuleSourceMapEntryView",
+    "PioModuleSourceView",
+    "PioPrescribedSourceVoltageView",
+    "PioPrescribedTerminalPowerView",
+    "PioComponentIdView",
+    "PioContingencyComponentView",
+    "PioScucDevicePeriodView",
+    "PioScucDeviceView",
+    "PioScucRampLimitsView",
+    "PioScucReserveLimitsView",
+    "PioScucReserveCostsView",
+    "PioScucInitialCommitmentView",
+    "PioScucReactiveCapabilityView",
+    "PioScucStartupCostAdjustmentView",
+    "PioScucStartupLimitView",
+    "PioScucEnergyRequirementView",
+    "PioScucEnergyCostBlockView",
+    "PioScucDimensionsView",
+    "PioScucShuntView",
+    "PioScucBranchSwitchingCostView",
+    "PioScucTransformerControlView",
+    "PioScucActiveReserveZoneView",
+    "PioScucActiveReservePeriodView",
+    "PioScucReactiveReserveZoneView",
+    "PioScucReactiveReservePeriodView",
+    "PioScucContingencyView",
+    "PioScucContingencyComponentView",
+    "PioScucViolationCostView",
+    "PioShuntBlockView",
+    "PioSizeView",
+    "PioSourceSpanView",
+    "PioStringView",
+    "PioTerminalPowerView",
+    "PioTerminalReferenceView",
+    "PioTerminalVoltageView",
+]
 
 [parse]
 parse_deps = false

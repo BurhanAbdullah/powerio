@@ -251,7 +251,10 @@ fn draw_browse_detail(frame: &mut Frame, app: &App, area: Rect) {
         v
     } else {
         vec![Line::from(Span::styled(
-            "No `.m` cases found in data directory.",
+            format!(
+                "No case files ({}) found in data directory.",
+                crate::cases::CASE_EXTENSIONS_LABEL
+            ),
             warn(),
         ))]
     };
@@ -279,16 +282,16 @@ fn draw_inspect(frame: &mut Frame, app: &App, area: Rect) {
     if let Some(state) = &app.inspect {
         header_lines.push(Line::from(vec![
             Span::styled("case: ", dim()),
-            Span::styled(state.case.name.clone(), title()),
+            Span::styled(state.case.name().clone(), title()),
             Span::raw("    "),
             Span::styled("buses: ", dim()),
-            Span::raw(state.case.buses.len().to_string()),
+            Span::raw(state.case.buses().len().to_string()),
             Span::raw("   "),
             Span::styled("branches: ", dim()),
-            Span::raw(state.case.branches.len().to_string()),
+            Span::raw(state.case.branches().len().to_string()),
             Span::raw("   "),
             Span::styled("baseMVA: ", dim()),
-            Span::raw(format!("{:.0}", state.case.base_mva)),
+            Span::raw(format!("{:.0}", state.case.base_mva())),
             Span::raw("   "),
             Span::styled("scheme: ", dim()),
             Span::raw(format!("{:?}", app.scheme)),
@@ -544,7 +547,8 @@ fn draw_synth(frame: &mut Frame, app: &App, area: Rect) {
         .title(" Preview ");
     if let Some(case) = &app.synth.generated {
         let view = powerio_matrix::IndexedNetwork::new(case);
-        if let Ok(b) = powerio_matrix::build_bprime(&view, &powerio_matrix::BuildOptions::default())
+        if let Ok(b) =
+            powerio_matrix::calc_bprime_matrix(&view, &powerio_matrix::BuildOptions::default())
         {
             let inner = preview_block.inner(split[1]);
             frame.render_widget(preview_block, split[1]);

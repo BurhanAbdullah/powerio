@@ -3,7 +3,7 @@ name = "powerio"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = 'Compiler infrastructure for power systems: parse, convert, validate, and lower grid models'
+description = 'Compiler infrastructure for power systems: parse, validate, transform, and emit grid models'
 readme = "README.md"
 license.workspace = true
 repository.workspace = true
@@ -12,33 +12,44 @@ documentation = "https://docs.rs/powerio"
 keywords = ["matpower", "parser", "lossless"]
 categories = ["science", "parsing"]
 
-# powerio has no features, so this just pins the docs.rs build to the same flags
-# the Pages build uses; the block is here so a future `cargo publish` renders
-# identically on docs.rs.
 [package.metadata.docs.rs]
 all-features = true
 
 [features]
-schema = ["dep:schemars"]
+matrix = ["dep:powerio-matrix"]
+# The gridfm-datakit Parquet reader. Off by default so the facade pulls no
+# Arrow or Parquet into consumers that never read datasets.
+gridfm = [
+    "dep:arrow",
+    "dep:parquet",
+    "dep:bytes",
+    "dep:powerio-matrix",
+    "powerio-matrix/gridfm",
+]
+schema = ["dep:schemars", "powerio-tx/schema", "powerio-core/schema", "powerio-dist/schema", "powerio-prob/schema"]
 
 [dependencies]
-thiserror = "2"
-num-complex.workspace = true
-# Byte-slice float parsing for numeric matrix rows, avoiding UTF-8 allocation.
-lexical-core = "1"
-# A power network is a graph; connectivity/radial diagnostics live on Network.
-petgraph = "0.8"
-serde.workspace = true
-# Format converters (PowerModels / egret JSON) serialize the typed model.
-serde_json.workspace = true
+num-complex = { workspace = true }
+powerio-core = { workspace = true }
+powerio-dist = { workspace = true }
+powerio-matrix = { workspace = true, optional = true }
+powerio-prob = { workspace = true }
+powerio-tx = { workspace = true }
 schemars = { workspace = true, optional = true }
+bytes = { version = "1.9", optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+arrow = { workspace = true, optional = true }
+parquet = { version = "60", default-features = false, features = ["arrow", "snap"], optional = true }
 
 [dev-dependencies]
-criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+powerio-matrix = { workspace = true, features = ["gridfm"] }
+tempfile = "3"
+zip.workspace = true
 
-[[bench]]
-name = "parse"
-harness = false
+[[example]]
+name = "generate_schemas"
+required-features = ["schema"]
 
 [lints]
 workspace = true

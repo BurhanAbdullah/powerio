@@ -9,23 +9,47 @@ name: Julia binding
 #
 # Companion branches: a PR that moves the shared surface (JSON shapes, schema
 # versions, pio_* behavior) pushes a PowerIO.jl branch with the SAME name; this
-# job tests against that branch when it exists and falls back to PowerIO.jl
-# main. That breaks the lockstep deadlock where a powerio PR can only go green
-# after PowerIO.jl main changes, which can only be validated after the powerio
-# PR merges. Merge either side first; the companion branch keeps both green.
+# job tests against that branch when it exists, then against the companion of
+# the nearest parent branch in the stack, and only then falls back to
+# PowerIO.jl main. That breaks the lockstep deadlock where a powerio PR can
+# only go green after PowerIO.jl main changes, which can only be validated
+# after the powerio PR merges. Merge either side first; the companion branch
+# keeps both green, and a stacked PR inherits the parent's companion rather
+# than testing the new surface against the old expectations on main.
+# The paths cover every crate the full-feature capi build below pulls in
+# (--features arrow,matrix,gridfm,dist,prob), so a change in any of them
+# reruns the compatibility suite.
 on:
   push:
     branches: [ "main" ]
-    paths: [ "powerio/**", "powerio-capi/**", ".github/workflows/julia-binding.yml" ]
+    paths: [ "powerio/**", "powerio-core/**", "powerio-tx/**", "powerio-capi/**", "powerio-matrix/**", "powerio-dist/**", "powerio-prob/**", ".github/workflows/julia-binding.yml" ]
+  # No branch filter: stacked PRs must run this too (see rust.yml).
   pull_request:
-    branches: [ "main" ]
-    paths: [ "powerio/**", "powerio-capi/**", ".github/workflows/julia-binding.yml" ]
+    paths: [ "powerio/**", "powerio-core/**", "powerio-tx/**", "powerio-capi/**", "powerio-matrix/**", "powerio-dist/**", "powerio-prob/**", ".github/workflows/julia-binding.yml" ]
+
+# One run per workflow per branch. A force push to a stacked pull request
+# otherwise leaves the superseded run going: it finishes, it fails or it
+# passes, and it emails every watcher a second time for a commit nobody is
+# reviewing.
+#
+# Only a pull request run is ever superseded, so only a pull request run is
+# cancelled. A push to `main` is a release candidate whose result must stand
+# on its own, and a release run is the release itself: `python.yml` publishes
+# wheels to PyPI from one, behind an environment whose reviewer gate can hold
+# it for a long time. Keying the switch on the ref instead would make every
+# tag run cancellable, and a re-published release or a re-run of the same tag
+# would then cancel a publish in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  JULIA_NUM_THREADS: "4"
+  POWERIO_REQUIRE_LIBRARY: "1"
 
 jobs:
   compatibility:
@@ -45,52 +69,139 @@ jobs:
           echo "available=false" >> "$GITHUB_OUTPUT"
           echo "eigenergy/PowerIO.jl is unreachable (no POWERIO_JL_REPO_TOKEN secret, and the repo is not public); skipping the compatibility test."
         fi
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       if: steps.powerio-jl.outputs.available == 'true'
-    - uses: dtolnay/rust-toolchain@stable
+      with:
+        # Full history: the companion step below asks whether a branch tip is
+        # already in this head, and a shallow clone cannot answer that.
+        fetch-depth: 0
+    - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       if: steps.powerio-jl.outputs.available == 'true'
-    - uses: Swatinem/rust-cache@v2
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       if: steps.powerio-jl.outputs.available == 'true'
     - name: Build powerio-capi
       if: steps.powerio-jl.outputs.available == 'true'
-      # --features arrow,matrix,gridfm,dist,pkg so PowerIO.jl's Arrow export,
+      # --features arrow,matrix,gridfm,dist,prob so PowerIO.jl's Arrow export,
       # matrix Arrow export, gridfm reader, distribution surface, and package
       # surface bind against real symbols rather than skipping behind feature
       # probes.
-      run: cargo build -p powerio-capi --release --features arrow,matrix,gridfm,dist,pkg
+      run: cargo build -p powerio-capi --release --features arrow,matrix,gridfm,dist,prob
     - name: Resolve PowerIO.jl companion branch
       id: powerio-jl-ref
       if: steps.powerio-jl.outputs.available == 'true'
       env:
         BRANCH: ${{ github.head_ref || github.ref_name }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       run: |
+        JL=https://github.com/eigenergy/PowerIO.jl.git
         if [ -n "$BRANCH" ] && [ "$BRANCH" != "main" ] \
-          && git ls-remote --exit-code --heads \
-            https://github.com/eigenergy/PowerIO.jl.git "refs/heads/$BRANCH" >/dev/null 2>&1; then
+          && git ls-remote --exit-code --heads "$JL" "refs/heads/$BRANCH" >/dev/null 2>&1; then
           echo "ref=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "PowerIO.jl has a companion branch '$BRANCH'; testing against it instead of main."
+          exit 0
+        fi
+        # A stacked pull request carries the parent branch's surface change but
+        # has a name of its own, so no companion branch matches that name. Test
+        # against the parent's companion instead. For every branch PowerIO.jl
+        # names, measure the history this head shares with the powerio branch
+        # of the same name. Shared history rather than the branch tip is the
+        # measure, because a parent that gains a commit after the child
+        # restacks is still the parent.
+        #
+        # Two candidates are not parents and are dropped:
+        #   * one that shares nothing beyond main, which is a sibling;
+        #   * one that already contains this head, which is a descendant.
+        #     Shared history alone cannot tell a parent from a child, and a
+        #     child's companion holds the newer expectations, so testing
+        #     against it would fail this head for carrying the older surface.
+        #
+        # Of the rest, the candidate that shares the most commits past main is
+        # the nearest parent. The count is the measure, not the commit date: a
+        # rebase stamps a whole stack with one committer time, so dates tie
+        # where counts still separate. Counts can tie as well, when two
+        # branches fork at the same commit; the first name in the listing then
+        # wins, and both companions describe that same fork point.
+        #
+        # Without this step the stacked pull request tests the new surface
+        # against the old expectations on PowerIO.jl main and can never go
+        # green, which is the deadlock the companion branch exists to break.
+        ref=main
+        if git fetch -q --no-tags --prune origin \
+             "+refs/heads/*:refs/remotes/companion/*" \
+           && main_tip="$(git rev-parse -q --verify refs/remotes/companion/main)"; then
+          deepest=0
+          while read -r _ candidate; do
+            name="${candidate#refs/heads/}"
+            [ "$name" = "main" ] && continue
+            tip="refs/remotes/companion/$name"
+            git rev-parse --verify -q "$tip" >/dev/null || continue
+            # A descendant of this head, so its companion is ahead of us.
+            git merge-base --is-ancestor "$HEAD_SHA" "$tip" && continue
+            shared="$(git merge-base "$tip" HEAD)" || continue
+            # Shares only main, so it is a sibling rather than a parent.
+            git merge-base --is-ancestor "$shared" "$main_tip" && continue
+            # A descendant that no longer contains this head, because one of
+            # the two was rewritten, passes the test above. It still carries
+            # more of the stack past the fork than this head does, and a
+            # parent never does, so that count separates the two.
+            [ "$(git rev-list --count "$shared".."$tip")" \
+              -gt "$(git rev-list --count "$shared".."$HEAD_SHA")" ] && continue
+            depth="$(git rev-list --count "$main_tip".."$shared")"
+            if [ "$depth" -gt "$deepest" ]; then
+              deepest="$depth"
+              ref="$name"
+            fi
+          done < <(git ls-remote --heads "$JL")
+        fi
+        echo "ref=$ref" >> "$GITHUB_OUTPUT"
+        if [ "$ref" = "main" ]; then
+          echo "PowerIO.jl has no companion branch for '$BRANCH' and none for a parent branch; testing against main."
         else
-          echo "ref=main" >> "$GITHUB_OUTPUT"
+          echo "PowerIO.jl has no companion branch for '$BRANCH'; testing against the parent branch companion '$ref'."
         fi
     - name: Check out PowerIO.jl
       if: steps.powerio-jl.outputs.available == 'true'
-      uses: actions/checkout@v6
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         repository: eigenergy/PowerIO.jl
         path: PowerIO.jl
         ref: ${{ steps.powerio-jl-ref.outputs.ref }}
         # Falls back to the workflow token, which suffices once the repo is public.
         token: ${{ secrets.POWERIO_JL_REPO_TOKEN || github.token }}
-    - uses: julia-actions/setup-julia@v3
+    - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3.0.2
       if: steps.powerio-jl.outputs.available == 'true'
       with:
         version: '1'
-    - uses: julia-actions/cache@v3
+    - uses: julia-actions/cache@a7bed9df697e5d7309d68afe7542a87621a8b6c8 # v3.3.0
       if: steps.powerio-jl.outputs.available == 'true'
+    # The entry point names in both directions: every pio_* the paired binding
+    # calls is declared by ABI 7, and every entry point ABI 7 declares is
+    # either called by the binding or listed in its
+    # gen/unbound_entry_points.txt with a reason.
+    - name: ABI 7 companion coverage in both directions
+      if: steps.powerio-jl.outputs.available == 'true'
+      run: POWERIO_JL=PowerIO.jl bash scripts/check-capi-v7.sh
+    # The Julia column of the language guide and the Julia diagnostic
+    # registry are checked only when a checkout is present; without one the
+    # two gates skip their Julia half.
+    - name: Documentation symbols and diagnostic parity with PowerIO.jl
+      if: steps.powerio-jl.outputs.available == 'true'
+      run: |
+        POWERIO_JL=PowerIO.jl python3 scripts/check-doc-symbols.py
+        POWERIO_JL=PowerIO.jl bash scripts/check-diagnostic-parity.sh
     # PowerIO.jl's ccall tests skip themselves when the cdylib is absent.
-    # POWERIO_CAPI points them at the library just built.
+    # POWERIO_CAPI points them at the library just built, and POWERIO_HEADER at
+    # this commit's header, which its own entry point coverage test reads.
     - name: Test PowerIO.jl against the built library
       if: steps.powerio-jl.outputs.available == 'true'
       env:
         POWERIO_CAPI: ${{ github.workspace }}/target/release/libpowerio_capi.so
+        POWERIO_HEADER: ${{ github.workspace }}/powerio-capi/include/powerio.h
       run: julia --project=PowerIO.jl -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
+    - name: Probe PowerIO.jl against a library without prob
+      if: steps.powerio-jl.outputs.available == 'true'
+      run: |
+        cargo build -p powerio-capi --release --no-default-features --features dist --target-dir target/no-prob
+        POWERIO_CAPI="${{ github.workspace }}/target/no-prob/release/libpowerio_capi.so" \
+          julia --project=PowerIO.jl -e \
+          'using PowerIO; @assert library_available(); @assert abi_version() == 7; module_ = parse("PowerIO.jl/test/data/case9.m"); @assert module_.value isa BalancedNetwork'

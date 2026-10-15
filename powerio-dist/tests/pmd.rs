@@ -4,12 +4,14 @@
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::Arc;
 
-use powerio_dist::dss::parse_dss_file;
 use powerio_dist::{
-    CoordinateSpace, CoordsKind, DistBus, DistNetwork, GeoMeta, Location, parse_pmd_file,
-    parse_pmd_str, write_bmopf_json, write_pmd_json,
+    CoordinateSpace, DistBus, DistCoordsKind, DistGeoMeta, DistLocation, MulticonductorNetwork,
+};
+
+mod helpers;
+use helpers::{
+    emit_bmopf_json, emit_pmd_json, parse_dss_file, parse_dss_str, parse_pmd_file, parse_pmd_str,
 };
 
 fn fixture(rel: &str) -> PathBuf {
@@ -22,23 +24,23 @@ fn fixture(rel: &str) -> PathBuf {
 #[allow(clippy::float_cmp)]
 fn parse_the_reference_engineering_json() {
     let net = parse_pmd_file(fixture("pmd/ieee13.json")).unwrap();
-    assert_eq!(net.name.as_deref(), Some("ieee13nodeckt"));
-    assert_eq!(net.buses.len(), 16);
-    assert_eq!(net.lines.len(), 11);
-    assert_eq!(net.switches.len(), 1);
-    assert_eq!(net.loads.len(), 15);
-    assert_eq!(net.shunts.len(), 2);
-    assert_eq!(net.transformers.len(), 3); // sub, xfm1, reg1 (banked)
-    assert_eq!(net.sources.len(), 1);
+    assert_eq!(net.name().as_deref(), Some("ieee13nodeckt"));
+    assert_eq!(net.buses().len(), 16);
+    assert_eq!(net.lines().len(), 11);
+    assert_eq!(net.switches().len(), 1);
+    assert_eq!(net.loads().len(), 15);
+    assert_eq!(net.shunts().len(), 2);
+    assert_eq!(net.transformers().len(), 3); // sub, xfm1, reg1 (banked)
+    assert_eq!(net.sources().len(), 1);
 
     let b611 = net.bus("611").unwrap();
     assert_eq!(b611.terminals, vec!["3", "4"]);
     assert_eq!(b611.grounded, vec!["4"]);
 
     // kW scale restores to watts; degrees to radians.
-    let l611 = net.loads.iter().find(|l| l.name == "611").unwrap();
+    let l611 = net.loads().iter().find(|l| l.name == "611").unwrap();
     assert!((l611.p_nom[0] - 170_000.0).abs() < 1e-9);
-    let vs = &net.sources[0];
+    let vs = &net.sources()[0];
     assert!((vs.v_magnitude[0] - 66_401.920_484_902_64).abs() < 1e-6);
     assert!((vs.v_angle[0] - 30f64.to_radians()).abs() < 1e-9);
     assert_eq!(vs.v_magnitude.len(), 4);
@@ -52,13 +54,13 @@ fn dss_parse_agrees_with_the_pmd_parse() {
     let ours = parse_dss_file(fixture("opendss/ieee13/IEEE13Nodeckt.dss")).unwrap();
     let pmd = parse_pmd_file(fixture("pmd/ieee13.json")).unwrap();
 
-    let bus_set = |n: &DistNetwork| -> BTreeSet<String> {
-        n.buses.iter().map(|b| b.id.to_lowercase()).collect()
+    let bus_set = |n: &MulticonductorNetwork| -> BTreeSet<String> {
+        n.buses().iter().map(|b| b.id.to_lowercase()).collect()
     };
     assert_eq!(bus_set(&ours), bus_set(&pmd));
 
     // Terminals and grounding agree bus by bus.
-    for b in &ours.buses {
+    for b in ours.buses() {
         let other = pmd.bus(&b.id).unwrap();
         assert_eq!(b.terminals, other.terminals, "bus {}", b.id);
         assert_eq!(b.grounded, other.grounded, "bus {}", b.id);
@@ -81,9 +83,9 @@ fn dss_parse_agrees_with_the_pmd_parse() {
     assert_eq!(a.i_max, b.i_max);
 
     // Loads agree in power, configuration, and connection.
-    for l in &ours.loads {
+    for l in ours.loads() {
         let other = pmd
-            .loads
+            .loads()
             .iter()
             .find(|o| o.name.eq_ignore_ascii_case(&l.name))
             .unwrap();
@@ -94,11 +96,11 @@ fn dss_parse_agrees_with_the_pmd_parse() {
     }
 
     // The switch state and ampacity agree.
-    assert_eq!(ours.switches[0].open, pmd.switches[0].open);
-    assert_eq!(ours.switches[0].i_max, pmd.switches[0].i_max);
+    assert_eq!(ours.switches()[0].open, pmd.switches()[0].open);
+    assert_eq!(ours.switches()[0].i_max, pmd.switches()[0].i_max);
 
     // Source magnitude and angles agree.
-    let (vs_a, vs_b) = (&ours.sources[0], &pmd.sources[0]);
+    let (vs_a, vs_b) = (&ours.sources()[0], &pmd.sources()[0]);
     for (m, o) in vs_a.v_magnitude.iter().zip(&vs_b.v_magnitude) {
         assert!((m - o).abs() < 1e-6);
     }
@@ -119,8 +121,8 @@ fn four_wire_reference_agrees() {
             assert!((a.r_series[i][j] - b.r_series[i][j]).abs() < 1e-15);
         }
     }
-    let la = ours.loads.iter().find(|l| l.name == "la").unwrap();
-    let lb = pmd.loads.iter().find(|l| l.name == "la").unwrap();
+    let la = ours.loads().iter().find(|l| l.name == "la").unwrap();
+    let lb = pmd.loads().iter().find(|l| l.name == "la").unwrap();
     assert_eq!(la.terminal_map, lb.terminal_map);
     assert!((la.p_nom[0] - lb.p_nom[0]).abs() < 1e-9);
 }
@@ -128,9 +130,9 @@ fn four_wire_reference_agrees() {
 #[test]
 fn canonical_output_is_idempotent() {
     let net = parse_pmd_file(fixture("pmd/ieee13.json")).unwrap();
-    let once = write_pmd_json(&net);
+    let once = emit_pmd_json(&net);
     let again = parse_pmd_str(&once.text).unwrap();
-    let twice = write_pmd_json(&again);
+    let twice = emit_pmd_json(&again);
     assert_eq!(once.text, twice.text);
 }
 
@@ -138,35 +140,33 @@ fn canonical_output_is_idempotent() {
 #[test]
 fn pmd_round_trips_to_model_equality() {
     let net = parse_pmd_file(fixture("pmd/ieee13.json")).unwrap();
-    let out = write_pmd_json(&net);
+    let out = emit_pmd_json(&net);
     let again = parse_pmd_str(&out.text).unwrap();
-    let strip = |n: &DistNetwork| {
+    let strip = |n: &MulticonductorNetwork| {
         let mut n = n.clone();
-        n.source = Some(Arc::new(String::new()));
-        n.extras.clear(); // pmd_settings/pmd_files bookkeeping differs in formatting only
-        n.warnings.clear();
+        n.extras_mut().clear(); // pmd_settings/pmd_files bookkeeping differs in formatting only
         n
     };
     let (a, b) = (strip(&net), strip(&again));
-    assert_eq!(a.buses, b.buses);
-    assert_eq!(a.lines, b.lines);
-    assert_eq!(a.switches, b.switches);
-    assert_eq!(a.loads, b.loads);
-    assert_eq!(a.shunts, b.shunts);
-    assert_eq!(a.sources, b.sources);
-    assert_eq!(a.linecodes, b.linecodes);
-    assert_eq!(a.transformers, b.transformers);
+    assert_eq!(a.buses(), b.buses());
+    assert_eq!(a.lines(), b.lines());
+    assert_eq!(a.switches(), b.switches());
+    assert_eq!(a.loads(), b.loads());
+    assert_eq!(a.shunts(), b.shunts());
+    assert_eq!(a.sources(), b.sources());
+    assert_eq!(a.line_codes(), b.line_codes());
+    assert_eq!(a.transformers(), b.transformers());
 }
 
 #[test]
 fn dss_delta_shunt_writes_pmd_delta_configuration() {
-    use powerio_dist::parse_dss_str;
+    use crate::helpers::parse_dss_str;
     let net = parse_dss_str(
         "New Circuit.c basekv=4.16\n\
          New Capacitor.capd bus1=b2.1.2.3 phases=3 conn=delta kvar=900 kv=4.16\n\
          New Capacitor.capw bus1=b3.1.2.3 phases=3 kvar=900 kv=4.16\n",
     );
-    let out = write_pmd_json(&net);
+    let out = emit_pmd_json(&net);
     let doc: serde_json::Value = serde_json::from_str(&out.text).unwrap();
     // A delta bank carries a line to line admittance, so it must not emit as
     // WYE; a plain wye bank still does.
@@ -182,7 +182,7 @@ fn dss_delta_shunt_writes_pmd_delta_configuration() {
 #[test]
 fn dss_to_pmd_reproduces_the_reference_essentials() {
     let net = parse_dss_file(fixture("opendss/ieee13/IEEE13Nodeckt.dss")).unwrap();
-    let out = write_pmd_json(&net);
+    let out = emit_pmd_json(&net);
     let emitted: serde_json::Value = serde_json::from_str(&out.text).unwrap();
     let reference: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(fixture("pmd/ieee13.json")).unwrap())
@@ -253,15 +253,14 @@ fn dss_to_pmd_reproduces_the_reference_essentials() {
 #[test]
 fn pmd_typed_locations_emit_only_when_geographic() {
     let mut bus = DistBus::new("b1", vec!["1".to_owned()]);
-    bus.location = Some(Location {
+    bus.location = Some(DistLocation {
         x: -80.0,
         y: 35.0,
         kind: None,
     });
-    let mut net = DistNetwork::default();
-    net.buses = vec![bus];
-
-    let unknown = write_pmd_json(&net);
+    let mut net = MulticonductorNetwork::default();
+    *net.buses_mut() = vec![bus];
+    let unknown = emit_pmd_json(&net);
     let doc: serde_json::Value = serde_json::from_str(&unknown.text).unwrap();
     assert!(doc["bus"]["b1"].get("lon").is_none());
     assert!(doc["bus"]["b1"].get("lat").is_none());
@@ -274,19 +273,39 @@ fn pmd_typed_locations_emit_only_when_geographic() {
         unknown.warnings
     );
 
-    net.geo = Some(GeoMeta {
+    *net.geo_mut() = Some(DistGeoMeta {
         space: CoordinateSpace::Geographic { crs: None },
-        kind: Some(CoordsKind::Source),
+        kind: Some(DistCoordsKind::Source),
     });
-    let geographic = write_pmd_json(&net);
+    let geographic = emit_pmd_json(&net);
     let doc: serde_json::Value = serde_json::from_str(&geographic.text).unwrap();
     assert_eq!(doc["bus"]["b1"]["lon"], serde_json::json!(-80.0));
     assert_eq!(doc["bus"]["b1"]["lat"], serde_json::json!(35.0));
 }
 
+/// A transformer whose winding array is absent parses to zero windings; the
+/// PMD writer must not index `windings[0]` and panic on it. Reachable both
+/// directly (PMD JSON) and cross-format from BMOPF, from a few dozen bytes.
+#[test]
+fn zero_winding_transformer_does_not_panic_on_write() {
+    let pmd = r#"{"data_model": "ENGINEERING", "transformer": {"t1": {}}}"#;
+    let net = parse_pmd_str(pmd).unwrap();
+    assert!(net.transformers().iter().any(|t| t.windings.is_empty()));
+    let out = emit_pmd_json(&net);
+    let v: serde_json::Value = serde_json::from_str(&out.text).unwrap();
+    assert_eq!(v["transformer"]["t1"]["sm_ub"], serde_json::json!(0.0));
+
+    let bmopf = r#"{"transformer": {"n_winding": {"t1": {}}}}"#;
+    let converted =
+        crate::helpers::convert_str(bmopf, powerio_dist::DistTargetFormat::PmdJson, "bmopf")
+            .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&converted.text).unwrap();
+    assert!(v["transformer"]["t1"].is_object());
+}
+
 fn rewrite(text: &str) -> serde_json::Value {
     let net = parse_pmd_str(text).unwrap();
-    serde_json::from_str(&write_pmd_json(&net).text).unwrap()
+    serde_json::from_str(&emit_pmd_json(&net).text).unwrap()
 }
 
 /// A non ENABLED status survives the round trip on every component class
@@ -355,7 +374,7 @@ fn euro_lead_transformer_round_trips() {
     let net = parse_pmd_str(text).unwrap();
     // No undo: the file is not in the lag convention, so the model holds
     // the connections as written and the raw polarity rides in extras.
-    let t = &net.transformers[0];
+    let t = &net.transformers()[0];
     assert_eq!(t.windings[1].terminal_map, vec!["1", "2", "3", "4"]);
     assert!(t.extras.contains_key("pmd_polarity"));
 
@@ -386,7 +405,7 @@ fn ansi_lag_transformer_round_trips() {
     let net = parse_pmd_str(text).unwrap();
     // The roll is undone in the model (the dss source order) and nothing
     // needs a stash: the writer's lag convention reproduces the file.
-    let t = &net.transformers[0];
+    let t = &net.transformers()[0];
     assert_eq!(t.windings[1].terminal_map, vec!["1", "2", "3", "4"]);
     assert!(!t.extras.contains_key("pmd_polarity"));
 
@@ -417,26 +436,53 @@ fn inline_line_impedance_round_trips() {
             "rs": [[0.1, 0.02], [0.02, 0.1]], "xs": [[0.2, 0.05], [0.05, 0.2]],
             "g_fr": [[0.0, 0.0], [0.0, 0.0]], "g_to": [[0.0, 0.0], [0.0, 0.0]],
             "b_fr": [[1.7, -0.4], [-0.4, 1.7]], "b_to": [[1.7, -0.4], [-0.4, 1.7]],
-            "cm_ub": [400.0, 400.0], "status": "ENABLED"}}
+            "cm_ub": [400.0, 400.0], "sm_ub": [600.0, 600.0], "status": "ENABLED"}}
     }"#;
     let net = parse_pmd_str(text).unwrap();
-    let l = &net.lines[0];
+    let l = &net.lines()[0];
     assert_eq!(l.linecode, "ln1_z");
     assert_eq!(l.extras.get("pmd_inline"), Some(&serde_json::json!(true)));
+    // Inline ratings belong to the materialized linecode, not the line.
+    assert!(l.i_max.is_none() && l.s_max.is_none());
     let c = net.linecode("ln1_z").unwrap();
     assert!((c.r_series[0][1] - 0.02).abs() < 1e-15);
     assert_eq!(c.i_max.as_deref(), Some(&[400.0, 400.0][..]));
+    assert_eq!(c.s_max.as_deref(), Some(&[600.0, 600.0][..]));
     assert!(net.warnings.iter().any(|w| w.contains("materialized")));
 
     let input: serde_json::Value = serde_json::from_str(text).unwrap();
     let out = rewrite(text);
     let line = &out["line"]["ln1"];
-    for key in ["rs", "xs", "g_fr", "g_to", "b_fr", "b_to", "cm_ub"] {
+    for key in ["rs", "xs", "g_fr", "g_to", "b_fr", "b_to", "cm_ub", "sm_ub"] {
         assert_eq!(line[key], input["line"]["ln1"][key], "{key}");
     }
     assert!(line.get("linecode").is_none());
     // The materialized linecode does not leak into the linecode section.
     assert!(out.get("linecode").is_none());
+}
+
+/// A line that references a linecode and carries its own per-conductor
+/// ratings keeps them typed: `cm_ub`/`sm_ub` read into the model's line
+/// `i_max`/`s_max` (the BMOPF line slots) and re-emit on the line.
+#[test]
+fn line_level_ratings_round_trip() {
+    let text = r#"{
+        "data_model": "ENGINEERING",
+        "linecode": {"lc": {"rs": [[0.1]], "xs": [[0.1]],
+            "g_fr": [[0.0]], "g_to": [[0.0]], "b_fr": [[0.0]], "b_to": [[0.0]]}},
+        "line": {"ln1": {"f_bus": "b1", "t_bus": "b2",
+            "f_connections": [1], "t_connections": [1], "length": 10.0,
+            "linecode": "lc", "cm_ub": [400.0], "sm_ub": [600.0],
+            "status": "ENABLED"}}
+    }"#;
+    let net = parse_pmd_str(text).unwrap();
+    let l = &net.lines()[0];
+    assert_eq!(l.i_max.as_deref(), Some(&[400.0][..]));
+    assert_eq!(l.s_max.as_deref(), Some(&[600.0][..]));
+    assert!(!l.extras.contains_key("cm_ub") && !l.extras.contains_key("sm_ub"));
+    let out = rewrite(text);
+    assert_eq!(out["line"]["ln1"]["cm_ub"], serde_json::json!([400.0]));
+    assert_eq!(out["line"]["ln1"]["sm_ub"], serde_json::json!([600.0]));
 }
 
 /// Per phase taps and custom bounds survive: the raw tm_* arrays ride in
@@ -459,7 +505,7 @@ fn per_phase_taps_round_trip() {
             "status": "ENABLED"}}
     }"#;
     let net = parse_pmd_str(text).unwrap();
-    assert_eq!(net.transformers[0].windings[1].tap, 1.05625);
+    assert_eq!(net.transformers()[0].windings[1].tap, 1.05625);
     assert!(net.warnings.iter().any(|w| w.contains("per phase taps")));
 
     let input: serde_json::Value = serde_json::from_str(text).unwrap();
@@ -496,7 +542,7 @@ fn settings_and_files_round_trip() {
 #[test]
 fn dss_settings_match_the_reference() {
     let net = parse_dss_file(fixture("opendss/ieee13/IEEE13Nodeckt.dss")).unwrap();
-    let out: serde_json::Value = serde_json::from_str(&write_pmd_json(&net).text).unwrap();
+    let out: serde_json::Value = serde_json::from_str(&emit_pmd_json(&net).text).unwrap();
     let reference: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(fixture("pmd/ieee13.json")).unwrap())
             .unwrap();
@@ -568,20 +614,20 @@ fn inline_linecode_collision_with_document_linecode() {
     }"#;
     let net = parse_pmd_str(text).unwrap();
 
-    let names: BTreeSet<&str> = net.linecodes.iter().map(|c| c.name.as_str()).collect();
-    assert_eq!(net.linecodes.len(), 2);
+    let names: BTreeSet<&str> = net.line_codes().iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(net.line_codes().len(), 2);
     assert!(names.contains("foo_z") && names.contains("foo_z2"));
 
-    let foo = net.lines.iter().find(|l| l.name == "foo").unwrap();
+    let foo = net.lines().iter().find(|l| l.name == "foo").unwrap();
     assert_eq!(foo.linecode, "foo_z2");
     assert!((net.linecode("foo_z2").unwrap().r_series[0][0] - 0.111).abs() < 1e-15);
-    let bar = net.lines.iter().find(|l| l.name == "bar").unwrap();
+    let bar = net.lines().iter().find(|l| l.name == "bar").unwrap();
     assert_eq!(bar.linecode, "foo_z");
     assert!((net.linecode("foo_z").unwrap().r_series[0][0] - 0.5).abs() < 1e-15);
 
     // The BMOPF projection keys linecodes by name; line foo must carry its
     // own 0.111, not the document code's 0.5.
-    let out = write_bmopf_json(&net);
+    let out = emit_bmopf_json(&net);
     let doc: serde_json::Value = serde_json::from_str(&out.text).unwrap();
     let code = doc["line"]["foo"]["linecode"].as_str().unwrap();
     assert_eq!(code, "foo_z2");
@@ -624,7 +670,7 @@ fn linecode_sized_from_widest_matrix() {
             .any(|w| w.contains("linecode ragged: matrix sizes disagree"))
     );
 
-    let out = write_bmopf_json(&net);
+    let out = emit_bmopf_json(&net);
     assert!(
         out.warnings
             .iter()
@@ -646,7 +692,513 @@ fn null_suffix_restoration() {
             "vm": [0.24], "va": [0.0], "status": "ENABLED"}}
     }"#;
     let net = parse_pmd_str(text).unwrap();
-    // cm_ub null restores to +Inf under the `_ub` suffix; an infinite
-    // ampacity bound means no bound, so i_max is None.
-    assert!(net.linecodes[0].i_max.is_none());
+    // cm_ub null restores to +Inf under the `_ub` suffix (an unbounded
+    // conductor). The entry stays in the array so finite bounds beside it
+    // survive the parse, and the PMD writer spells it back as null.
+    assert_eq!(
+        net.line_codes()[0].i_max.as_deref(),
+        Some(&[f64::INFINITY][..])
+    );
+    let out = rewrite(text);
+    assert_eq!(out["linecode"]["c"]["cm_ub"], serde_json::json!([null]));
+}
+
+/// A null bound entry (an unbounded phase) no longer drops the whole
+/// array: the finite phase bounds survive the parse and the write spells
+/// the unbounded phase back as null.
+#[test]
+fn mixed_finite_and_null_generator_bounds_survive() {
+    let text = r#"{
+        "data_model": "ENGINEERING",
+        "bus": {"a": {"terminals": [1, 2, 3], "grounded": [], "rg": [], "xg": [], "status": "ENABLED"}},
+        "generator": {"g1": {"bus": "a", "connections": [1, 2, 3],
+            "pg": [10.0, 10.0, 10.0], "qg": [0.0, 0.0, 0.0],
+            "pg_ub": [500.0, 500.0, null], "pg_lb": [0.0, null, 0.0],
+            "status": "ENABLED"}}
+    }"#;
+    let net = parse_pmd_str(text).unwrap();
+    let g = &net.generators()[0];
+    let p_max = g.p_max.as_deref().unwrap();
+    assert_eq!(&p_max[..2], &[500.0e3, 500.0e3]);
+    assert!(p_max[2].is_infinite() && p_max[2] > 0.0);
+    let p_min = g.p_min.as_deref().unwrap();
+    assert!(p_min[1].is_infinite() && p_min[1] < 0.0);
+    let out = rewrite(text);
+    assert_eq!(
+        out["generator"]["g1"]["pg_ub"],
+        serde_json::json!([500.0, 500.0, null])
+    );
+    assert_eq!(
+        out["generator"]["g1"]["pg_lb"],
+        serde_json::json!([0.0, null, 0.0])
+    );
+}
+
+/// A matrix column that is not an array warns and stays zero instead of
+/// dropping the whole matrix silently.
+#[test]
+#[allow(clippy::float_cmp)]
+fn malformed_matrix_column_warns_and_keeps_the_rest() {
+    let text = r#"{
+        "data_model": "ENGINEERING",
+        "linecode": {"c": {"rs": [[1.0, 0.0], "bogus"], "xs": [[2.0, 0.0], [0.0, 2.0]],
+            "g_fr": [[0.0, 0.0], [0.0, 0.0]], "g_to": [[0.0, 0.0], [0.0, 0.0]],
+            "b_fr": [[0.0, 0.0], [0.0, 0.0]], "b_to": [[0.0, 0.0], [0.0, 0.0]]}}
+    }"#;
+    let net = parse_pmd_str(text).unwrap();
+    let c = net.linecode("c").unwrap();
+    // Column 0 parsed; the malformed column 1 stayed zero.
+    assert_eq!(c.r_series[0][0], 1.0);
+    assert_eq!(c.r_series[1][1], 0.0);
+    assert_eq!(c.x_series[1][1], 2.0);
+    assert!(
+        net.warnings
+            .iter()
+            .any(|w| w.contains("linecode c") && w.contains("`rs` column 1")),
+        "{:?}",
+        net.warnings
+    );
+}
+
+/// A matrix field that is not an array of columns has no shape to keep, so
+/// it drops. It still names itself, because a silent drop reads as a line
+/// with no impedance.
+#[test]
+fn malformed_matrix_field_warns_and_drops() {
+    let text = r#"{
+        "data_model": "ENGINEERING",
+        "linecode": {"c": {"rs": 1.0, "xs": [[2.0]]}}
+    }"#;
+    let net = parse_pmd_str(text).unwrap();
+    let c = net.linecode("c").unwrap();
+    assert_eq!(c.n_conductors, 1);
+    assert_eq!(c.r_series, vec![vec![0.0]]);
+    assert!(
+        net.warnings
+            .iter()
+            .any(|w| w.contains("linecode c") && w.contains("`rs` is not an array of columns")),
+        "{:?}",
+        net.warnings
+    );
+}
+
+/// A reference to a bus or linecode that does not exist warns instead of
+/// parsing silently into a topologically wrong network.
+#[test]
+fn dangling_references_warn() {
+    let text = r#"{
+        "data_model": "ENGINEERING",
+        "bus": {"a": {"terminals": [1, 2], "grounded": [], "rg": [], "xg": [], "status": "ENABLED"}},
+        "load": {"ld1": {"bus": "nosuchbus", "connections": [1, 2],
+            "pd_nom": [1.0], "qd_nom": [0.0], "status": "ENABLED"}},
+        "generator": {"g1": {"connections": [1, 2],
+            "pg": [1.0], "qg": [0.0], "status": "ENABLED"}},
+        "line": {"ln1": {"f_bus": "a", "t_bus": "a",
+            "f_connections": [1], "t_connections": [1], "length": 1.0,
+            "linecode": "nosuchcode", "status": "ENABLED"}}
+    }"#;
+    let net = parse_pmd_str(text).unwrap();
+    assert!(
+        net.warnings
+            .iter()
+            .any(|w| w.contains("load ld1") && w.contains("undefined bus `nosuchbus`")),
+        "{:?}",
+        net.warnings
+    );
+    assert!(
+        net.warnings
+            .iter()
+            .any(|w| w.contains("line ln1") && w.contains("undefined linecode `nosuchcode`")),
+        "{:?}",
+        net.warnings
+    );
+    // A missing bus field parses as an empty string; the graph projection
+    // would synthesize a phantom bus for it just like a typo.
+    assert!(
+        net.warnings
+            .iter()
+            .any(|w| w.contains("generator g1") && w.contains("`bus` reference is empty")),
+        "{:?}",
+        net.warnings
+    );
+}
+
+#[test]
+fn mathematical_data_model_is_rejected() {
+    // The MATHEMATICAL model shares the `data_model` marker but is index
+    // based; interpreting its sections as ENGINEERING would silently build a
+    // wrong network.
+    let err = crate::helpers::parse_str(r#"{"data_model":"MATHEMATICAL","bus":{}}"#, "pmd-json")
+        .unwrap_err();
+    assert!(err.to_string().contains("ENGINEERING"), "got: {err}");
+}
+
+#[test]
+fn oversized_linecode_matrix_is_dropped_not_allocated() {
+    // `rs` as an array of 100k empty arrays would size a dense n×n allocation
+    // (~80 GB) from a few hundred KB of JSON. It must be dropped with a
+    // warning; this test finishing quickly is the assertion that it was.
+    let cols = "[],".repeat(100_000);
+    let json = format!(
+        r#"{{"data_model":"ENGINEERING","linecode":{{"lc1":{{"rs":[{}]}}}}}}"#,
+        cols.trim_end_matches(',')
+    );
+    let net = parse_pmd_str(&json).unwrap();
+    assert!(
+        net.warnings
+            .iter()
+            .any(|w| w.contains("exceeds the supported maximum")),
+        "warnings: {:?}",
+        net.warnings
+    );
+}
+
+#[test]
+fn oversized_transformer_winding_count_is_capped() {
+    // The winding count is the `bus` array length and feeds an O(n^2) pair
+    // enumeration in the graph builder; a huge array must be capped with a
+    // warning, not carried through as thousands of windings.
+    let buses = (0..5000)
+        .map(|i| format!("\"b{i}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    let json =
+        format!(r#"{{"data_model":"ENGINEERING","transformer":{{"t1":{{"bus":[{buses}]}}}}}}"#);
+    let net = parse_pmd_str(&json).unwrap();
+    assert!(
+        net.warnings
+            .iter()
+            .any(|w| w.contains("winding count") && w.contains("dropped")),
+        "warnings: {:?}",
+        net.warnings
+    );
+}
+
+#[test]
+fn wide_terminal_maps_do_not_expand_quadratically() {
+    // Terminal maps are linear model arrays the writer materializes square
+    // matrices from, so an uncapped one turns a small case file into an
+    // O(n^2) document. The reader keeps the terminals verbatim; the writer
+    // clamps what it expands and names the clamp.
+    let n = 512usize;
+    let conns: Vec<u32> = (1..=n as u32).collect();
+    let text = serde_json::json!({
+        "data_model": "ENGINEERING",
+        "bus": {
+            "a": {"terminals": conns, "grounded": [], "rg": [], "xg": [], "status": "ENABLED"},
+            "b": {"terminals": conns, "grounded": [], "rg": [], "xg": [], "status": "ENABLED"},
+        },
+        "switch": {
+            "s": {"f_bus": "a", "t_bus": "b", "f_connections": conns, "t_connections": conns,
+                  "state": "CLOSED", "status": "ENABLED", "dispatchable": "YES"}
+        },
+        "voltage_source": {
+            "src": {"bus": "a", "connections": conns, "configuration": "WYE",
+                    "vm": vec![2.4; n], "va": vec![0.0; n], "status": "ENABLED"}
+        },
+    })
+    .to_string();
+    let net = parse_pmd_str(&text).unwrap();
+    assert_eq!(net.switches()[0].terminal_map_from.len(), n);
+
+    let out = emit_pmd_json(&net);
+    for what in ["switch s", "voltage source src"] {
+        assert!(
+            out.diagnostics.iter().any(|d| {
+                d.message().starts_with(what)
+                    && d.message().contains("exceed the supported maximum")
+            }),
+            "no clamp warning for {what}: {:?}",
+            out.warnings
+        );
+    }
+    let doc: serde_json::Value = serde_json::from_str(&out.text).unwrap();
+    let checks: [(&str, &str, &[&str]); 2] = [
+        ("switch", "s", &["rs", "xs", "g_fr", "g_to", "b_fr", "b_to"]),
+        ("voltage_source", "src", &["rs", "xs"]),
+    ];
+    for (elem, name, keys) in checks {
+        for key in keys {
+            let m = doc[elem][name][key].as_array().unwrap();
+            assert_eq!(m.len(), 64, "{elem} {key} not clamped");
+            assert_eq!(m[0].as_array().unwrap().len(), 64, "{elem} {key} rows");
+        }
+    }
+    // The terminals themselves stay faithful; only the square expansion caps.
+    assert_eq!(
+        doc["switch"]["s"]["f_connections"]
+            .as_array()
+            .unwrap()
+            .len(),
+        n
+    );
+}
+
+#[test]
+fn twenty_thousand_colliding_linecode_names_decode_within_a_time_budget() {
+    // The inline-impedance materializer tries `ln_z`, `ln_z2`, `ln_z3`, ...
+    // until it finds a free name; every name up to `ln_z20000` already
+    // exists here, so a linear scan per candidate would turn decoding into
+    // O(n^2) string comparisons over the growing linecode table.
+    use std::fmt::Write as _;
+    let collisions = 20_000;
+    let mut linecodes = String::from("\"ln_z\":{}");
+    for k in 2..=collisions {
+        let _ = write!(linecodes, ",\"ln_z{k}\":{{}}");
+    }
+    let json = format!(
+        r#"{{"data_model":"ENGINEERING","linecode":{{{linecodes}}},
+        "line":{{"ln":{{"rs":[[0.1]]}}}}}}"#
+    );
+    let start = std::time::Instant::now();
+    let net = parse_pmd_str(&json).unwrap();
+    let elapsed = start.elapsed();
+    // The name set finds every candidate in well under a tenth of a second;
+    // a linear scan per candidate measured multiple seconds at this scale.
+    // One second stays generous for a slower CI machine while still well
+    // short of what the linear scan costs.
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "decoding {collisions} colliding linecode names took {elapsed:?}"
+    );
+    assert!(
+        net.linecode(&format!("ln_z{}", collisions + 1)).is_some(),
+        "the materializer should have landed one past the last collision"
+    );
+}
+
+#[test]
+fn a_two_megabyte_dss_case_writes_pmd_json_within_a_time_budget() {
+    // branches() and loads() each ran net.linecode()/net.bus() once per
+    // element, a linear scan over the whole table; a large case turned
+    // writing PMD JSON into O(n^2) name comparisons.
+    use std::fmt::Write as _;
+    let mut dss = String::from("New Circuit.perf basekv=12.47 bus1=src\n");
+    let n = 15_000;
+    for i in 0..n {
+        let _ = writeln!(dss, "New Linecode.lc{i} nphases=1 r1=0.1 x1=0.1");
+    }
+    for i in 0..n {
+        let _ = writeln!(
+            dss,
+            "New Line.ln{i} bus1=b{i}.1 bus2=b{}.1 linecode=lc{i} length=1",
+            i + 1
+        );
+    }
+    for i in 0..n {
+        let _ = writeln!(dss, "New Load.ld{i} bus1=c{i}.1 phases=1 kw=1 kvar=0.5");
+    }
+    assert!(
+        dss.len() >= 2_000_000,
+        "fixture is only {} bytes, want at least 2 MB",
+        dss.len()
+    );
+    let net = parse_dss_str(&dss);
+    assert_eq!(net.lines().len(), n);
+    assert_eq!(net.loads().len(), n);
+
+    let start = std::time::Instant::now();
+    let out = emit_pmd_json(&net);
+    let elapsed = start.elapsed();
+    // The index maps write this in about two seconds; a linear scan per
+    // line and per load measured over five and a half. A loaded CI runner
+    // has taken 4.4s on the indexed path, so the budget sits at eight:
+    // roughly the linear cost on the authoring machine, still under it on
+    // a machine slow enough to double the indexed time.
+    assert!(
+        elapsed < std::time::Duration::from_secs(8),
+        "writing a {n}-line, {n}-load network took {elapsed:?}"
+    );
+    assert_ne!(out.text, "");
+}
+
+#[test]
+fn degenerate_matrix_shapes_do_not_panic() {
+    // `rs` claims three columns but the third is short. Reading fills the
+    // gaps, and the writer indexes defensively, so neither panics.
+    let text = serde_json::json!({
+        "data_model": "ENGINEERING",
+        "bus": {"a": {"terminals": [1], "grounded": [], "rg": [], "xg": [], "status": "ENABLED"}},
+        "linecode": {"c": {
+            "rs": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0]],
+            "xs": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        }},
+        "voltage_source": {"src": {"bus": "a", "connections": [1],
+            "vm": [0.24], "va": [0.0], "status": "ENABLED"}},
+    })
+    .to_string();
+    let net = parse_pmd_str(&text).unwrap();
+    let out = emit_pmd_json(&net);
+    let doc: serde_json::Value = serde_json::from_str(&out.text).unwrap();
+    let rs = doc["linecode"]["c"]["rs"].as_array().unwrap();
+    assert_eq!(rs.len(), 3);
+    assert!(rs.iter().all(|col| col.as_array().unwrap().len() == 3));
+}
+
+#[test]
+fn a_huge_terminal_name_does_not_enumerate_conductor_ids() {
+    // `conductor_ids` is `1..=max terminal`, so its length is the numeric
+    // value of a terminal name, not a count of anything: sixteen bytes of
+    // input asked for petabytes. Found by the pmd_json fuzz target.
+    let text = serde_json::json!({
+        "data_model": "ENGINEERING",
+        "bus": {"a": {"terminals": [1, 2, 3, 4_444_444_444_444_444_i64],
+                      "grounded": [], "rg": [], "xg": [], "status": "ENABLED"}},
+        "voltage_source": {"src": {"bus": "a", "connections": [1],
+            "vm": [0.24], "va": [0.0], "status": "ENABLED"}},
+    })
+    .to_string();
+    let net = parse_pmd_str(&text).unwrap();
+    let out = emit_pmd_json(&net);
+    let doc: serde_json::Value = serde_json::from_str(&out.text).unwrap();
+    assert_eq!(doc["conductor_ids"].as_array().unwrap().len(), 64);
+    assert!(
+        out.warnings
+            .iter()
+            .any(|w| w.contains("supported maximum conductor id")),
+        "{:?}",
+        out.warnings
+    );
+    // The bus keeps its terminals verbatim.
+    assert_eq!(doc["bus"]["a"]["terminals"].as_array().unwrap().len(), 4);
+}
+
+/// PMD needs integer connections, so a terminal name it cannot spell takes
+/// an id. That id must be the same everywhere the name appears, and it must
+/// sit just above the numeric names: an id far above the conductor count
+/// drives the `conductor_ids` enumeration to its cap, and a read back then
+/// produces a longer list than the first write.
+#[test]
+fn a_renamed_terminal_takes_the_next_free_id_and_the_write_is_a_fixed_point() {
+    let text = std::fs::read_to_string(fixture("bmopf/example_ieee13.json")).unwrap();
+    let net = crate::helpers::parse_bmopf_str(&text).unwrap();
+    assert!(
+        net.buses()
+            .iter()
+            .any(|b| b.terminals.iter().any(|t| t == "n"))
+    );
+
+    let first = emit_pmd_json(&net);
+    let doc: serde_json::Value = serde_json::from_str(&first.text).unwrap();
+    assert_eq!(
+        doc["conductor_ids"],
+        serde_json::json!([1, 2, 3, 4]),
+        "the neutral takes id 4, so the enumeration stays at 4"
+    );
+
+    // Every use of the name maps to the same id, and the write is a fixed
+    // point through a read back.
+    let again = parse_pmd_str(&first.text).unwrap();
+    let second = emit_pmd_json(&again);
+    assert_eq!(first.text, second.text);
+}
+
+/// Two terminal names that PMD cannot spell must take two different ids.
+/// Counting up from the largest numeric name saturated every id to the same
+/// value when a document named a terminal `i64::MAX`, which merged two
+/// conductors into one and said nothing beyond the ordinary rename warning.
+#[test]
+fn a_saturating_numeric_terminal_name_does_not_merge_renamed_conductors() {
+    let text = r#"{
+      "data_model": "ENGINEERING",
+      "bus": {"b1": {"terminals": [9223372036854775807], "grounded": [], "rg": [], "xg": [],
+        "status": "ENABLED"}},
+      "load": {"la": {"bus": "b1", "connections": ["n"], "pd_nom": [1.0], "qd_nom": [0.0],
+        "status": "ENABLED"}},
+      "generator": {"g1": {"bus": "b1", "connections": ["g"], "pg": [1.0], "qg": [0.0],
+        "status": "ENABLED"}}
+    }"#;
+    let net = parse_pmd_str(text).unwrap();
+    let out = emit_pmd_json(&net);
+    let doc: serde_json::Value = serde_json::from_str(&out.text).unwrap();
+    let load = doc["load"]["la"]["connections"][0].as_i64().unwrap();
+    let generator = doc["generator"]["g1"]["connections"][0].as_i64().unwrap();
+    assert_ne!(
+        load, generator,
+        "`n` and `g` are different conductors and must take different ids"
+    );
+    // The ids also stay small, so `conductor_ids` is not driven to its cap by
+    // the rename itself.
+    assert!(load <= 64 && generator <= 64, "{load} and {generator}");
+}
+
+/// Phase voltage bounds convert between SI volts and PMD engineering kV.
+#[test]
+fn bus_voltage_bounds_ride_vm_lb_and_vm_ub() {
+    let base = crate::helpers::parse_file(fixture("bmopf/example_ieee13.json"), None).unwrap();
+    assert!(
+        base.buses().iter().any(|b| b.v_min.is_some()),
+        "the fixture states bounds"
+    );
+
+    let pmd = base.emit(powerio_dist::DistTargetFormat::PmdJson);
+    assert!(
+        !pmd.warnings
+            .iter()
+            .any(|w| w.contains("v_min") || w.contains("v_max")),
+        "the scalar pair has ENGINEERING fields: {:?}",
+        pmd.warnings
+    );
+
+    let back = parse_pmd_str(&pmd.text).unwrap();
+    for (a, b) in base.buses().iter().zip(back.buses()) {
+        assert_eq!(a.v_min, b.v_min, "bus {} v_min", a.id);
+        assert_eq!(a.v_max, b.v_max, "bus {} v_max", a.id);
+    }
+
+    let doc = r#"{"data_model":"ENGINEERING","settings":{"voltage_scale_factor":1000.0},
+        "bus":{"b1":{"terminals":[1,2],"grounded":[],"vm_lb":[2.02,2.04]}}}"#;
+    let net = parse_pmd_str(doc).unwrap();
+    assert_eq!(net.buses()[0].v_min, None);
+    assert_eq!(net.buses()[0].v_min_phase, Some(vec![2020.0, 2040.0]));
+}
+
+/// #376: a rated capacitor bank converts to an ENGINEERING shunt — the
+/// nameplate reactive power at the nameplate voltage becomes the
+/// susceptance matrix over the bank's own conductors, the same equivalence
+/// the admittance builder stamps.
+#[test]
+fn a_rated_capacitor_converts_to_an_engineering_shunt() {
+    let dss = "Clear\nNew Circuit.capnet basekv=4.16 pu=1.0 phases=3 bus1=sb.1.2.3\n\
+               New Capacitor.cbank bus1=sb.1.2.3 phases=3 kv=4.16 kvar=300 conn=wye\n\
+               Solve\n";
+    let net = parse_dss_str(dss);
+    let out = emit_pmd_json(&net);
+    let doc: serde_json::Value = serde_json::from_str(&out.text).unwrap();
+    let shunt = &doc["shunt"]["cbank"];
+    assert_eq!(shunt["model"], "CAPACITOR", "{doc}");
+    assert_eq!(shunt["configuration"], "WYE");
+    // Wye: line to neutral base 4160/sqrt(3), 100 kvar per phase.
+    let v_ln: f64 = 4160.0 / 3f64.sqrt();
+    let b = 100_000.0 / (v_ln * v_ln);
+    let stated = shunt["bs"][0][0].as_f64().unwrap();
+    assert!((stated - b).abs() < 1e-9 * b, "bs {stated} want {b}");
+    assert!(
+        !out.warnings
+            .iter()
+            .any(|w| w.contains("capacitor") && w.contains("dropped")),
+        "{:?}",
+        out.warnings
+    );
+}
+
+#[test]
+fn a_two_terminal_delta_capacitor_keeps_its_full_rating() {
+    // phases=1 conn=delta: one phase-to-phase leg. The whole rated power
+    // belongs to that single stamped loop.
+    let dss = "Clear\nNew Circuit.capnet basekv=4.16 pu=1.0 phases=3 bus1=sb.1.2.3\n\
+               New Capacitor.cpp bus1=sb.1.2 phases=1 kv=4.16 kvar=100 conn=delta\n\
+               Solve\n";
+    let net = parse_dss_str(dss);
+    let out = emit_pmd_json(&net);
+    let doc: serde_json::Value = serde_json::from_str(&out.text).unwrap();
+    let shunt = &doc["shunt"]["cpp"];
+    assert_eq!(shunt["configuration"], "DELTA", "{doc}");
+    let b = 100_000.0 / (4160.0_f64 * 4160.0);
+    // One leg between the two terminals: the diagonal carries +b, the
+    // coupling -b, and nothing is halved.
+    let bs00 = shunt["bs"][0][0].as_f64().unwrap();
+    let bs01 = shunt["bs"][0][1].as_f64().unwrap();
+    assert!((bs00 - b).abs() < 1e-9 * b, "bs00 {bs00} want {b}");
+    assert!((bs01 + b).abs() < 1e-9 * b, "bs01 {bs01} want {}", -b);
 }

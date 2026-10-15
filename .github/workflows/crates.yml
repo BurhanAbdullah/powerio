@@ -1,4 +1,5 @@
 name: crates.io
+run-name: PowerIO crates.io ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
 
 # release-binaries.yml stages each release as a draft a human publishes, so the
 # release event fires with a user actor (events from a workflow's GITHUB_TOKEN
@@ -8,10 +9,18 @@ on:
   release:
     types: [ published ]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing published release tag to retry
+        required: true
+        type: string
 
 jobs:
   publish:
     name: publish to crates.io
+    # crates.io has no unpublish, so a prerelease must never reach it through
+    # the release event. Dispatch stays open as the deliberate recovery path.
+    if: github.event_name != 'release' || github.event.release.prerelease == false
     runs-on: ubuntu-latest
     # Deployment protection (required reviewers, branch/tag rules) lives on the
     # crates-io environment in the repo settings, not in this file.
@@ -20,9 +29,12 @@ jobs:
       id-token: write  # crates.io trusted publishing; no stored token
       contents: read
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Read the workspace version
         run: |
           set -o pipefail
@@ -37,29 +49,51 @@ jobs:
           set -o pipefail
           actual="$(cargo metadata --no-deps --format-version 1 \
             | jq -r '[.packages[] | select(.publish == null) | .name] | sort | join(" ")')"
-          if [ "$actual" != "powerio powerio-cli powerio-dist powerio-matrix powerio-pkg" ]; then
+          if [ "$actual" != "powerio powerio-cli powerio-core powerio-dist powerio-matrix powerio-prob powerio-tx" ]; then
             echo "publishable workspace members ($actual) do not match the publish list in crates.yml" >&2
             exit 1
           fi
-      - name: Check the ref against the workspace version
+      - name: Verify the approved paired release
+        if: vars.PAIRED_RELEASES == 'true'
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        # On a release event the tag must match the workspace version. On
-        # dispatch the version must at least be tagged, so a stray version bump
-        # on a branch cannot publish an untagged version; content drift between
-        # the dispatched ref and the tag is what the environment reviewer is
-        # approving.
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+        run: python3 scripts/paired_release.py verify "$TAG"
+      - name: Verify the immutable published release
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -n "$RELEASE_TAG" ]; then
-            if [ "v$VERSION" != "$RELEASE_TAG" ]; then
-              echo "release tag $RELEASE_TAG does not match workspace version $VERSION" >&2
-              exit 1
-            fi
-          else
-            git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null \
-              || { echo "v$VERSION is not a tag; tag the release before dispatching" >&2; exit 1; }
+          test -n "$RELEASE_TAG" || { echo "an explicit release tag is required" >&2; exit 1; }
+          git check-ref-format "refs/tags/$RELEASE_TAG" >/dev/null \
+            || { echo "invalid release tag: $RELEASE_TAG" >&2; exit 1; }
+          git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null \
+            || { echo "$RELEASE_TAG is not an origin tag" >&2; exit 1; }
+          tag_commit="$(git rev-list -n1 "refs/tags/$RELEASE_TAG")"
+          head_commit="$(git rev-parse HEAD)"
+          if [ "$head_commit" != "$tag_commit" ]; then
+            echo "checked out $head_commit, but $RELEASE_TAG names $tag_commit" >&2
+            exit 1
           fi
-      - uses: rust-lang/crates-io-auth-action@v1.0.4
+          if [ "v$VERSION" != "$RELEASE_TAG" ]; then
+            echo "release tag $RELEASE_TAG does not match workspace version $VERSION" >&2
+            exit 1
+          fi
+          release="$RUNNER_TEMP/release.json"
+          curl --fail --silent --show-error --retry 3 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            -o "$release"
+          jq -e '.draft == false and .prerelease == false' "$release" >/dev/null \
+            || { echo "$RELEASE_TAG is not a published stable GitHub release" >&2; exit 1; }
+      - name: Build and audit crate archives
+        run: |
+          cargo package --workspace --exclude powerio-capi --exclude powerio-py \
+            --locked --no-verify
+          python3 scripts/audit-release-archives.py target/package/*.crate
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
         id: auth
       - name: Publish in dependency order
         env:
@@ -73,7 +107,7 @@ jobs:
         # skip-existing), so a re-run after a partial publish only publishes
         # what's missing.
         run: |
-          for crate in powerio powerio-dist powerio-pkg powerio-matrix powerio-cli; do
+          for crate in powerio-core powerio-tx powerio-dist powerio-prob powerio-matrix powerio powerio-cli; do
             resp="$RUNNER_TEMP/$crate.json"
             code="$(curl -sS -A "$UA" --max-time 30 -o "$resp" -w '%{http_code}' \
               "https://crates.io/api/v1/crates/$crate/$VERSION")" || code=unreachable
@@ -90,5 +124,5 @@ jobs:
                 echo "crates.io returned $code for $crate $VERSION; re-run once it is reachable" >&2
                 exit 1 ;;
             esac
-            cargo publish -p "$crate"
+            cargo publish --locked -p "$crate"
           done

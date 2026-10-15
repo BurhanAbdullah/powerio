@@ -1,42 +1,45 @@
 # Geographic and display data
 
-> **Status: partial.** The distribution graph projection from #182 ships as
-> Rust `DistNetwork::graph()`, Python `dist_net.graph()`, and C
-> `pio_dist_graph_json`. The typed coordinate model and DSS/BMOPF coordinate
-> paths ship as layer 1. GeoLayer documents remain design work.
+PowerIO keeps coordinates when a supported source provides them. They are
+optional. No parser invents them, and when you emit a located case to a network
+format that has no place for coordinates, the writer reports the loss.
 
-Power system case files disagree about where equipment sits on a map, and most
-say nothing at all. PowerWorld aux exports carry substation latitude and
-longitude; OpenDSS distributes coordinates in a separate `Buscoords` file;
-pandapower has a `geo` column; MATPOWER, PSS/E, and the BMOPF task force schema
-carry no geometry. Today PowerIO keeps what it happens to see in per element
-`extras` maps and loses it at most writers. Consumers that render networks
-re-derive coordinates from those maps per source format, which is parsing work
-that belongs here.
+A standalone geographic document parses to `powerio.GeoLayer`, a value like any
+other case. The canonical `.geo.json`, plain GeoJSON, CSV or JSON records with
+aliased field names, headerless buscoords CSV, and a PowerWorld `.pwd` display
+all parse to it; a `.pwd` becomes a drawing layer with supported bus, branch,
+and substation objects. A drawing with no decoded equipment returns an error.
 
-This chapter specifies a canonical coordinate model in two layers. The shipped
-layer is typed optional fields on the network models. The planned layer is a
-standalone geographic document for sidecar use. Both are optional everywhere. A
-case without coordinates serializes byte identically to today, and no writer
-invents geometry.
+```rust,ignore
+use powerio::{PioValue, emit, parse, serialize};
 
-## Layer 1: typed model fields
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let module = parse("layer.geo.json")?;
+    let PioValue::GeoLayer(layer) = module.value() else {
+        panic!("a layer document parses to powerio.GeoLayer");
+    };
 
-Both model families gain the same optional fields:
+    // A layer travels through PowerIO IR and out as the canonical document.
+    serialize(&module, "layer.pio.json")?;
+    emit(&module, "geo-json", "layer.geo.json")?;
+    Ok(())
+}
+```
 
-- `Bus.location: Option<Location>` and `DistBus.location: Option<Location>`;
-- `Network.geo: Option<GeoMeta>` and `DistNetwork.geo: Option<GeoMeta>`;
-- later, polyline routing: `Branch.route` and `DistLine.route`.
+If you need the raw display record, `PwdDisplay` is still available; it has the
+canvas, the save stamp, and the symbol table in diagram coordinates.
 
-The types are small:
+## Coordinate fields
+
+Balanced and multiconductor networks use the same JSON shape for coordinates:
 
 ```rust
 pub struct Location {
-    /// x is longitude when the space is geographic (GeoJSON axis order).
+    /// Longitude for geographic coordinates.
     pub x: f64,
-    /// y is latitude when the space is geographic.
+    /// Latitude for geographic coordinates.
     pub y: f64,
-    /// Per point provenance when it differs from the network default.
+    /// Point origin when it differs from the network default.
     pub kind: Option<CoordsKind>,
 }
 
@@ -44,7 +47,6 @@ pub enum CoordsKind { Source, Synthetic, Manual, Derived }
 
 pub struct GeoMeta {
     pub space: CoordinateSpace,
-    /// Default provenance for points without their own `kind`.
     pub kind: Option<CoordsKind>,
 }
 
@@ -55,49 +57,64 @@ pub struct Canvas {
 }
 
 pub enum CoordinateSpace {
-    /// x = lon, y = lat, decimal degrees. `crs` defaults to EPSG:4326.
     Geographic { crs: Option<String> },
-    /// Planar projected coordinates, `crs` when known.
     Projected { crs: Option<String> },
-    /// Drawing coordinates with no earth referent (.pwd, hand diagrams).
     Diagram { canvas: Option<Canvas> },
-    /// The source did not declare a space (bare OpenDSS buscoords).
     Unknown,
 }
 ```
 
-The coordinate space is a network property and is not a bus property. A network with
-per bus coordinate systems cannot be rendered. Per point `kind` exists so a
-partially hand placed network round trips: three buses pinned manually, the
-rest from a synthetic layout, and a renderer knows which points it may move.
+Balanced networks reach these types as
+`powerio::geo::{Location, CoordsKind, CoordinateSpace, GeoMeta, Canvas}`
+through `BalancedNetwork.geo` and `Bus.location`; multiconductor networks use
+the matching `powerio_dist::geo` types through `MulticonductorNetwork.geo` and
+`DistBus.location`, and a package serialization test keeps the two JSON shapes
+identical. A branch can also have a polyline route (`Branch.route`,
+`DistLine.route`) when the source provides intermediate geometry. Without one,
+a renderer draws the branch endpoint to endpoint from the bus locations.
 
-`powerio_dist` cannot depend on `powerio`, and `powerio-pkg` depends on both,
-so no shared crate can sit below the two models. The types are therefore
-defined in `powerio::geo` and mirrored in `powerio_dist::geo`, the same
-arrangement `Extras` already uses. A parity test in `powerio-pkg` serializes
-both and asserts identical JSON, so the copies cannot drift.
+The coordinate space belongs to the network, and a point sets its own `kind`
+only when its origin differs from the network default. For geographic
+coordinates, `x` is longitude and `y` is latitude, which is GeoJSON axis order,
+and a missing CRS means EPSG:4326. `kind` says whether the coordinates came
+from the source, a generated layout, a manual edit, or a derived transform.
 
-If the mirrored types grow beyond small data carriers, a `powerio-geo` or
-`powerio-format` crate may become worth the dependency split.
+## Harvest and emit
 
-Because the fields are additive and skipped when absent, they ride the
-`.pio.json` model JSON as a minor bump.
+A parser promotes source coordinates into `location`, sets the space, and
+removes the raw keys from `extras`. Writers read `location`.
 
-## Planned layer 2: the geographic document
+| Format | Fields | Space |
+| --- | --- | --- |
+| PowerWorld PWB | Validated bus latitude/longitude fields in supported 425/537 record layouts | geographic |
+| PowerWorld aux | `Latitude:1`/`Longitude:1` bus columns, else the bare `Latitude`/`Longitude` pair (`SubNum` stays in extras: it is identity rather than geometry) | geographic |
+| pandapower | bus `geo` GeoJSON Point strings | geographic |
+| PyPSA | `buses.csv` `x`/`y` | geographic |
+| DOE GO Challenge 3 | bus `longitude`/`latitude` | geographic |
+| OpenDSS | `Buscoords` | unknown; a diagnostic identifies values within longitude and latitude bounds |
+| BMOPF JSON | BMOPFTools `bus[id].geo` Point and `line[id].geo` LineString; legacy `longitude`/`latitude`; canonical `extras.geojson` | declared CRS, geographic when omitted |
 
-Coordinates also arrive and leave as files of their own: a `Buscoords` CSV next
-to a DSS master, a GeoJSON export from a GIS tool, a layout computed by a
-renderer for a case that had no geometry. This layer is not implemented in
-v0.6.2. The planned container for these is
-`GeoLayer`, surfaced as a `DisplayData::Geo` variant beside the existing
-PowerWorld `.pwd` display path.
+MATPOWER, PSS/E, PowerModels, egret, PSLF, and Surge have no place for
+geometry. Emitting a located case to one of them reports the dropped locations,
+in the same way it reports a dropped `base_frequency`. If you need the
+coordinates to survive, `powerio geo extract` writes them as a separate layer
+document.
 
-The canonical wire form is a GeoJSON FeatureCollection with one foreign member:
+## The geographic document
+
+Coordinates also arrive and leave as files of their own, such as a `Buscoords`
+CSV next to a DSS master or a GeoJSON export from a GIS tool, and a renderer
+can hand back the layout it computed the same way. The container for such a
+file is `GeoLayer`, which the Rust facade's `parse` returns as
+`PioValue::GeoLayer`.
+
+The canonical document is a GeoJSON FeatureCollection with one foreign member,
+`powerio_geo`, and the suggested extension is `.geo.json`:
 
 ```json
 {
   "type": "FeatureCollection",
-  "powerio_geo": { "version": "0.1.0", "space": "geographic", "kind": "source" },
+  "powerio_geo": { "powerio_version": "0.11.0", "space": "geographic", "kind": "source" },
   "features": [
     { "type": "Feature",
       "geometry": { "type": "Point", "coordinates": [-80.05, 34.20] },
@@ -110,114 +127,108 @@ The canonical wire form is a GeoJSON FeatureCollection with one foreign member:
 ```
 
 When the space is geographic this is valid RFC 7946 GeoJSON, so GIS tools open
-it directly. The suggested extension is `.geo.json`.
+it directly.
 
-The planned reader is tolerant; writing is canonical. It accepts headerless
-buscoords CSV (`bus,x,y`), CSV and JSON records with aliased field names
+Parsing is tolerant and emission is canonical. `GeoLayer::parse` takes UTF-8
+text plus a file name hint and touches no filesystem. It accepts headerless
+buscoords CSV (`bus, x, y`), CSV and JSON records with aliased field names
 (`bus_i`/`bus`/`id`, `lat`/`latitude`/`y`, `lon`/`lng`/`longitude`/`x`, branch
-endpoint pairs), and GeoJSON Point and LineString features. Writers emit only
-the canonical form above.
+endpoint pairs), and GeoJSON Point and LineString features. A feature refers to
+its element by up to three key fields, tried in order: `uid`, then `id`, then
+case insensitive `name`. A branch route can also fall back to the unordered
+`(from, to)` bus pair. A bare integer branch id (`branch`, `branchid`,
+`branchnumber`, `catsid`) is accepted on the way in as a one based positional
+row alias and is not written back; the `uid` in the payload is the durable key.
+A branch key accepts `id` when `kind` explicitly identifies a line or branch.
+An untyped feature counter does not identify equipment. BMOPFTools
+`bus_from`/`bus_to` endpoint names are accepted. A CRS string or a named CRS
+object retains its identifier; PowerIO does not reproject the coordinates.
 
-Features reference elements by an `ElementKey` of up to three fields, matched
-in order: `uid`, then `id`, then case insensitive `name`. Ids are strings on
-the wire, so one document format serves balanced integer bus ids,
-multiconductor string ids, and BMOPF ids. Branch paths additionally fall back
-to the unordered `(from, to)` bus pair. Positional branch indices are accepted
-on read as a legacy alias and never written; the durable identity is the
-model `uid`.
+`BalancedNetwork::to_geo_layer()` turns a network's coordinates into a layer,
+and `BalancedNetwork::apply_geo_layer(&layer)` applies one and returns a
+`GeoApplyReport` with the matched and unmatched feature counts plus
+`unlocated_buses` and `unlocated_branches`, the elements still without geometry
+when the pass ends. Together those counts let you tell a layer that matched
+nothing from a model that needed nothing, and `report.require_located()` is the
+one line check for a caller that wants everything placed. The multiconductor
+equivalents, `to_dist_geo_layer` and `apply_dist_geo_layer`, live in
+`powerio::dist_geo`. The CLI wraps the same functions:
 
-## Harvest and emit
+```console
+$ powerio geo extract case.aux -o case.geo.json
+$ powerio geo apply case.m layout.csv -o placed.m
+$ powerio geo convert buscoords.csv -o case.geo.json
+```
 
-The v0.6.2 implementation promotes the coordinate fields it owns into
-`location` and stamps the space. Promotion removes the raw keys:
-`location` is the single source of truth, and byte level round trips of an
-unmodified case already go through the retained source text, not through extras.
+## PowerWorld display files
 
-| Format | Read | Space |
-| --- | --- | --- |
-| OpenDSS | `Buscoords` | unknown, with a range check diagnostic that suggests geographic when every point fits lon/lat bounds |
-| BMOPF JSON | out of schema `longitude`/`latitude` (the BMOPFTools sideload convention) | geographic |
-| PowerWorld aux, pandapower, PyPSA | planned for #183 | — |
-| MATPOWER, PSS/E, PowerModels, egret, GOC3, PSLF, Surge | nothing to read; `location` stays `None` | — |
+The `.pwd` reader returns a drawing `GeoLayer` with decoded bus positions,
+branch paths, and substation positions. Coordinates remain in drawing units.
+Unsupported or unmatched bus and branch records produce diagnostics. Read a
+display with `parse`. Python's `parse_display`, which returns
+`DisplayData(kind="powerworld", data=PwdDisplay(...))` with the canvas
+dimensions, the save stamp, and the substation symbols, remains only for 0.11
+compatibility, reads the whole file without the input byte limits, and will be
+removed in 0.12.
 
-Planned balanced harvest rules:
+The facade helpers connect it to the geo model. `to_geo_layer_from_pwd` lifts
+the substation symbols into a diagram space `GeoLayer`, which is also what
+`powerio geo extract case.pwd` does. `to_geo_layer_from_aux_text` parses the
+`Latitude` and `Longitude` columns of an AUX `Substation` table straight into a
+geographic layer. `apply_substation_points` joins either layer onto buses
+through the `SubNum` extras key. `to_lonlat_from_pwd_mercator` is a documented,
+approximate inverse of the projection PowerWorld's auto generated layouts use,
+for when you want to place a diagram on a map. The component crate keeps
+`to_geo_layer_from_aux_substations(&AuxFile)` for parser authors, since the
+facade does not expose its borrowed parser type.
 
-| Format | Read | Space |
-| --- | --- | --- |
-| PowerWorld aux | `Latitude:1`/`Longitude:1` bus fields (`SubNum` stays in extras; it is identity, not geometry) | geographic |
-| pandapower | bus `geo` GeoJSON Point strings | geographic |
-| PyPSA | `buses.csv` x/y | geographic |
+A bus row in a complete case export has its own coordinates as well. The aux
+reader promotes the substation `Latitude:1`/`Longitude:1` pair, or, when those
+are absent, the bus's own bare `Latitude`/`Longitude` pair, into
+`Bus.location`, and a promoted pair leaves extras.
 
-Writers emit from `location`:
+In Rust a display file parses to `PioValue::GeoLayer`. There is no path from a
+display file to a `BalancedNetwork`; it is always a layer, and both module
+emission and PowerIO IR handle it as one.
 
-- **OpenDSS**: a companion `Buscoords` CSV.
-- **BMOPF JSON**: dropped by default with a structured warning, because the
-  schema sets `additionalProperties: false` and the writer promises schema
-  valid output. `BmopfWriteOptions::sideload_coordinates` opts in to emitting
-  `longitude`/`latitude` per bus, matching the BMOPFTools convention. This
-  default flips if the task force adopts coordinate fields upstream.
+## Distribution graph projection
 
-Planned writer support:
+`MulticonductorNetwork::to_graph()` returns a bus and terminal graph and does
+not need coordinates to do it; in Python that is `dist_net.to_graph()`. Graph
+topology and geographic placement stay separate data.
 
-- **pandapower**: the bus `geo` column, replacing today's null.
-- **PowerWorld aux**: `Latitude:1`/`Longitude:1` bus columns.
-- **GeoJSON**: the canonical `GeoLayer` document.
-- Formats with no geometry concept warn that locations were dropped, the same
-  rule `base_frequency` uses. A future `powerio geo extract` writes the
-  sidecar as the escape hatch.
+PowerIO stores and transports coordinates and does not compute them. Laying out
+a case that has none is renderer math and belongs in the consumer, which can
+store the result with `kind = synthetic` so the origin of the coordinates
+survives.
 
-## PowerWorld `.pwd` promotion
+Python has `parse_geo`, and both network types have `to_geo_layer()` and
+`apply_geo_layer()`.
 
-The `.pwd` reader already decodes substation symbols in diagram coordinates.
-Planned additions connect it to the geo model: `geo_layer_from_pwd` produces a
-`GeoLayer` in diagram space with substation targets, and
-`apply_substation_points` joins those points onto buses through the `SubNum`
-extras key. The auto generated PowerWorld layouts equal a Mercator projection
-of geography, so a planned `pwd_mercator_to_lonlat` helper can document the
-approximate inverse for consumers that want to place a diagram on a map.
+## BMOPF geometry and schema validity
 
-## API surface
+PowerIO reads the geometry proposed in
+[BMOPFTools #258](https://github.com/frederikgeth/BMOPFTools.jl/pull/258):
+`bus[id].geo` contains a Point, `line[id].geo` contains a LineString, and
+`meta.crs` names the coordinate reference system. An absent CRS means WGS84.
+Coordinates appear in longitude/latitude order for WGS84. A malformed vertex
+invalidates its entire path; PowerIO does not connect the remaining vertices.
 
-Shipped Rust model surface:
+The schema currently identified as draft BMOPF 0.2 does not declare these
+per-equipment `geo` fields. Explicit BMOPF output therefore stores a
+FeatureCollection in the permitted `extras.geojson` location. Its features use
+`kind`, `id`, `bus_from`, and `bus_to`. The `powerio_geo` member preserves
+coordinate-space metadata for drawings and coordinates with no declared CRS.
+This keeps output valid against its stated schema while retaining geometry.
+Task Force review determines the eventual standard location.
 
-- `powerio::geo::{Location, CoordsKind, CoordinateSpace, GeoMeta, Canvas}`;
-- `powerio_dist::geo::{Location, CoordsKind, CoordinateSpace, GeoMeta, Canvas}`;
-- `Network.geo`, `Bus.location`, `DistNetwork.geo`, and `DistBus.location`.
+Same-type source emission preserves the input bytes. Editing or explicitly
+selecting a schema version writes the typed coordinates, so a retained source
+cannot override updated positions. Both values of the compatibility setting
+`BmopfEmitOptions::sideload_coordinates` preserve geometry in `extras.geojson`.
+PowerIO IR also retains typed bus locations, line paths, and coordinate metadata.
 
-Planned Rust and CLI surface:
-
-- `GeoLayer` and `DisplayData::Geo`;
-- `parse_display_bytes(bytes, "geojson")`;
-- `Network::geo_layer()` and `Network::apply_geo_layer(&GeoLayer) -> GeoApplyReport`
-  (matched and unmatched counts, notes); the multiconductor equivalents attach
-  through `powerio-pkg`, which sees both model crates;
-- `powerio geo extract | apply | convert` in the CLI.
-
-C ABI and Python direct geo helpers are planned. Candidate C symbols are
-`pio_geo_parse`, `pio_geo_extract`, `pio_geo_apply`, and `pio_dist_geo_*`
-counterparts, all string in and string out. No new object lifetimes and no ABI
-bump; format names stay strings.
-
-## What PowerIO does not do
-
-PowerIO stores and transports coordinates; it does not compute them. Synthetic
-layout (force placement of a coordinate free case) is renderer math and stays
-in the consumer. A consumer that computes a layout can write it back with
-`kind = synthetic` so the provenance survives.
-
-## Phasing
-
-1. Typed fields plus the OpenDSS and BMOPF harvest and emit paths (model JSON
-   1.1.0).
-2. Balanced harvest and emit: PowerWorld aux, pandapower, PyPSA, fidelity
-   warnings.
-3. `GeoLayer`, `DisplayData::Geo`, branch routing, the CLI subcommand
-   (model JSON 1.2.0).
-4. `.pwd` promotion and the Mercator helper.
-5. C ABI and Python bindings.
-
-Tracking issues: [#180](https://github.com/eigenergy/powerio/issues/180)
-(typed fields), [#183](https://github.com/eigenergy/powerio/issues/183)
-(balanced formats), [#184](https://github.com/eigenergy/powerio/issues/184)
-(GeoLayer and `.pwd`), [#185](https://github.com/eigenergy/powerio/issues/185)
-(bindings).
+A RAW revision 33 file does not contain the New England PWB bus-location
+records. Attach its matching GeoJSON, CSV, AUX, or PWD companion explicitly.
+PWD positions describe a drawing and must not be interpreted as latitude and
+longitude.
