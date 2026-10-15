@@ -758,8 +758,5 @@ fn update_rejects_changed_three_winding_impedance() {
 
     let changed_instance = DcPfInstance::from_network(changed).unwrap();
     let error = operators.update(&changed_instance).unwrap_err();
-    assert!(
-        error.to_string().contains("branch parameters"),
-        "{error}"
-    );
+    assert!(error.to_string().contains("branch parameters"), "{error}");
 }
