@@ -705,3 +705,61 @@ fn update_rejects_changed_branch_topology() {
     let error = operators.update(&changed).unwrap_err();
     assert!(error.to_string().contains("topology"), "{error}");
 }
+
+
+#[test]
+fn update_rejects_changed_three_winding_impedance() {
+    // Three-winding transformers are lowered into three analysis branches.
+    // Updating one winding's impedance must invalidate operators built from
+    // the prior lowered network, even though the source branch table is empty.
+    let mut net = BalancedNetwork::in_memory(
+        "three-winding-update",
+        100.0,
+        vec![
+            Bus::new(BusId(1), BusType::Ref, 230.0),
+            Bus::new(BusId(2), BusType::Pq, 230.0),
+            Bus::new(BusId(3), BusType::Pq, 230.0),
+        ],
+        Vec::new(),
+    );
+    let mut transformer = Transformer3W::new(
+        [
+            Winding::new(BusId(1)),
+            Winding::new(BusId(2)),
+            Winding::new(BusId(3)),
+        ],
+        [
+            Impedance::new(0.0, 0.2, 100.0),
+            Impedance::new(0.0, 0.3, 100.0),
+            Impedance::new(0.0, 0.4, 100.0),
+        ],
+    );
+    transformer.uid = Some("tx-main".into());
+    net.transformers_3w_mut().push(transformer);
+
+    let original = DcPfInstance::from_network(net.clone()).unwrap();
+    let mut operators = DcOperators::build(&original).unwrap();
+
+    let mut changed = net;
+    let mut transformer = Transformer3W::new(
+        [
+            Winding::new(BusId(1)),
+            Winding::new(BusId(2)),
+            Winding::new(BusId(3)),
+        ],
+        [
+            Impedance::new(0.0, 0.25, 100.0),
+            Impedance::new(0.0, 0.3, 100.0),
+            Impedance::new(0.0, 0.4, 100.0),
+        ],
+    );
+    transformer.uid = Some("tx-main".into());
+    changed.transformers_3w_mut()[0] = transformer;
+
+    let changed_instance = DcPfInstance::from_network(changed).unwrap();
+    let error = operators.update(&changed_instance).unwrap_err();
+    assert!(
+        error.to_string().contains("branch parameters"),
+        "{error}"
+    );
+}
