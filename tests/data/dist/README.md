@@ -24,6 +24,13 @@ Benchmarking Multiconductor OPF.
   beside the examples for source-fidelity tests. Its rules match archived
   0.1.0; only the embedded identifier differs. Archived 0.2.0 is a proposal.
 
+## cim/
+
+`micro_feeder.xml` is a synthetic, hand written distribution CIM feeder
+original to this repository (CIM100 namespace, 243 lines, 13,883 bytes). It
+exercises the mapped element set with hand computed expected values, pinned in
+`powerio-dist/tests/cim.rs`. See `cim/README.md`.
+
 ## opendss/
 
 IEEE 13, 34, and 123 bus test feeders from the official OpenDSS distribution,

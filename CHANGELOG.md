@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- Distribution CIM reads and writes through the `cim-dist` format: CIM100
+  RDF/XML (the iec61970cim17v40 and iec61968cim13v13 release) in the profile
+  the GridAPPS-D and CIMHub tools exchange, into and from
+  `MulticonductorNetwork`. A single document or a directory of documents
+  parses; one document is written. A `.xml` document, a nameless source, or a
+  directory with per phase CIM classes and no CGMES `md:FullModel` header
+  routes to it, and CGMES and XIIDM routing is unchanged.
+
+- The CIM reader maps connectivity nodes, line segments with phase or
+  sequence impedance, loads, linear shunt compensators with their sections,
+  switches, transformers of any winding count with mesh impedances and ratio
+  tap changer positions, and energy sources with their series impedance.
+  What it does not map yet (the transformer tank form, controls, distributed
+  energy resources, wire geometry, limits) is reported through
+  `READ.CIM_DIST.*` codes, and the writer reports what CIM cannot state
+  through `EMIT.CIM_DIST.*` codes. Same format emission returns the retained
+  bytes of a single document; canonical output carries UUIDv5 mRIDs and is
+  byte stable from write to read to write.
+
 ## 0.11.5
 
 - Prepare paired releases from reviewed PowerIO and PowerIO.jl commits, with

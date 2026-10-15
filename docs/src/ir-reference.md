@@ -612,7 +612,7 @@ Schema definition: `MulticonductorNetwork`.
 |---|---|---|---|---|---|
 | `name` | string or null | | | | null |
 | `base_frequency` | float | Hz | | positive | required |
-| `source_format` | token `dss`, `bmopf-json`, `pmd-json`, or null | | | | null |
+| `source_format` | token `dss`, `bmopf-json`, `pmd-json`, or null (a distribution CIM read states null) | | | | null |
 | `buses` | array of `DistBus` | | | `id` unique | required |
 | `linecodes` | array of `DistLineCode` | | | `name` unique | required |
 | `lines` | array of `DistLine` | | | `bus_from`, `bus_to` name buses; `linecode` names a line code | required |

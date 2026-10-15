@@ -1,8 +1,9 @@
 """Multiconductor distribution network values.
 
 The typed model uses wire coordinates. Supported formats are OpenDSS ``.dss``,
-PowerModelsDistribution ENGINEERING JSON (``pmd-json``), and BMOPF JSON
-(``bmopf-json``). Same format emissions can return retained source bytes. Cross
+PowerModelsDistribution ENGINEERING JSON (``pmd-json``), BMOPF JSON
+(``bmopf-json``), and distribution CIM (``cim-dist``, CIM100 RDF/XML). Same
+format emissions can return retained source bytes. Cross
 format emissions report unsupported fields as diagnostics.
 
     import powerio
@@ -44,7 +45,8 @@ class MulticonductorNetwork:
 
     @property
     def source_format(self) -> Optional[str]:
-        """Format parsed from: ``dss``, ``pmd-json``, or ``bmopf-json``."""
+        """Format parsed from: ``dss``, ``pmd-json``, or ``bmopf-json``; ``None``
+        for a network read from distribution CIM (``cim-dist``) or built in code."""
         return self._inner.source_format()
 
     @property

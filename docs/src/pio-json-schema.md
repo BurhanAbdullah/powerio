@@ -18,7 +18,7 @@ history, and extensions. A current document begins like this:
 
 Use `serialize` to produce it and `deserialize` to read it. PowerIO IR is not
 one of the grid exchange formats. MATPOWER, PSS/E, XIIDM, CGMES, OpenDSS, PMD
-JSON, BMOPF, and the other formats in the format registry exist to exchange
+JSON, BMOPF, distribution CIM, and the other formats in the format registry exist to exchange
 power system data with other tools, and they enter through `parse` and leave
 through `emit`. PowerIO IR preserves PowerIO types and module records instead,
 and it is deliberately left out of grid exchange format discovery. Use it when

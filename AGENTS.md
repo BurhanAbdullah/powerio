@@ -19,8 +19,8 @@ check the current source, tests, and release notes.
 - **`powerio-tx`**: the format neutral `BalancedNetwork`, the balanced format
   readers and writers, normalization, and derived indexed views.
 - **`powerio-dist`**: the multiconductor distribution model
-  (`MulticonductorNetwork`) with the OpenDSS `.dss`, PMD JSON, and BMOPF JSON
-  converters. It does **not** depend on the transmission crate; both share
+  (`MulticonductorNetwork`) with the OpenDSS `.dss`, PMD JSON, BMOPF JSON, and
+  distribution CIM (`cim-dist`) converters. It does **not** depend on the transmission crate; both share
   `powerio-core`. BMOPF network decoding lives here; construction of the
   resulting `McAcOpfInstance` lives in `powerio-prob`.
 - **`powerio-prob`**: operating points, updates, calculation instances, and
@@ -58,7 +58,8 @@ and Surge JSON parse and write. The IEEE Common Data Format, DOE GO Challenge
 a complete `AcScucSolution` writes the official GO Challenge 3 solution
 file. A PowerWorld `.pwd` display parses to `PioValue::GeoLayer`. GridFM
 Parquet directories parse and write behind the `gridfm` feature. OpenDSS
-`.dss`, PMD engineering JSON, and BMOPF JSON meet at `MulticonductorNetwork`.
+`.dss`, PMD engineering JSON, BMOPF JSON, and distribution CIM (`cim-dist`,
+CIM100 RDF/XML) meet at `MulticonductorNetwork`.
 PowerIO IR moves through `serialize` and `deserialize` and is not a grid
 exchange format; `parse` refuses it. Every balanced format maps to
 `BalancedNetwork`, so a new format needs one reader and one writer rather
@@ -158,7 +159,7 @@ powerio-tx/src/format         mod.rs (parse, emit, TargetFormat, EmitOptions),
                               ucte/, ieee_cdf.rs, powerworld/ (aux, pwb, pwd),
                               pslf.rs, powermodels.rs, egret.rs, pandapower.rs,
                               pypsa.rs, surge.rs, goc3.rs, opfdata.rs
-powerio-dist/src              model.rs, convert.rs, dss/, pmd/, bmopf/, graph.rs,
+powerio-dist/src              model.rs, convert.rs, dss/, pmd/, bmopf/, cim/, graph.rs,
                               geo.rs, diagnostics.rs, error.rs
 powerio-prob/src              operating/, instance/, solution/, update.rs,
                               reference.rs, goc3/, formats/ (goc3, opfdata, pypsa)
