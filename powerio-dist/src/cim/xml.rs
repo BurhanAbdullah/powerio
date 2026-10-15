@@ -466,7 +466,7 @@ mod tests {
         // element is an object with no properties.
         assert_eq!(doc.objects[2].id, "t-99");
         assert_eq!(doc.objects[3].class, "BaseFrequency");
-        assert!(doc.objects[3].props.is_empty());
+        assert_eq!(doc.objects[3].props, []);
     }
 
     #[test]
