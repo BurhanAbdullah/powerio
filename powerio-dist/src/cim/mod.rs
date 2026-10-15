@@ -65,6 +65,31 @@ pub fn looks_like_cim_dist(bytes: &[u8]) -> bool {
         && DISTRIBUTION_MARKERS.iter().any(|marker| has(bytes, marker))
 }
 
+/// Whether a source holds distribution CIM: its own buffer reads as
+/// distribution CIM ([`looks_like_cim_dist`]), or, for a directory, one of its
+/// `.xml` documents does. The reads go through the source, so they count
+/// against its acquisition budget and are cached for the parse that follows.
+#[must_use]
+pub fn source_looks_like_cim_dist(source: &powerio_core::Source) -> bool {
+    if !source.is_directory() {
+        return source
+            .primary_buffer()
+            .is_ok_and(|buffer| looks_like_cim_dist(buffer.content_bytes()));
+    }
+    let Ok(entries) = source.entry_names() else {
+        return false;
+    };
+    entries.iter().any(|entry| {
+        std::path::Path::new(entry.as_str())
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("xml"))
+            && source
+                .root_buffer(entry.as_str())
+                .is_ok_and(|buffer| looks_like_cim_dist(buffer.content_bytes()))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::looks_like_cim_dist;

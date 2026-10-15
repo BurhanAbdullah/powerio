@@ -629,3 +629,62 @@ fn malformed_sets_are_refused() {
     let error = parse_str(&topological, "cim-dist").unwrap_err();
     assert!(error.to_string().contains("TopologicalNode"), "{error}");
 }
+
+/// Bundled conductors (several on one terminal) collapse to one phase each,
+/// with a finding, and the output still reads back.
+#[test]
+fn bundled_conductors_write_each_phase_once() {
+    let net = parse_file(micro("linecode_10x10.dss"), None).unwrap();
+    let out = emit_value(&net, DistTargetFormat::CimDist);
+    assert!(
+        findings(&out.warnings, "EMIT.CIM_DIST.VALUE_COLLAPSED")
+            .iter()
+            .any(|f| f.contains("more than one conductor")),
+        "{:#?}",
+        out.warnings
+    );
+    let back = parse_str(&out.text, "cim-dist").unwrap();
+    assert_eq!(back.lines().len(), net.lines().len());
+}
+
+/// Every distribution fixture the repository carries writes CIM that the
+/// reader accepts, and the canonical output is idempotent: write, read,
+/// write is byte stable.
+#[test]
+fn every_distribution_fixture_writes_stable_cim() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests/data/dist");
+    let mut checked = 0;
+    for dir in ["micro", "pmd", "bmopf", "cim"] {
+        let mut paths: Vec<PathBuf> = std::fs::read_dir(root.join(dir))
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| matches!(e, "dss" | "json" | "xml"))
+            })
+            .collect();
+        paths.sort();
+        for path in paths {
+            // Fixtures that are not standalone cases (schemas, fragments,
+            // solution files) are another suite's business.
+            let Ok(net) = parse_file(&path, None) else {
+                continue;
+            };
+            let first = emit_value(&net, DistTargetFormat::CimDist);
+            let back = parse_str(&first.text, "cim-dist").unwrap_or_else(|e| {
+                panic!("{}: CIM output does not read back: {e}", path.display())
+            });
+            let second = emit_value(&back, DistTargetFormat::CimDist);
+            assert_eq!(
+                first.text,
+                second.text,
+                "{}: rewrite differs",
+                path.display()
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked >= 10, "only {checked} fixtures checked");
+}

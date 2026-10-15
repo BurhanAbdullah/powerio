@@ -52,14 +52,31 @@ fn esc_text(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// A wire coordinate terminal name to its `SinglePhaseKind`.
+/// A terminal name to its `SinglePhaseKind`: the OpenDSS node numbers
+/// (`1` to `4`) or the phase letters BMOPF documents use (`a`, `b`, `c`,
+/// `n`, either case).
 fn phase_letter(terminal: &str) -> Option<&'static str> {
     match terminal {
-        "1" => Some("A"),
-        "2" => Some("B"),
-        "3" => Some("C"),
-        "4" => Some("N"),
+        "1" | "a" | "A" => Some("A"),
+        "2" | "b" | "B" => Some("B"),
+        "3" | "c" | "C" => Some("C"),
+        "4" | "n" | "N" => Some("N"),
         _ => None,
+    }
+}
+
+/// Whether a terminal name is the neutral.
+fn is_neutral(terminal: &str) -> bool {
+    phase_letter(terminal) == Some("N")
+}
+
+/// The canonical position of a phase in a `PhaseCode`: A, B, C, then N.
+fn phase_rank(terminal: &str) -> usize {
+    match phase_letter(terminal) {
+        Some("A") => 0,
+        Some("B") => 1,
+        Some("C") => 2,
+        _ => 3,
     }
 }
 
@@ -74,13 +91,13 @@ fn phase_code(map: &[String], neutral: bool) -> (Option<String>, bool) {
         .filter(|t| phase_letter(t).is_some())
         .collect();
     let mut sorted = named.clone();
-    sorted.sort_unstable();
-    sorted.dedup();
+    sorted.sort_by_key(|t| phase_rank(t));
+    sorted.dedup_by_key(|t| phase_rank(t));
     let in_order = named == sorted;
-    if neutral && !sorted.contains(&"4") {
-        sorted.push("4");
+    let mut code: String = sorted.iter().filter_map(|t| phase_letter(t)).collect();
+    if neutral && !code.ends_with('N') {
+        code.push('N');
     }
-    let code: String = sorted.iter().filter_map(|t| phase_letter(t)).collect();
     ((!code.is_empty()).then_some(code), in_order)
 }
 
@@ -224,6 +241,19 @@ impl Doc {
         code
     }
 
+    /// Report a conductor that repeats a phase another conductor of the same
+    /// element already states (bundled conductors on one terminal): CIM
+    /// states each phase of an element once.
+    fn repeated_phase(&mut self, kind: &str, name: &str, phase: &str) {
+        self.warn(
+            &C::EMIT_CIM_DIST_VALUE_COLLAPSED,
+            format!(
+                "{kind} {name}: more than one conductor is on phase {phase}; CIM states each \
+                 phase once, so the repeat is not written"
+            ),
+        );
+    }
+
     /// Report conductors whose terminal name has no `SinglePhaseKind`.
     fn unnamed_conductors(&mut self, kind: &str, name: &str, map: &[String]) {
         let unnamed: Vec<&str> = map
@@ -291,63 +321,39 @@ pub(crate) fn emit_cim_dist_text(net: &MulticonductorNetwork) -> TextEmission {
             })
     };
 
+    // The conductors each segment can state: the first conductor on each
+    // phase, in terminal order.
+    let mut columns_of: Vec<Vec<(usize, &'static str)>> = Vec::with_capacity(net.lines().len());
+    for line in net.lines() {
+        let mut written = std::collections::HashSet::new();
+        let mut columns = Vec::new();
+        for (index, terminal) in line.terminal_map_from.iter().enumerate() {
+            let Some(phase) = phase_letter(terminal) else {
+                continue;
+            };
+            if !written.insert(phase) {
+                doc.repeated_phase("line", &line.name, phase);
+                continue;
+            }
+            columns.push((index, phase));
+        }
+        columns_of.push(columns);
+    }
+
     // Line codes as PerLengthPhaseImpedance with lower triangle data rows.
     let mut code_of = std::collections::HashMap::new();
     for code in net.line_codes() {
+        if code.n_conductors == 0 {
+            doc.warn(
+                &C::EMIT_CIM_DIST_RECORD_DROPPED,
+                format!("linecode {}: it has no conductors to write", code.name),
+            );
+            continue;
+        }
         let id = doc.mrid_of(&code.extras, "plpi", &code.name);
         code_of.insert(code.name.to_ascii_lowercase(), id.clone());
-        doc.named("PerLengthPhaseImpedance", &id, &code.name);
-        doc.integer("PerLengthPhaseImpedance.conductorCount", code.n_conductors);
-        doc.close("PerLengthPhaseImpedance");
-        let at = |m: &ConductorMatrix, i: usize, j: usize| {
-            m.get(i).and_then(|r| r.get(j)).copied().unwrap_or(0.0)
-        };
-        let has_g = code
-            .g_from
-            .iter()
-            .chain(&code.g_to)
-            .flatten()
-            .any(|v| *v != 0.0);
-        let mut asymmetric = false;
-        for i in 0..code.n_conductors {
-            for j in 0..=i {
-                let did = det_mrid("pid", &format!("{id}:{i}:{j}"));
-                doc.open("PhaseImpedanceData", &did);
-                doc.reference("PhaseImpedanceData.PerLengthPhaseImpedance", &id);
-                doc.integer("PhaseImpedanceData.row", i + 1);
-                doc.integer("PhaseImpedanceData.column", j + 1);
-                let what = format!("linecode {}", code.name);
-                doc.number(&what, "PhaseImpedanceData.r", at(&code.r_series, i, j));
-                doc.number(&what, "PhaseImpedanceData.x", at(&code.x_series, i, j));
-                if has_g {
-                    doc.number(
-                        &what,
-                        "PhaseImpedanceData.g",
-                        at(&code.g_from, i, j) + at(&code.g_to, i, j),
-                    );
-                }
-                doc.number(
-                    &what,
-                    "PhaseImpedanceData.b",
-                    at(&code.b_from, i, j) + at(&code.b_to, i, j),
-                );
-                doc.close("PhaseImpedanceData");
-                asymmetric |= at(&code.b_from, i, j) != at(&code.b_to, i, j)
-                    || at(&code.g_from, i, j) != at(&code.g_to, i, j)
-                    || at(&code.r_series, i, j) != at(&code.r_series, j, i)
-                    || at(&code.x_series, i, j) != at(&code.x_series, j, i);
-            }
-        }
-        if asymmetric {
-            doc.warn(
-                &C::EMIT_CIM_DIST_VALUE_COLLAPSED,
-                format!(
-                    "linecode {}: CIM states one symmetric matrix and one total shunt admittance; \
-                     the lower triangle and the sum of both ends are written",
-                    code.name
-                ),
-            );
-        }
+        let all: Vec<usize> = (0..code.n_conductors).collect();
+        write_phase_impedance(&mut doc, &id, &code.name, code, &all);
         if code.i_max.is_some() || code.s_max.is_some() {
             doc.warn(
                 &C::EMIT_CIM_DIST_FIELD_DROPPED,
@@ -370,7 +376,55 @@ pub(crate) fn emit_cim_dist_text(net: &MulticonductorNetwork) -> TextEmission {
         doc.extras_dropped("linecode", &code.name, &code.extras, &["cim_mrid"]);
     }
 
-    for line in net.lines() {
+    // A segment naming other conductors than its line code holds refers to
+    // the code's block for the conductors it names, so the reader takes back
+    // exactly what was written. The blocks are written before every segment,
+    // where a reread line code would stand.
+    let mut projections: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut impedance_of: Vec<Option<String>> = Vec::with_capacity(net.lines().len());
+    for (line, columns) in net.lines().iter().zip(&columns_of) {
+        let impedance = match net.linecode(&line.linecode) {
+            Some(code)
+                if code.n_conductors > 0
+                    && columns.len() == code.n_conductors
+                    && columns
+                        .iter()
+                        .enumerate()
+                        .all(|(k, (index, _))| k == *index) =>
+            {
+                code_of.get(&code.name.to_ascii_lowercase()).cloned()
+            }
+            Some(code) if !columns.is_empty() => {
+                let phases: String = columns.iter().map(|(_, p)| *p).collect();
+                let name = format!("{}_{phases}", code.name);
+                let id = if let Some(id) = projections.get(&name) {
+                    id.clone()
+                } else {
+                    let id = det_mrid("plpi", &name);
+                    let rows: Vec<usize> = columns.iter().map(|(index, _)| *index).collect();
+                    write_phase_impedance(&mut doc, &id, &name, code, &rows);
+                    projections.insert(name, id.clone());
+                    id
+                };
+                Some(id)
+            }
+            _ => None,
+        };
+        impedance_of.push(impedance);
+    }
+
+    for ((line, columns), impedance) in net.lines().iter().zip(&columns_of).zip(impedance_of) {
+        if columns.is_empty() {
+            doc.warn(
+                &C::EMIT_CIM_DIST_RECORD_DROPPED,
+                format!(
+                    "line {}: no conductor has a SinglePhaseKind (A, B, C, N)",
+                    line.name
+                ),
+            );
+            continue;
+        }
         let id = doc.mrid_of(&line.extras, "line", &line.name);
         doc.named("ACLineSegment", &id, &line.name);
         doc.number(
@@ -378,8 +432,8 @@ pub(crate) fn emit_cim_dist_text(net: &MulticonductorNetwork) -> TextEmission {
             "Conductor.length",
             line.length,
         );
-        match code_of.get(&line.linecode.to_ascii_lowercase()) {
-            Some(code) => doc.reference("ACLineSegment.PerLengthImpedance", code),
+        match impedance {
+            Some(code) => doc.reference("ACLineSegment.PerLengthImpedance", &code),
             None => doc.warn(
                 &C::EMIT_CIM_DIST_FIELD_DROPPED,
                 format!(
@@ -405,12 +459,7 @@ pub(crate) fn emit_cim_dist_text(net: &MulticonductorNetwork) -> TextEmission {
             &to,
             phase_code(&line.terminal_map_to, false).0.as_deref(),
         );
-        let mut sequence = 0;
-        for terminal in &line.terminal_map_from {
-            let Some(phase) = phase_letter(terminal) else {
-                continue;
-            };
-            sequence += 1;
+        for (sequence, (_, phase)) in columns.iter().enumerate() {
             let pid = det_mrid("linephase", &format!("{id}:{phase}"));
             doc.named(
                 "ACLineSegmentPhase",
@@ -422,7 +471,7 @@ pub(crate) fn emit_cim_dist_text(net: &MulticonductorNetwork) -> TextEmission {
                 "ACLineSegmentPhase.phase",
                 &format!("SinglePhaseKind.{phase}"),
             );
-            doc.integer("ACLineSegmentPhase.sequenceNumber", sequence);
+            doc.integer("ACLineSegmentPhase.sequenceNumber", sequence + 1);
             doc.close("ACLineSegmentPhase");
         }
         doc.unnamed_conductors("line", &line.name, &line.terminal_map_from);
@@ -450,15 +499,57 @@ pub(crate) fn emit_cim_dist_text(net: &MulticonductorNetwork) -> TextEmission {
     }
 
     for load in net.loads() {
+        // The phase conductors with their powers, in map order, and whether
+        // the load closes between two phases rather than to a star point. A
+        // single phase load states one power: its first conductor is the
+        // phase and its second the return.
+        let named = |t: &str| phase_letter(t).is_some_and(|p| p != "N");
+        let (phases, phase_to_phase): (Vec<(&str, f64, f64)>, bool) =
+            if load.configuration == Configuration::SinglePhase {
+                let first = load.terminal_map.first().map(String::as_str);
+                let second = load.terminal_map.get(1).map(String::as_str);
+                let power = (
+                    load.p_nom.first().copied().unwrap_or(0.0),
+                    load.q_nom.first().copied().unwrap_or(0.0),
+                );
+                match first {
+                    Some(first) if named(first) => (
+                        vec![(first, power.0, power.1)],
+                        second.is_some_and(&named),
+                    ),
+                    _ => (Vec::new(), false),
+                }
+            } else {
+                let mut out = Vec::new();
+                for (n, terminal) in load
+                    .terminal_map
+                    .iter()
+                    .filter(|t| !is_neutral(t))
+                    .enumerate()
+                {
+                    if named(terminal) {
+                        out.push((
+                            terminal.as_str(),
+                            load.p_nom.get(n).copied().unwrap_or(0.0),
+                            load.q_nom.get(n).copied().unwrap_or(0.0),
+                        ));
+                    }
+                }
+                (out, false)
+            };
+        if phases.is_empty() {
+            doc.warn(
+                &C::EMIT_CIM_DIST_RECORD_DROPPED,
+                format!(
+                    "load {}: no phase conductor has a SinglePhaseKind (A, B, C)",
+                    load.name
+                ),
+            );
+            continue;
+        }
         let id = doc.mrid_of(&load.extras, "load", &load.name);
         let what = format!("load {}", load.name);
         doc.named("EnergyConsumer", &id, &load.name);
-        let phases: Vec<&String> = load.terminal_map.iter().filter(|t| *t != "4").collect();
-        // A single phase load between two phases is delta connected with no
-        // star point; the reader reads it back as single phase.
-        let phase_to_phase = load.configuration == Configuration::SinglePhase
-            && !load.terminal_map.iter().any(|t| t == "4")
-            && phases.len() == 2;
         let delta = load.configuration == Configuration::Delta || phase_to_phase;
         doc.enumeration(
             "EnergyConsumer.phaseConnection",
@@ -468,17 +559,37 @@ pub(crate) fn emit_cim_dist_text(net: &MulticonductorNetwork) -> TextEmission {
                 "PhaseShuntConnectionKind.Y"
             },
         );
-        doc.number(&what, "EnergyConsumer.p", load.p_nom.iter().sum());
-        doc.number(&what, "EnergyConsumer.q", load.q_nom.iter().sum());
+        doc.number(
+            &what,
+            "EnergyConsumer.p",
+            phases.iter().map(|(_, p, _)| p).sum(),
+        );
+        doc.number(
+            &what,
+            "EnergyConsumer.q",
+            phases.iter().map(|(_, _, q)| q).sum(),
+        );
         doc.close("EnergyConsumer");
         let bus = node(&mut doc, &load.bus);
-        let code = doc.ordered_code("load", &load.name, &load.terminal_map, !delta);
+        // A phase to phase load states both phases on its terminal and its
+        // one power on the load itself.
+        let stated: Vec<String> = if phase_to_phase {
+            load.terminal_map.iter().take(2).cloned().collect()
+        } else {
+            phases.iter().map(|(t, _, _)| (*t).to_owned()).collect()
+        };
+        let code = doc.ordered_code("load", &load.name, &stated, !delta);
         doc.terminal(&id, 1, &bus, code.as_deref());
         let children = if phase_to_phase { Vec::new() } else { phases };
-        for (n, terminal) in children.iter().enumerate() {
+        let mut written = std::collections::HashSet::new();
+        for (terminal, p, q) in children {
             let Some(phase) = phase_letter(terminal) else {
                 continue;
             };
+            if !written.insert(phase) {
+                doc.repeated_phase("load", &load.name, phase);
+                continue;
+            }
             let pid = det_mrid("loadphase", &format!("{id}:{phase}"));
             doc.named(
                 "EnergyConsumerPhase",
@@ -490,16 +601,8 @@ pub(crate) fn emit_cim_dist_text(net: &MulticonductorNetwork) -> TextEmission {
                 "EnergyConsumerPhase.phase",
                 &format!("SinglePhaseKind.{phase}"),
             );
-            doc.number(
-                &what,
-                "EnergyConsumerPhase.p",
-                load.p_nom.get(n).copied().unwrap_or(0.0),
-            );
-            doc.number(
-                &what,
-                "EnergyConsumerPhase.q",
-                load.q_nom.get(n).copied().unwrap_or(0.0),
-            );
+            doc.number(&what, "EnergyConsumerPhase.p", p);
+            doc.number(&what, "EnergyConsumerPhase.q", q);
             doc.close("EnergyConsumerPhase");
         }
         doc.unnamed_conductors("load", &load.name, &load.terminal_map);
@@ -552,10 +655,15 @@ pub(crate) fn emit_cim_dist_text(net: &MulticonductorNetwork) -> TextEmission {
         }
         let diag =
             |m: &ConductorMatrix, n: usize| m.get(n).and_then(|r| r.get(n)).copied().unwrap_or(0.0);
+        let mut written = std::collections::HashSet::new();
         for (n, terminal) in shunt.terminal_map.iter().enumerate() {
             let Some(phase) = phase_letter(terminal) else {
                 continue;
             };
+            if !written.insert(phase) {
+                doc.repeated_phase("shunt", &shunt.name, phase);
+                continue;
+            }
             let pid = det_mrid("shuntphase", &format!("{id}:{phase}"));
             doc.named(
                 "LinearShuntCompensatorPhase",
@@ -639,10 +747,15 @@ pub(crate) fn emit_cim_dist_text(net: &MulticonductorNetwork) -> TextEmission {
             &to,
             phase_code(&switch.terminal_map_to, false).0.as_deref(),
         );
+        let mut written = std::collections::HashSet::new();
         for (side1, side2) in switch.terminal_map_from.iter().zip(&switch.terminal_map_to) {
             let (Some(p1), Some(p2)) = (phase_letter(side1), phase_letter(side2)) else {
                 continue;
             };
+            if !written.insert(p1) {
+                doc.repeated_phase("switch", &switch.name, p1);
+                continue;
+            }
             let pid = det_mrid("switchphase", &format!("{id}:{p1}"));
             doc.named("SwitchPhase", &pid, &format!("{}_{p1}", switch.name));
             doc.reference("SwitchPhase.Switch", &id);
@@ -727,7 +840,7 @@ pub(crate) fn emit_cim_dist_text(net: &MulticonductorNetwork) -> TextEmission {
             doc.number(&what, "PowerTransformerEnd.ratedS", winding.s_rating);
             let kind = match winding.conn {
                 DistWindingConn::Delta => "D",
-                _ if winding.terminal_map.iter().any(|t| t == "4") => "Yn",
+                _ if winding.terminal_map.iter().any(|t| is_neutral(t)) => "Yn",
                 _ => "Y",
             };
             doc.enumeration(
@@ -876,6 +989,69 @@ pub(crate) fn emit_cim_dist_text(net: &MulticonductorNetwork) -> TextEmission {
     TextEmission::new(out, Vec::new(), doc.diags)
 }
 
+/// One `PerLengthPhaseImpedance` holding the rows and columns `rows` of a
+/// line code, as lower triangle `PhaseImpedanceData` records.
+#[allow(clippy::float_cmp)] // exact comparison detects asymmetry CIM cannot state
+fn write_phase_impedance(
+    doc: &mut Doc,
+    id: &str,
+    name: &str,
+    code: &crate::model::DistLineCode,
+    rows: &[usize],
+) {
+    doc.named("PerLengthPhaseImpedance", id, name);
+    doc.integer("PerLengthPhaseImpedance.conductorCount", rows.len());
+    doc.close("PerLengthPhaseImpedance");
+    let at = |m: &ConductorMatrix, i: usize, j: usize| {
+        m.get(i).and_then(|r| r.get(j)).copied().unwrap_or(0.0)
+    };
+    let has_g = code
+        .g_from
+        .iter()
+        .chain(&code.g_to)
+        .flatten()
+        .any(|v| *v != 0.0);
+    let what = format!("linecode {name}");
+    let mut asymmetric = false;
+    for (i, &row) in rows.iter().enumerate() {
+        for (j, &col) in rows.iter().enumerate().take(i + 1) {
+            let did = det_mrid("pid", &format!("{id}:{i}:{j}"));
+            doc.open("PhaseImpedanceData", &did);
+            doc.reference("PhaseImpedanceData.PerLengthPhaseImpedance", id);
+            doc.integer("PhaseImpedanceData.row", i + 1);
+            doc.integer("PhaseImpedanceData.column", j + 1);
+            doc.number(&what, "PhaseImpedanceData.r", at(&code.r_series, row, col));
+            doc.number(&what, "PhaseImpedanceData.x", at(&code.x_series, row, col));
+            if has_g {
+                doc.number(
+                    &what,
+                    "PhaseImpedanceData.g",
+                    at(&code.g_from, row, col) + at(&code.g_to, row, col),
+                );
+            }
+            doc.number(
+                &what,
+                "PhaseImpedanceData.b",
+                at(&code.b_from, row, col) + at(&code.b_to, row, col),
+            );
+            doc.close("PhaseImpedanceData");
+            asymmetric |= at(&code.b_from, row, col) != at(&code.b_to, row, col)
+                || at(&code.g_from, row, col) != at(&code.g_to, row, col)
+                || at(&code.r_series, row, col) != at(&code.r_series, col, row)
+                || at(&code.x_series, row, col) != at(&code.x_series, col, row);
+        }
+    }
+    if asymmetric {
+        doc.warn(
+            &C::EMIT_CIM_DIST_VALUE_COLLAPSED,
+            format!(
+                "linecode {name}: CIM states one symmetric matrix and one total shunt admittance; \
+                 the lower triangle and the sum of both ends are written"
+            ),
+        );
+    }
+}
+
 /// What a bus states that a CIM connectivity node cannot: voltage bounds, a
 /// location, grounding other than the implied neutral, and extras.
 fn bus_losses(doc: &mut Doc, bus: &DistBus) {
@@ -910,12 +1086,10 @@ fn bus_losses(doc: &mut Doc, bus: &DistBus) {
             ),
         );
     }
-    let implied: Vec<String> = if bus.terminals.iter().any(|t| t == "4") {
-        vec!["4".to_owned()]
-    } else {
-        Vec::new()
-    };
-    if bus.grounded != implied {
+    // A reader grounds the neutral terminal and nothing else.
+    let implied: Vec<&String> = bus.terminals.iter().filter(|t| is_neutral(t)).collect();
+    let grounded: Vec<&String> = bus.grounded.iter().collect();
+    if grounded != implied {
         doc.warn(
             &C::EMIT_CIM_DIST_VALUE_COLLAPSED,
             format!(
@@ -936,7 +1110,7 @@ fn write_source(doc: &mut Doc, source: &VoltageSource, node: &str) {
         .terminal_map
         .iter()
         .enumerate()
-        .filter(|(_, t)| *t != "4")
+        .filter(|(_, t)| !is_neutral(t))
         .collect();
     let n = phases.len();
     let magnitude = |i: usize| source.v_magnitude.get(i).copied().unwrap_or(0.0);

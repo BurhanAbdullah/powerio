@@ -346,7 +346,8 @@ pub fn classify_distribution_json(text: &str) -> crate::Result<DistTargetFormat>
 /// the `.dss` extension otherwise, for `.json` from
 /// [`classify_distribution_json`], and for `.xml` from
 /// [`looks_like_cim_dist`](crate::cim::looks_like_cim_dist). A directory
-/// reads only as a declared `cim-dist` set of `.xml` documents.
+/// reads only as a `cim-dist` set of `.xml` documents, declared or
+/// recognized by [`source_looks_like_cim_dist`](crate::cim::source_looks_like_cim_dist).
 ///
 /// # Errors
 /// The operation failure carries the reader's findings up to the failure and
@@ -390,15 +391,23 @@ fn parse_to_network(
                 .ok_or_else(|| crate::Error::UnknownFormat(name.to_string()))
         })
         .transpose()?;
-    if source.is_directory() && declared != Some(DistTargetFormat::CimDist) {
-        return Err(crate::Error::UnknownFormat(format!(
-            "{} is a directory, and the only distribution format read from a directory is a \
-             declared cim-dist document set; pass a case file",
-            source.name()
-        )));
+    if source.is_directory() {
+        let cim = declared.map_or_else(
+            || crate::cim::source_looks_like_cim_dist(source),
+            |format| format == DistTargetFormat::CimDist,
+        );
+        if !cim {
+            return Err(crate::Error::UnknownFormat(format!(
+                "{} is a directory, and the only distribution format read from a directory is \
+                 a cim-dist document set; pass a case file",
+                source.name()
+            )));
+        }
     }
     let format = if let Some(format) = declared {
         format
+    } else if source.is_directory() {
+        DistTargetFormat::CimDist
     } else {
         let ext = std::path::Path::new(source.name())
             .extension()

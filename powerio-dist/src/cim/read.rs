@@ -880,6 +880,29 @@ impl<'a> Mapper<'a> {
         let mut line_codes: Vec<DistLineCode> = Vec::new();
         // (impedance object, conductor count) to line code name.
         let mut seen: HashMap<(String, usize), String> = HashMap::new();
+        // Every phase impedance object is a line code at its own conductor
+        // count, whether or not a segment uses it; a segment naming another
+        // number of phases takes its own projection below.
+        for pli in self.store.ids_of("PerLengthPhaseImpedance") {
+            let n = self.conductor_count(&pli, &impedance_data);
+            if n == 0 {
+                self.drop_record(
+                    "PerLengthPhaseImpedance",
+                    &pli,
+                    "it states neither a conductor count nor PhaseImpedanceData",
+                );
+                continue;
+            }
+            if let Some((r, x, g, b)) = self.per_length_matrices(&pli, n, &impedance_data) {
+                let base = self.store.name_of(&pli).unwrap_or_else(|| pli.clone());
+                let name = self.unique_line_code_name(&base);
+                let mut code = DistLineCode::new(name.clone(), r, x);
+                set_shunt_halves(&mut code, &g, &b);
+                code.extras.insert("cim_mrid".into(), pli.clone().into());
+                line_codes.push(code);
+                seen.insert((pli, n), name);
+            }
+        }
         let mut lines = Vec::new();
         for id in self.store.ids_of("ACLineSegment") {
             let (Some(from), Some(to)) = (self.bus_at(&id, 0), self.bus_at(&id, 1)) else {
@@ -1025,6 +1048,30 @@ impl<'a> Mapper<'a> {
             candidate = format!("{base}_{n}");
         }
         candidate
+    }
+
+    /// A phase impedance object's conductor count: `conductorCount`, else the
+    /// largest row or column its data states.
+    fn conductor_count(&self, pli: &str, impedance_data: &HashMap<String, Vec<String>>) -> usize {
+        if let Some(count) = self
+            .store
+            .f(pli, "PerLengthPhaseImpedance.conductorCount")
+            .filter(|c| *c >= 1.0)
+        {
+            return count as usize;
+        }
+        impedance_data
+            .get(pli)
+            .map_or(&[][..], Vec::as_slice)
+            .iter()
+            .flat_map(|d| {
+                [
+                    self.store.f(d, "PhaseImpedanceData.row"),
+                    self.store.f(d, "PhaseImpedanceData.column"),
+                ]
+            })
+            .flatten()
+            .fold(0.0_f64, f64::max) as usize
     }
 
     /// The `n×n` (r, x, g, b) matrices of a `PerLengthImpedance`: from the
@@ -1711,38 +1758,51 @@ impl<'a> Mapper<'a> {
             let term = self.target("PowerTransformerEnd", end, "TransformerEnd.Terminal")?;
             let bus = self.bus_of_terminal(&term)?;
             let label = self.label(end);
-            let conn = match self
+            // The connection, and whether the winding brings its star point out
+            // as a neutral terminal (`Yn`, `Zn`), which the model grounds.
+            let (conn, neutral) = match self
                 .store
                 .enum_value(end, "PowerTransformerEnd.connectionKind")
             {
-                Some("D") => DistWindingConn::Delta,
-                Some("Y" | "Yn") => DistWindingConn::Wye,
+                Some("D") => (DistWindingConn::Delta, false),
+                Some("Y") => (DistWindingConn::Wye, false),
+                Some("Yn") => (DistWindingConn::Wye, true),
                 Some(other) => {
                     let other = other.to_owned();
                     self.note(
                         &C::READ_CIM_DIST_VALUE_UNSUPPORTED,
                         "PowerTransformerEnd",
                         end,
-                        format!("PowerTransformerEnd {label}: winding connection `{other}` is read as wye"),
+                        format!(
+                            "PowerTransformerEnd {label}: winding connection `{other}` is read as \
+                             wye"
+                        ),
                     );
-                    DistWindingConn::Wye
+                    (DistWindingConn::Wye, other.ends_with('n'))
                 }
                 None => {
                     self.note(
                         &C::READ_CIM_DIST_VALUE_DEFAULTED,
                         "PowerTransformerEnd",
                         end,
-                        format!("PowerTransformerEnd {label}: no connectionKind; wye is assumed"),
+                        format!(
+                            "PowerTransformerEnd {label}: no connectionKind; wye with a neutral \
+                             is assumed"
+                        ),
                     );
-                    DistWindingConn::Wye
+                    (DistWindingConn::Wye, true)
                 }
             };
-            let map = self
-                .terminal_phases(&term)
-                .map(|m| m.into_iter().filter(|t| t != "4").collect::<Vec<_>>())
-                .filter(|m| !m.is_empty())
-                .unwrap_or_else(|| default_map.clone());
-            let map = if conn == DistWindingConn::Wye {
+            let stated = self.terminal_phases(&term).filter(|m| !m.is_empty());
+            let map = match (conn, stated) {
+                // A delta winding has no neutral terminal.
+                (DistWindingConn::Delta, Some(map)) => {
+                    map.into_iter().filter(|t| t != "4").collect::<Vec<_>>()
+                }
+                (_, Some(map)) => map,
+                (_, None) => default_map.clone(),
+            };
+            let map = if neutral {
                 with_neutral(map, Configuration::Wye)
             } else {
                 map
