@@ -706,7 +706,6 @@ fn update_rejects_changed_branch_topology() {
     assert!(error.to_string().contains("topology"), "{error}");
 }
 
-
 #[test]
 fn update_rejects_changed_three_winding_impedance() {
     // Three-winding transformers are lowered into three analysis branches.
