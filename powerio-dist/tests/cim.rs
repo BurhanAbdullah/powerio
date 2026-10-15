@@ -789,6 +789,33 @@ fn unusable_sequence_numbers_fall_back_to_phase_order() {
     assert!(close(code.r_series[1][1], 2.2), "{:?}", code.r_series);
 }
 
+/// Single phase segments on different phases share one sequence impedance
+/// code: sequence values expand the same way whichever phase they take.
+#[test]
+fn single_phase_segments_share_a_sequence_impedance_code() {
+    let psi = r#"<cim:PerLengthSequenceImpedance rdf:ID="_pli">
+    <cim:PerLengthSequenceImpedance.r>0.001</cim:PerLengthSequenceImpedance.r>
+    <cim:PerLengthSequenceImpedance.x>0.002</cim:PerLengthSequenceImpedance.x>
+    <cim:PerLengthSequenceImpedance.r0>0.003</cim:PerLengthSequenceImpedance.r0>
+    <cim:PerLengthSequenceImpedance.x0>0.006</cim:PerLengthSequenceImpedance.x0>
+  </cim:PerLengthSequenceImpedance>"#;
+    let second = segment_on_pli(&[("C", 3)])
+        .replace("_l2", "_l3")
+        .replace("l2<", "l3<")
+        .replace("_n3", "_n5")
+        .replace(">n3<", ">n5<");
+    let text = feeder(&format!("{psi}\n{}\n{second}", segment_on_pli(&[("B", 2)])));
+    let net = parse_str(&text, "cim-dist").unwrap();
+    let code = |name: &str| {
+        &net.lines()
+            .iter()
+            .find(|l| l.name == name)
+            .unwrap()
+            .linecode
+    };
+    assert_eq!(code("l2"), code("l3"));
+}
+
 /// A segment using part of a shared impedance matrix writes as its own
 /// impedance object: the output defines every id once and reads back.
 #[test]

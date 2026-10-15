@@ -1031,7 +1031,14 @@ impl<'a> Mapper<'a> {
         let n = rows.len();
         let mut unusable = None;
         if let Some(pli) = self.target("ACLineSegment", line, "ACLineSegment.PerLengthImpedance") {
-            let key = (pli.clone(), rows.to_vec());
+            // Sequence values expand the same way for any phases, so only a
+            // phase matrix's code depends on which rows the segment takes.
+            let key_rows = if self.store.class_of(&pli) == Some("PerLengthPhaseImpedance") {
+                rows.to_vec()
+            } else {
+                (1..=n).collect()
+            };
+            let key = (pli.clone(), key_rows);
             if let Some(name) = seen.get(&key) {
                 return (name.clone(), true);
             }
