@@ -24,14 +24,21 @@ const JSON_EXTENSION: &str = "json";
 /// sync with the constants above.
 pub const CASE_EXTENSIONS_LABEL: &str = ".m, .raw, .aux, .epc, .pwb, .uct, .cdf, .json, .dss";
 
-/// Infer the case family from clear extensions or, for `.json`, the shared
-/// JSON shape classifier. `Some(true)` is distribution, `Some(false)` is
-/// transmission, and `None` means the extension carries no family signal.
+/// Infer the case family from clear extensions, for `.json` the shared JSON
+/// shape classifier, and for `.xml` files and directories the distribution
+/// CIM check. `Some(true)` is distribution, `Some(false)` is transmission, and
+/// `None` means the input carries no family signal.
 pub fn infer_input_family(input: &Path) -> anyhow::Result<Option<bool>> {
     let ext = input
         .extension()
         .and_then(|e| e.to_str())
         .map(str::to_ascii_lowercase);
+    if (input.is_dir() || ext.as_deref() == Some("xml"))
+        && powerio_core::Source::open(input)
+            .is_ok_and(|source| powerio_dist::source_looks_like_cim_dist(&source))
+    {
+        return Ok(Some(true));
+    }
     let Some(ext) = ext.as_deref() else {
         return Ok(None);
     };

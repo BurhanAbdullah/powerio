@@ -235,13 +235,14 @@ enum Command {
     },
     /// Convert a case file to another format. Transmission formats convert
     /// through the neutral hub; distribution formats (dss, pmd-json,
-    /// bmopf-json) through the wire coordinate distribution model. The two
-    /// families do not mix.
+    /// bmopf-json, cim-dist) through the wire coordinate distribution model.
+    /// The two families do not mix.
     Convert {
         /// Input case file, or a gridfm dataset directory with `--from gridfm`.
         /// The format is inferred from the extension (`.m`, `.json`, `.raw`,
-        /// `.aux`, `.dss`) unless `--from` is given. `-` reads the case from
-        /// standard input, which requires `--from`.
+        /// `.aux`, `.dss`, and `.xml` by its content) unless `--from` is
+        /// given. `-` reads the case from standard input, which requires
+        /// `--from`.
         input: PathBuf,
         /// Target format.
         #[arg(long, value_enum)]
@@ -557,6 +558,10 @@ enum FormatArg {
     /// IEEE BMOPF JSON distribution case (parse and emit).
     #[value(name = "bmopf-json", alias = "bmopf")]
     BmopfJson,
+    /// Distribution CIM, CIM100 RDF/XML (parse and emit; parse also reads a
+    /// directory of documents).
+    #[value(name = "cim-dist", alias = "cimdist")]
+    CimDist,
     /// Re-encode against the BMOPF 0.1.0 schema.
     #[value(name = "bmopf-json@0.1.0")]
     Bmopf010,
@@ -602,7 +607,8 @@ impl FormatArg {
             | FormatArg::PmdJson
             | FormatArg::BmopfJson
             | FormatArg::Bmopf010
-            | FormatArg::Bmopf020 => return None,
+            | FormatArg::Bmopf020
+            | FormatArg::CimDist => return None,
         })
     }
 
@@ -618,6 +624,7 @@ impl FormatArg {
             FormatArg::BmopfJson | FormatArg::Bmopf010 | FormatArg::Bmopf020 => {
                 Some(DistTargetFormat::BmopfJson)
             }
+            FormatArg::CimDist => Some(DistTargetFormat::CimDist),
             FormatArg::Matpower
             | FormatArg::PowerModelsJson
             | FormatArg::EgretJson
@@ -675,6 +682,7 @@ impl FormatArg {
             FormatArg::BmopfJson => "bmopf-json",
             FormatArg::Bmopf010 => "bmopf-json@0.1.0",
             FormatArg::Bmopf020 => "bmopf-json@0.2.0",
+            FormatArg::CimDist => "cim-dist",
         }
     }
 
@@ -2416,7 +2424,7 @@ fn run_geo_apply(
                     failure!(
                         REQUEST_CLI_TARGET_UNSUPPORTED,
                         "`{}` is not a distribution text target; a distribution case writes \
-                         back to dss, pmd-json, or bmopf-json",
+                         back to dss, pmd-json, bmopf-json, or cim-dist",
                         f.name()
                     )
                 })?,
@@ -2979,7 +2987,7 @@ fn reject_nontransmission_from(from: Option<FormatArg>) -> anyhow::Result<()> {
             fail_with!(
                 REQUEST_CLI_FAMILY_MISMATCH,
                 "`{}` is a distribution format; this command reads transmission cases \
-                 (use `convert` to bridge dss, pmd-json, and bmopf-json)",
+                 (use `convert` to bridge dss, pmd-json, bmopf-json, and cim-dist)",
                 f.name()
             );
         }
