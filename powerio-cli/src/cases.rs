@@ -33,10 +33,7 @@ pub fn infer_input_family(input: &Path) -> anyhow::Result<Option<bool>> {
         .extension()
         .and_then(|e| e.to_str())
         .map(str::to_ascii_lowercase);
-    if (input.is_dir() || ext.as_deref() == Some("xml"))
-        && powerio_core::Source::open(input)
-            .is_ok_and(|source| powerio_dist::source_looks_like_cim_dist(&source))
-    {
+    if looks_like_cim_dist_input(input, ext.as_deref()) {
         return Ok(Some(true));
     }
     let Some(ext) = ext.as_deref() else {
@@ -49,6 +46,43 @@ pub fn infer_input_family(input: &Path) -> anyhow::Result<Option<bool>> {
         return Ok(Some(true));
     }
     Ok(classified_json(input)?.map(|case| case.is_distribution()))
+}
+
+/// Whether a `.xml` file, or a directory holding one, reads as distribution
+/// CIM. Each file's first 16 KiB settle the header checks first, so a CGMES
+/// or XIIDM input is not read in full here before its own parse reads it.
+fn looks_like_cim_dist_input(input: &Path, ext: Option<&str>) -> bool {
+    let candidate = if input.is_dir() {
+        std::fs::read_dir(input).is_ok_and(|entries| {
+            entries.flatten().any(|entry| {
+                let path = entry.path();
+                path.extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("xml"))
+                    && cim_dist_head(&path)
+            })
+        })
+    } else {
+        ext == Some("xml") && cim_dist_head(input)
+    };
+    candidate
+        && powerio_core::Source::open(input)
+            .is_ok_and(|source| powerio_dist::source_looks_like_cim_dist(&source))
+}
+
+/// Whether a file opens like a distribution CIM document: RDF in a CIM
+/// namespace with no CGMES `md:FullModel` header in its first 16 KiB.
+fn cim_dist_head(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut head = Vec::with_capacity(16 * 1024);
+    if file.take(16 * 1024).read_to_end(&mut head).is_err() {
+        return false;
+    }
+    let has = |needle: &[u8]| head.windows(needle.len()).any(|w| w == needle);
+    has(b"22-rdf-syntax-ns#") && (has(b"CIM100#") || has(b"CIM-schema-cim")) && !has(b"FullModel")
 }
 
 /// A `.json` case read and classified in one pass. The text rides along so the
