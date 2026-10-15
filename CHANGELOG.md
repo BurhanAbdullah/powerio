@@ -5,8 +5,8 @@
 - Distribution CIM reads and writes through the `cim-dist` format: CIM100
   RDF/XML (the iec61970cim17v40 and iec61968cim13v13 release) in the profile
   the GridAPPS-D and CIMHub tools exchange, into and from
-  `MulticonductorNetwork`. A single document or a directory of documents
-  parses; one document is written. A `.xml` document, a nameless source, or a
+  `MulticonductorNetwork`. A single document, or the top level documents of a
+  directory, parse; one document is written. A `.xml` document, a nameless source, or a
   directory with per phase CIM classes and no CGMES `md:FullModel` header
   routes to it, and CGMES and XIIDM routing is unchanged.
 
@@ -20,6 +20,18 @@
   through `EMIT.CIM_DIST.*` codes. Same format emission returns the retained
   bytes of a single document; canonical output carries UUIDv5 mRIDs and is
   byte stable from write to read to write.
+
+- A CIM line segment whose impedance the reader cannot read, for example one
+  described only by wire spacing and wire data, parses with an error finding,
+  and conversion to another format refuses it instead of writing a line with
+  zero impedance, as conversion already refuses OpenDSS geometry lines.
+
+- A network read from distribution CIM records `cim-dist` as its source
+  format, and PowerIO IR carries it. The schema for the next release,
+  `pio-ir/2/0.11.6/schema.json`, adds `cim-dist` to the distribution source
+  formats and changes nothing else; the IR version stays 2. A 0.11.5 reader
+  rejects an IR document whose source format is `cim-dist` and reads every
+  other document as before.
 
 ## 0.11.5
 

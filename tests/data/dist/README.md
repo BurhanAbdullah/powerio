@@ -98,8 +98,9 @@ dict. Regenerate with the same command when bumping the PMD version.
 
 Each directory carries its own license file next to the data it covers:
 `bmopf/License.md`, `opendss/License.txt` (the BSD 3 clause notice retained
-from the upstream distribution), `micro/License.md` (CC BY 4.0), and
-`pmd/License.md` (derivatives carry their sources' licenses). The repository
+from the upstream distribution), `micro/License.md` (CC BY 4.0),
+`cim/License.md` (MIT OR Apache-2.0), and `pmd/License.md` (derivatives carry
+their sources' licenses). The repository
 code license does not apply to vendored data.
 
 The two BMOPF examples carry different licenses, so `bmopf/License.md` states

@@ -1005,6 +1005,34 @@ fn bundled_conductors_write_each_phase_once() {
     assert_eq!(back.lines().len(), net.lines().len());
 }
 
+/// Every `rdf:ID` in written CIM is defined once, and every `rdf:resource`
+/// naming a document object (`#_id`) names one of them.
+fn assert_references_resolve(text: &str, path: &std::path::Path) {
+    let attribute = |name: &str| -> Vec<&str> {
+        text.split(name)
+            .skip(1)
+            .map(|rest| rest.split('"').next().unwrap())
+            .collect()
+    };
+    let ids = attribute("rdf:ID=\"");
+    let defined: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
+    assert_eq!(
+        defined.len(),
+        ids.len(),
+        "{}: an rdf:ID repeats",
+        path.display()
+    );
+    for target in attribute("rdf:resource=\"") {
+        if let Some(id) = target.strip_prefix('#') {
+            assert!(
+                defined.contains(id),
+                "{}: rdf:resource `{target}` names no written object",
+                path.display()
+            );
+        }
+    }
+}
+
 /// Every distribution fixture the repository carries writes CIM that the
 /// reader accepts, and the canonical output is idempotent: write, read,
 /// write is byte stable.
@@ -1031,6 +1059,7 @@ fn every_distribution_fixture_writes_stable_cim() {
                 continue;
             };
             let first = emit_value(&net, DistTargetFormat::CimDist);
+            assert_references_resolve(&first.text, &path);
             let back = parse_str(&first.text, "cim-dist").unwrap_or_else(|e| {
                 panic!("{}: CIM output does not read back: {e}", path.display())
             });
