@@ -427,6 +427,28 @@ fn a_directory_reads_as_one_case() {
     assert!(net.source.is_none());
 }
 
+/// A directory case is its top level `.xml` documents: a copy under a
+/// subdirectory is not merged in, and a directory whose documents sit only
+/// in a subdirectory is not a case.
+#[test]
+fn a_directory_reads_only_its_top_level_documents() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("feeder.xml"), feeder("")).unwrap();
+    std::fs::create_dir(dir.path().join("archive")).unwrap();
+    std::fs::write(dir.path().join("archive/feeder.xml"), feeder("")).unwrap();
+    std::fs::write(dir.path().join("archive/schema.xml"), "<schema/>").unwrap();
+    let net = parse_file(dir.path(), Some("cim-dist")).unwrap();
+    assert_eq!(net.lines().len(), 1);
+
+    let nested = tempfile::tempdir().unwrap();
+    std::fs::create_dir(nested.path().join("archive")).unwrap();
+    std::fs::copy(fixture(), nested.path().join("archive/feeder.xml")).unwrap();
+    let source = powerio_core::Source::open(nested.path()).unwrap();
+    assert!(!powerio_dist::source_looks_like_cim_dist(&source));
+    let error = parse_file(nested.path(), Some("cim-dist")).unwrap_err();
+    assert!(error.to_string().contains("top level"), "{error}");
+}
+
 /// What the July reader dropped silently is mapped or reported.
 #[test]
 fn unmapped_and_partial_content_is_reported() {

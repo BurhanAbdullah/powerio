@@ -48,41 +48,63 @@ pub fn infer_input_family(input: &Path) -> anyhow::Result<Option<bool>> {
     Ok(classified_json(input)?.map(|case| case.is_distribution()))
 }
 
-/// Whether a `.xml` file, or a directory holding one, reads as distribution
-/// CIM. Each file's first 16 KiB settle the header checks first, so a CGMES
-/// or XIIDM input is not read in full here before its own parse reads it.
+/// Whether a `.xml` file, or a directory holding one at its top level, reads
+/// as distribution CIM.
 fn looks_like_cim_dist_input(input: &Path, ext: Option<&str>) -> bool {
+    cim_dist_source_with_ext(input, ext).is_some()
+}
+
+/// The opened source of a `.xml` file, or of a directory holding one at its
+/// top level, that reads as distribution CIM. Each file's first 16 KiB settle
+/// the header checks first, so a CGMES or XIIDM input is not read in full here
+/// before its own parse reads it. The source keeps the documents the check
+/// read, so the parse that takes it reads no file twice.
+pub fn cim_dist_source(input: &Path) -> Option<powerio_core::Source> {
+    let ext = input
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    cim_dist_source_with_ext(input, ext.as_deref())
+}
+
+fn cim_dist_source_with_ext(input: &Path, ext: Option<&str>) -> Option<powerio_core::Source> {
     let candidate = if input.is_dir() {
         std::fs::read_dir(input).is_ok_and(|entries| {
             entries.flatten().any(|entry| {
                 let path = entry.path();
-                path.extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| e.eq_ignore_ascii_case("xml"))
+                path.is_file()
+                    && path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .is_some_and(|e| e.eq_ignore_ascii_case("xml"))
                     && cim_dist_head(&path)
             })
         })
     } else {
         ext == Some("xml") && cim_dist_head(input)
     };
-    candidate
-        && powerio_core::Source::open(input)
-            .is_ok_and(|source| powerio_dist::source_looks_like_cim_dist(&source))
+    if !candidate {
+        return None;
+    }
+    let source = powerio_core::Source::open(input).ok()?;
+    powerio_dist::source_looks_like_cim_dist(&source).then_some(source)
 }
 
-/// Whether a file opens like a distribution CIM document: RDF in a CIM
-/// namespace with no CGMES `md:FullModel` header in its first 16 KiB.
+/// Whether a file's first 16 KiB open like a distribution CIM document.
 fn cim_dist_head(path: &Path) -> bool {
     use std::io::Read;
     let Ok(file) = std::fs::File::open(path) else {
         return false;
     };
-    let mut head = Vec::with_capacity(16 * 1024);
-    if file.take(16 * 1024).read_to_end(&mut head).is_err() {
+    let mut head = Vec::with_capacity(powerio_dist::CIM_DIST_HEAD_BYTES);
+    if file
+        .take(powerio_dist::CIM_DIST_HEAD_BYTES as u64)
+        .read_to_end(&mut head)
+        .is_err()
+    {
         return false;
     }
-    let has = |needle: &[u8]| head.windows(needle.len()).any(|w| w == needle);
-    has(b"22-rdf-syntax-ns#") && (has(b"CIM100#") || has(b"CIM-schema-cim")) && !has(b"FullModel")
+    powerio_dist::looks_like_cim_dist_header(&head)
 }
 
 /// A `.json` case read and classified in one pass. The text rides along so the

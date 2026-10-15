@@ -48,27 +48,51 @@ const DISTRIBUTION_MARKERS: [&[u8]; 10] = [
 ];
 
 /// How much of a document the header checks read.
-const HEAD_BYTES: usize = 16 * 1024;
+pub const CIM_DIST_HEAD_BYTES: usize = 16 * 1024;
 
-/// Whether a document reads as distribution CIM: RDF/XML in a CIM namespace
+/// Whether a document opens like distribution CIM: RDF/XML in a CIM namespace
 /// with no `md:FullModel` header (which marks a CGMES profile) in its first
-/// 16 KiB, and at least one per phase or distribution only class anywhere.
+/// [`CIM_DIST_HEAD_BYTES`]. A caller holding only a file's head can rule it
+/// out with this before reading the whole file for [`looks_like_cim_dist`].
+#[must_use]
+pub fn looks_like_cim_dist_header(head: &[u8]) -> bool {
+    let head = &head[..head.len().min(CIM_DIST_HEAD_BYTES)];
+    has(head, b"22-rdf-syntax-ns#")
+        && (has(head, b"CIM100#") || has(head, b"CIM-schema-cim"))
+        && !has(head, b"FullModel")
+}
+
+/// Whether a document reads as distribution CIM: its header passes
+/// [`looks_like_cim_dist_header`], and it holds at least one per phase or
+/// distribution only class anywhere.
 ///
 /// The check scans bytes, so it never requires the document to be UTF-8.
 #[must_use]
 pub fn looks_like_cim_dist(bytes: &[u8]) -> bool {
-    let head = &bytes[..bytes.len().min(HEAD_BYTES)];
-    let has = |haystack: &[u8], needle: &[u8]| memchr::memmem::find(haystack, needle).is_some();
-    has(head, b"22-rdf-syntax-ns#")
-        && (has(head, b"CIM100#") || has(head, b"CIM-schema-cim"))
-        && !has(head, b"FullModel")
+    looks_like_cim_dist_header(bytes)
         && DISTRIBUTION_MARKERS.iter().any(|marker| has(bytes, marker))
 }
 
+fn has(haystack: &[u8], needle: &[u8]) -> bool {
+    memchr::memmem::find(haystack, needle).is_some()
+}
+
+/// Whether a directory entry is a document of the case: an `.xml` file at
+/// the directory's top level. Subdirectories (archives, schemas, other
+/// cases) are not part of it.
+fn is_case_document(entry: &str) -> bool {
+    !entry.contains('/')
+        && std::path::Path::new(entry)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("xml"))
+}
+
 /// Whether a source holds distribution CIM: its own buffer reads as
-/// distribution CIM ([`looks_like_cim_dist`]), or, for a directory, one of its
-/// `.xml` documents does. The reads go through the source, so they count
-/// against its acquisition budget and are cached for the parse that follows.
+/// distribution CIM ([`looks_like_cim_dist`]), or, for a directory, one of the
+/// `.xml` documents at its top level does. The reads go through the source,
+/// so they count against its acquisition budget and are cached for the parse
+/// that follows.
 #[must_use]
 pub fn source_looks_like_cim_dist(source: &powerio_core::Source) -> bool {
     if !source.is_directory() {
@@ -80,10 +104,7 @@ pub fn source_looks_like_cim_dist(source: &powerio_core::Source) -> bool {
         return false;
     };
     entries.iter().any(|entry| {
-        std::path::Path::new(entry.as_str())
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("xml"))
+        is_case_document(entry.as_str())
             && source
                 .root_buffer(entry.as_str())
                 .is_ok_and(|buffer| looks_like_cim_dist(buffer.content_bytes()))
@@ -92,7 +113,15 @@ pub fn source_looks_like_cim_dist(source: &powerio_core::Source) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::looks_like_cim_dist;
+    use super::{is_case_document, looks_like_cim_dist};
+
+    #[test]
+    fn a_case_reads_only_the_top_level_xml_documents() {
+        assert!(is_case_document("feeder.xml"));
+        assert!(is_case_document("feeder.XML"));
+        assert!(!is_case_document("archive/feeder.xml"));
+        assert!(!is_case_document("notes.txt"));
+    }
 
     const RDF: &str = r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">"#;
 

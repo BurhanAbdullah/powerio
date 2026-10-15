@@ -112,7 +112,8 @@ const CONTEXT_PROPERTIES: [&str; 8] = [
 // ---------------------------------------------------------------------------
 
 /// Read a source into the multiconductor model: one CIMXML document, or every
-/// `.xml` file of a directory read as one case, in name order.
+/// `.xml` file at a directory's top level read as one case, in name order.
+/// Files in subdirectories are not part of the case.
 pub(crate) fn parse_cim_collecting(
     source: &powerio_core::Source,
     diags: &mut crate::collect::Diagnostics,
@@ -125,7 +126,7 @@ pub(crate) fn parse_cim_collecting(
             .and_then(|s| s.to_str())
             .map(str::to_owned);
         for name in source.entry_names().map_err(|e| source_error(&e))? {
-            if !has_xml_extension(name.as_str()) {
+            if !super::is_case_document(name.as_str()) {
                 continue;
             }
             let buffer = source
@@ -135,7 +136,7 @@ pub(crate) fn parse_cim_collecting(
         }
         if documents.is_empty() {
             return Err(format_error(format!(
-                "the directory {} holds no .xml instance files",
+                "the directory {} holds no .xml instance files at its top level",
                 source.name()
             )));
         }
@@ -154,13 +155,6 @@ pub(crate) fn parse_cim_collecting(
         parsed.push((name.clone(), parse_cimxml(text)?));
     }
     read_documents(parsed, name_hint.as_deref(), diags)
-}
-
-fn has_xml_extension(name: &str) -> bool {
-    std::path::Path::new(name)
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("xml"))
 }
 
 fn format_error(message: String) -> Error {

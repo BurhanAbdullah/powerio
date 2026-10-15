@@ -2932,6 +2932,12 @@ fn parse_family_case(input: &Path, from: Option<FormatArg>) -> anyhow::Result<Fa
     if let Some(case) = cases::classified_json(input)? {
         return parse_classified_case(&case, input);
     }
+    if let Some(source) = cases::cim_dist_source(input) {
+        // The check already read the documents; the parse reuses them.
+        let net = module_io::load_multiconductor_source(source, None)
+            .with_context(|| format!("reading {}", input.display()))?;
+        return Ok(FamilyCase::Distribution(Box::new(net)));
+    }
     if cases::looks_like_distribution_input(input)? {
         let net = module_io::load_multiconductor_module(input, None)
             .with_context(|| format!("reading {}", input.display()))?;
@@ -3110,6 +3116,25 @@ mod tests {
         .unwrap();
         assert!(!looks_like_distribution_input(&tmp).unwrap());
         let _ = std::fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn cim_directories_route_by_their_top_level_documents() {
+        let cim = std::fs::read_to_string(data("dist/cim/micro_feeder.xml")).unwrap();
+        let top = tempfile::tempdir().unwrap();
+        std::fs::write(top.path().join("feeder.xml"), &cim).unwrap();
+        assert!(super::cases::cim_dist_source(top.path()).is_some());
+        assert!(looks_like_distribution_input(top.path()).unwrap());
+
+        // The CLI and the library agree that documents in a subdirectory
+        // do not make a case.
+        let nested = tempfile::tempdir().unwrap();
+        std::fs::create_dir(nested.path().join("archive")).unwrap();
+        std::fs::write(nested.path().join("archive/feeder.xml"), &cim).unwrap();
+        assert!(super::cases::cim_dist_source(nested.path()).is_none());
+        assert!(!looks_like_distribution_input(nested.path()).unwrap());
+        let source = powerio_core::Source::open(nested.path()).unwrap();
+        assert!(!powerio_dist::source_looks_like_cim_dist(&source));
     }
 
     #[test]
