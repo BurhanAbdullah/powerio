@@ -513,10 +513,9 @@ pub(crate) fn emit_cim_dist_text(net: &MulticonductorNetwork) -> TextEmission {
                     load.q_nom.first().copied().unwrap_or(0.0),
                 );
                 match first {
-                    Some(first) if named(first) => (
-                        vec![(first, power.0, power.1)],
-                        second.is_some_and(&named),
-                    ),
+                    Some(first) if named(first) => {
+                        (vec![(first, power.0, power.1)], second.is_some_and(&named))
+                    }
                     _ => (Vec::new(), false),
                 }
             } else {
