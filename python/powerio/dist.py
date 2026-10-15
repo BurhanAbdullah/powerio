@@ -45,8 +45,8 @@ class MulticonductorNetwork:
 
     @property
     def source_format(self) -> Optional[str]:
-        """Format parsed from: ``dss``, ``pmd-json``, or ``bmopf-json``; ``None``
-        for a network read from distribution CIM (``cim-dist``) or built in code."""
+        """Format parsed from: ``dss``, ``pmd-json``, ``bmopf-json``, or
+        ``cim-dist``; ``None`` for a network built in code."""
         return self._inner.source_format()
 
     @property

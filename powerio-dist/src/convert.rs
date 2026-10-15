@@ -471,10 +471,7 @@ impl DistTargetFormat {
                     Some(DistSourceFormat::BmopfJson)
                 )
                 | (DistTargetFormat::PmdJson, Some(DistSourceFormat::PmdJson))
-                // A CIM read leaves the value's source format unset: the IR
-                // records no `cim-dist` source format yet. The retained
-                // source's declared format still has to be `cim-dist`.
-                | (DistTargetFormat::CimDist, None)
+                | (DistTargetFormat::CimDist, Some(DistSourceFormat::CimDist))
         )
     }
 }

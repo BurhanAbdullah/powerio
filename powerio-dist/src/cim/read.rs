@@ -21,8 +21,8 @@ use super::{sequence_to_phase, wrap_angle, z_base};
 use crate::diagnostics::{Diagnostic, DiagnosticInfo, attach_target, codes as C};
 use crate::model::{
     ConductorMatrix, Configuration, DistBus, DistLine, DistLineCode, DistLoad, DistShunt,
-    DistSwitch, DistTransformer, DistWinding, DistWindingConn, MulticonductorNetwork,
-    MulticonductorNetworkTables, VoltageSource,
+    DistSourceFormat, DistSwitch, DistTransformer, DistWinding, DistWindingConn,
+    MulticonductorNetwork, MulticonductorNetworkTables, VoltageSource,
 };
 use crate::readiness::UNRESOLVED_IMPEDANCE_KEY;
 use crate::{Error, Result};
@@ -534,6 +534,7 @@ fn read_documents(
 
     let net = MulticonductorNetwork::from_tables(MulticonductorNetworkTables {
         name,
+        source_format: Some(DistSourceFormat::CimDist),
         base_frequency,
         buses,
         line_codes,
