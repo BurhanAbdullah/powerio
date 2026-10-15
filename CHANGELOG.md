@@ -2,13 +2,23 @@
 
 ## Unreleased
 
+- Remove the paired release workflows and scripts, which were never
+  activated. A release stays a tag and a published draft, and PowerIO.jl
+  releases itself after each published powerio release.
+
+- Release builds run PowerIO.jl's tests against every packaged C library
+  tarball, each on its own platform, before the draft release exists. A
+  tarball the Julia release would reject now stops the release before
+  anything is published.
+
 - Distribution CIM reads and writes through the `cim-dist` format: CIM100
   RDF/XML (the iec61970cim17v40 and iec61968cim13v13 release) in the profile
   the GridAPPS-D and CIMHub tools exchange, into and from
   `MulticonductorNetwork`. A single document, or the top level documents of a
-  directory, parse; one document is written. A `.xml` document, a nameless source, or a
-  directory with per phase CIM classes and no CGMES `md:FullModel` header
-  routes to it, and CGMES and XIIDM routing is unchanged.
+  directory, parse; one document is written. A `.xml` document, a nameless
+  source, or a directory with per phase CIM classes and no CGMES
+  `md:FullModel` header routes to it, and CGMES and XIIDM routing is
+  unchanged.
 
 - The CIM reader maps connectivity nodes, line segments with phase or
   sequence impedance, loads, linear shunt compensators with their sections,
