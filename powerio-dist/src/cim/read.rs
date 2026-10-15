@@ -18,7 +18,7 @@ use std::f64::consts::PI;
 
 use super::xml::{CimDocument, CimObject, PropValue, parse_cimxml};
 use super::{sequence_to_phase, wrap_angle, z_base};
-use crate::diagnostics::{Diagnostic, DiagnosticInfo, attach_target, codes as C};
+use crate::diagnostics::{Diagnostic, DiagnosticInfo, codes as C};
 use crate::model::{
     ConductorMatrix, Configuration, DistBus, DistLine, DistLineCode, DistLoad, DistShunt,
     DistSourceFormat, DistSwitch, DistTransformer, DistWinding, DistWindingConn,
@@ -260,7 +260,8 @@ impl Store {
                         );
                         let mut diagnostic =
                             Diagnostic::of(&C::READ_CIM_DIST_VALUE_CONFLICT, message);
-                        attach_target(&mut diagnostic, format!("{class} {id}"));
+                        let _ = diagnostic.insert_detail("class", serde_json::Value::from(&*class));
+                        let _ = diagnostic.insert_detail("mrid", serde_json::Value::from(&*id));
                         diags.record(diagnostic);
                     }
                     None => existing.props.push((key, value)),
@@ -600,7 +601,6 @@ impl<'a> Mapper<'a> {
         let mut diagnostic = Diagnostic::of(info, message);
         let _ = diagnostic.insert_detail("class", serde_json::Value::from(class));
         let _ = diagnostic.insert_detail("mrid", serde_json::Value::from(id));
-        attach_target(&mut diagnostic, format!("{class} {id}"));
         self.diags.record(diagnostic);
     }
 
@@ -855,12 +855,10 @@ impl<'a> Mapper<'a> {
             .find_map(|f| self.store.f(f, "BaseFrequency.frequency"))
             .filter(|f| *f > 0.0);
         stated.unwrap_or_else(|| {
-            let mut diagnostic = Diagnostic::of(
+            self.diags.record(Diagnostic::of(
                 &C::READ_CIM_DIST_VALUE_DEFAULTED,
                 "no BaseFrequency states a frequency; 60 Hz is assumed",
-            );
-            attach_target(&mut diagnostic, "BaseFrequency".to_owned());
-            self.diags.record(diagnostic);
+            ));
             60.0
         })
     }
@@ -2387,7 +2385,6 @@ impl<'a> Mapper<'a> {
             );
             let _ = diagnostic.insert_detail("class", serde_json::Value::from(class));
             let _ = diagnostic.insert_detail("count", serde_json::Value::from(count));
-            attach_target(&mut diagnostic, class.to_owned());
             self.diags.record(diagnostic);
         }
         for ((class, key), count) in fields {
@@ -2403,7 +2400,6 @@ impl<'a> Mapper<'a> {
             let _ = diagnostic.insert_detail("class", serde_json::Value::from(class));
             let _ = diagnostic.insert_detail("property", serde_json::Value::from(key));
             let _ = diagnostic.insert_detail("count", serde_json::Value::from(count));
-            attach_target(&mut diagnostic, format!("{class}.{key}"));
             self.diags.record(diagnostic);
         }
         for ((class, key), count) in nested {
@@ -2417,7 +2413,6 @@ impl<'a> Mapper<'a> {
             let _ = diagnostic.insert_detail("class", serde_json::Value::from(class));
             let _ = diagnostic.insert_detail("property", serde_json::Value::from(key));
             let _ = diagnostic.insert_detail("count", serde_json::Value::from(count));
-            attach_target(&mut diagnostic, format!("{class}.{key}"));
             self.diags.record(diagnostic);
         }
     }

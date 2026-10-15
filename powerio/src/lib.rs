@@ -1241,6 +1241,30 @@ mod tests {
             panic!("memory destination returned a path output");
         };
         assert_eq!(artifacts[0].bytes(), bytes);
+
+        // The network records where it came from, and the IR carries it.
+        let PioValue::MulticonductorNetwork(network) = module.value() else {
+            panic!("distribution CIM parses to a multiconductor network");
+        };
+        assert_eq!(
+            *network.source_format(),
+            Some(powerio_dist::DistSourceFormat::CimDist)
+        );
+        let stored = serialize(&module, Destination::memory("feeder.pio.json").unwrap()).unwrap();
+        let EmittedOutput::Memory { artifacts } = stored.into_output() else {
+            panic!("memory destination returned a path output");
+        };
+        let back = deserialize(
+            Source::from_memory("feeder.pio.json", artifacts[0].bytes().to_vec()).unwrap(),
+        )
+        .unwrap();
+        let PioValue::MulticonductorNetwork(network) = back.value() else {
+            panic!("the IR keeps the multiconductor network");
+        };
+        assert_eq!(
+            *network.source_format(),
+            Some(powerio_dist::DistSourceFormat::CimDist)
+        );
     }
 
     #[test]
