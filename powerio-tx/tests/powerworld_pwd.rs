@@ -19,7 +19,7 @@ use std::path::Path;
 
 use powerio_tx::PwdSubstation;
 use powerio_tx::format::powerworld::{
-    __parse_aux, __parse_pwd, __parse_pwd_display, __parse_pwd_file,
+    __parse_aux, __parse_pwd, __parse_pwd_display, __parse_pwd_file, __parse_pwd_layer,
 };
 
 /// (number, name, latitude, longitude) per aux Substation row. Handles both
@@ -338,7 +338,6 @@ fn a_titled_display_header_finds_the_stamp_past_its_title() {
         (plain.canvas_width, plain.canvas_height)
     );
 }
-
 
 /// The shared-layer decoder follows more untrusted offsets than the legacy
 /// substation-only reader. Keep its corruption behavior explicit: truncated
