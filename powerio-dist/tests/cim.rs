@@ -1,211 +1,631 @@
-//! Distribution CIM (IEC 61968-13 / GridAPPS-D) import, pinned on a
-//! hand-computed micro feeder, and the payoff: a CIM feeder converts to
-//! OpenDSS, PMD, and BMOPF through the shared distribution machinery.
+//! Distribution CIM (CIM100 RDF/XML, GridAPPS-D style) import and export,
+//! pinned on a hand computed micro feeder, and the payoff: a CIM feeder
+//! converts to OpenDSS, PMD, and BMOPF through the shared distribution
+//! machinery, and every distribution source writes CIM.
 
 use std::path::PathBuf;
 
-use powerio_dist::{
-    Configuration, DistTargetFormat, WindingConn, parse_cim_file, parse_file, parse_str,
-};
+use powerio_dist::{Configuration, DiagnosticSeverity, DistTargetFormat, DistWindingConn};
+
+mod helpers;
+use helpers::{emit_value, parse_file, parse_str};
 
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests/data/dist/cim/micro_feeder.xml")
+}
+
+fn micro(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../tests/data/dist/micro")
+        .join(name)
 }
 
 fn close(a: f64, b: f64) -> bool {
     (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0)
 }
 
-#[test]
-#[allow(clippy::float_cmp)] // exact hand-computed fixture literals are the assertion
-fn micro_feeder_maps_exactly() {
-    let net = parse_cim_file(fixture()).unwrap();
-    assert_eq!(net.source_format, Some(powerio_dist::DistSourceFormat::Cim));
-    assert_eq!(net.base_frequency, 60.0);
+/// The rendered findings with a code from `codes`.
+fn findings<'a>(warnings: &'a [String], code: &str) -> Vec<&'a String> {
+    warnings.iter().filter(|w| w.starts_with(code)).collect()
+}
 
-    // Four connectivity nodes → four buses; the wye-secondary node carries a
+const RDF_OPEN: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+"#;
+
+/// A two bus feeder: a source, a three phase segment with a phase impedance
+/// matrix, and whatever `extra` adds.
+fn feeder(extra: &str) -> String {
+    format!(
+        r##"{RDF_OPEN}
+  <cim:BaseFrequency rdf:ID="_f"><cim:BaseFrequency.frequency>60</cim:BaseFrequency.frequency></cim:BaseFrequency>
+  <cim:ConnectivityNode rdf:ID="_n1"><cim:IdentifiedObject.name>n1</cim:IdentifiedObject.name></cim:ConnectivityNode>
+  <cim:ConnectivityNode rdf:ID="_n2"><cim:IdentifiedObject.name>n2</cim:IdentifiedObject.name></cim:ConnectivityNode>
+  <cim:EnergySource rdf:ID="_src">
+    <cim:IdentifiedObject.name>src</cim:IdentifiedObject.name>
+    <cim:EnergySource.voltageMagnitude>12470</cim:EnergySource.voltageMagnitude>
+  </cim:EnergySource>
+  <cim:Terminal rdf:ID="_src_t1">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_src"/>
+    <cim:Terminal.ConnectivityNode rdf:resource="#_n1"/>
+    <cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode.ABC"/>
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:ACLineSegment rdf:ID="_l1">
+    <cim:IdentifiedObject.name>l1</cim:IdentifiedObject.name>
+    <cim:Conductor.length>100</cim:Conductor.length>
+    <cim:ACLineSegment.r>0.1</cim:ACLineSegment.r>
+    <cim:ACLineSegment.x>0.2</cim:ACLineSegment.x>
+  </cim:ACLineSegment>
+  <cim:Terminal rdf:ID="_l1_t1">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_l1"/>
+    <cim:Terminal.ConnectivityNode rdf:resource="#_n1"/>
+    <cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode.ABC"/>
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="_l1_t2">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_l1"/>
+    <cim:Terminal.ConnectivityNode rdf:resource="#_n2"/>
+    <cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode.ABC"/>
+    <cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+{extra}
+</rdf:RDF>
+"##
+    )
+}
+
+#[test]
+#[allow(clippy::float_cmp)] // exact hand computed fixture literals are the assertion
+fn micro_feeder_maps_exactly() {
+    let net = parse_file(fixture(), None).unwrap();
+    let declared = net.module.source().and_then(powerio_core::Source::format);
+    assert_eq!(
+        declared.map(powerio_core::FormatId::as_str),
+        Some("cim-dist")
+    );
+    assert_eq!(net.base_frequency(), 60.0);
+
+    // Four connectivity nodes, four buses; the wye secondary node carries a
     // grounded neutral terminal.
-    assert_eq!(net.buses.len(), 4);
+    assert_eq!(net.buses().len(), 4);
     let n4 = net.bus("n4").expect("n4 present");
     assert!(n4.terminals.contains(&"4".to_string()));
     assert_eq!(n4.grounded, vec!["4".to_string()]);
 
-    // Line + its own linecode; impedance stays in ohm/m, length in meters.
-    assert_eq!(net.lines.len(), 1);
-    let line = &net.lines[0];
+    // A line and its own line code; impedance stays in ohm/m, length in m.
+    assert_eq!(net.lines().len(), 1);
+    let line = &net.lines()[0];
     assert_eq!(line.bus_from, "sourcebus");
     assert_eq!(line.bus_to, "n2");
     assert_eq!(line.terminal_map_from, ["1", "2", "3"]);
     assert!(close(line.length, 100.0));
-    let lc = net.linecode(&line.linecode).expect("linecode present");
-    assert_eq!(lc.n_conductors, 3);
-    assert!(close(lc.r_series[0][0], 0.001), "self r/m");
-    assert!(close(lc.r_series[1][0], 0.0004), "mutual r/m");
-    assert!(close(lc.x_series[0][0], 0.002));
-    // Shunt susceptance halves at each end.
-    assert!(close(lc.b_from[0][0], 0.5e-8));
-    assert!(close(lc.b_to[0][0], 0.5e-8));
+    let code = net.linecode(&line.linecode).expect("line code present");
+    assert_eq!(code.n_conductors, 3);
+    assert!(close(code.r_series[0][0], 0.001), "self r/m");
+    assert!(close(code.r_series[1][0], 0.0004), "mutual r/m");
+    assert!(close(code.x_series[0][0], 0.002));
+    // The shunt susceptance halves at each end.
+    assert!(close(code.b_from[0][0], 0.5e-8));
+    assert!(close(code.b_to[0][0], 0.5e-8));
 
-    // Wye load, per-phase watts/vars straight off the phase objects.
-    assert_eq!(net.loads.len(), 1);
-    let load = &net.loads[0];
+    // A wye load: per phase watts and vars straight off the phase objects.
+    assert_eq!(net.loads().len(), 1);
+    let load = &net.loads()[0];
     assert_eq!(load.bus, "n2");
     assert_eq!(load.configuration, Configuration::Wye);
+    assert_eq!(load.terminal_map, ["1", "2", "3", "4"]);
     assert_eq!(load.p_nom, vec![1000.0, 1000.0, 1000.0]);
     assert_eq!(load.q_nom, vec![500.0, 500.0, 500.0]);
 
-    // Shunt: per-phase siemens on the diagonal.
-    assert_eq!(net.shunts.len(), 1);
-    assert!(close(net.shunts[0].b[0][0], 0.0001));
-    assert!(close(net.shunts[0].b[1][1], 0.0001));
-    assert!(close(net.shunts[0].b[0][1], 0.0));
+    // A shunt: per phase siemens on the diagonal.
+    assert_eq!(net.shunts().len(), 1);
+    assert!(close(net.shunts()[0].b[0][0], 0.0001));
+    assert!(close(net.shunts()[0].b[1][1], 0.0001));
+    assert!(close(net.shunts()[0].b[0][1], 0.0));
 
-    // Closed switch n2 -> n3.
-    assert_eq!(net.switches.len(), 1);
-    assert!(!net.switches[0].open);
-    assert_eq!(net.switches[0].bus_from, "n2");
-    assert_eq!(net.switches[0].bus_to, "n3");
+    // A closed switch from n2 to n3.
+    assert_eq!(net.switches().len(), 1);
+    assert!(!net.switches()[0].open);
+    assert_eq!(net.switches()[0].bus_from, "n2");
+    assert_eq!(net.switches()[0].bus_to, "n3");
 
-    // Delta/wye transformer, impedances in percent of the winding base.
-    assert_eq!(net.transformers.len(), 1);
-    let xf = &net.transformers[0];
+    // A delta/wye transformer, impedances in percent of the winding base.
+    assert_eq!(net.transformers().len(), 1);
+    let xf = &net.transformers()[0];
     assert_eq!(xf.windings.len(), 2);
-    assert_eq!(xf.windings[0].conn, WindingConn::Delta);
-    assert_eq!(xf.windings[1].conn, WindingConn::Wye);
+    assert_eq!(xf.windings[0].conn, DistWindingConn::Delta);
+    assert_eq!(xf.windings[1].conn, DistWindingConn::Wye);
     assert!(close(xf.windings[0].v_ref, 4160.0));
     assert!(close(xf.windings[1].v_ref, 480.0));
     let z_base = 4160.0_f64.powi(2) / 500_000.0;
     assert!(close(xf.windings[0].r_pct, 0.5 / z_base * 100.0), "r_pct");
     assert!(close(xf.xsc_pct[0], 2.0 / z_base * 100.0), "xsc_pct");
 
-    // Source: line-to-neutral magnitude at 120-degree spacing.
-    assert_eq!(net.sources.len(), 1);
-    let src = &net.sources[0];
+    // The source: line to neutral magnitude at 120 degree spacing, and the
+    // grounded neutral at zero.
+    assert_eq!(net.sources().len(), 1);
+    let src = &net.sources()[0];
     assert_eq!(src.bus, "sourcebus");
+    assert_eq!(src.terminal_map, ["1", "2", "3", "4"]);
     assert!(close(src.v_magnitude[0], 4160.0 / 3.0_f64.sqrt()));
+    assert_eq!(src.v_magnitude[3], 0.0);
     assert!(close(src.v_angle[1], -2.0 * std::f64::consts::PI / 3.0));
+    assert!(close(src.v_angle[2], 2.0 * std::f64::consts::PI / 3.0));
+
+    // The hand written feeder maps completely. Its findings are the two
+    // values the compensator leaves to defaults and the base voltage
+    // context the model has no field for.
+    assert_eq!(
+        net.warnings,
+        [
+            "READ.CIM_DIST.VALUE_DEFAULTED: LinearShuntCompensator cap1: no \
+             ShuntCompensator.phaseConnection; wye is assumed",
+            "READ.CIM_DIST.VALUE_DEFAULTED: LinearShuntCompensator cap1: no sections or \
+             normalSections; one section is assumed",
+            "READ.CIM_DIST.CONTEXT_UNMAPPED: 2 BaseVoltage object(s) have no multiconductor \
+             mapping (context) and are not carried",
+        ]
+    );
 }
 
 #[test]
 fn cim_feeder_converts_to_every_distribution_format() {
-    // The whole point of landing in DistNetwork: a CIM feeder now writes as
-    // OpenDSS, PMD, and BMOPF with no extra bridge.
-    let net = parse_cim_file(fixture()).unwrap();
+    // The point of landing in the multiconductor model: a CIM feeder writes
+    // as OpenDSS, PMD, and BMOPF with no extra bridge.
+    let net = parse_file(fixture(), None).unwrap();
     for target in [
         DistTargetFormat::Dss,
         DistTargetFormat::PmdJson,
         DistTargetFormat::BmopfJson,
     ] {
-        let conv = net.to_canonical_format(target);
-        assert!(!conv.text.is_empty(), "{}: empty output", target.name());
+        let out = emit_value(&net, target);
+        assert!(!out.text.is_empty(), "{}: empty output", target.name());
     }
 
     // OpenDSS output names the feeder's elements.
-    let dss = net.to_canonical_format(DistTargetFormat::Dss).text;
-    assert!(dss.to_lowercase().contains("line.line1"), "dss: {dss}");
-    assert!(dss.to_lowercase().contains("load.load1"));
-    assert!(dss.to_lowercase().contains("transformer.xfm1"));
+    let dss = emit_value(&net, DistTargetFormat::Dss).text.to_lowercase();
+    assert!(dss.contains("line.line1"), "dss: {dss}");
+    assert!(dss.contains("load.load1"));
+    assert!(dss.contains("transformer.xfm1"));
 
-    // PMD and BMOPF reparse: proof the conversion is structurally valid, not
-    // just non-empty text.
-    let pmd = net.to_canonical_format(DistTargetFormat::PmdJson).text;
+    // PMD and BMOPF reparse: the conversion is structurally valid, not just
+    // nonempty text.
+    let pmd = emit_value(&net, DistTargetFormat::PmdJson).text;
     let reparsed = parse_str(&pmd, "pmd-json").unwrap();
-    assert_eq!(reparsed.lines.len(), net.lines.len());
-    assert_eq!(reparsed.loads.len(), net.loads.len());
+    assert_eq!(reparsed.lines().len(), net.lines().len());
+    assert_eq!(reparsed.loads().len(), net.loads().len());
 
-    let bmopf = net.to_canonical_format(DistTargetFormat::BmopfJson).text;
+    let bmopf = emit_value(&net, DistTargetFormat::BmopfJson).text;
     let reparsed = parse_str(&bmopf, "bmopf-json").unwrap();
-    assert_eq!(reparsed.lines.len(), net.lines.len());
+    assert_eq!(reparsed.lines().len(), net.lines().len());
 }
 
 #[test]
-fn xml_extension_and_cim_token_both_route() {
-    // Auto-detected by extension.
+fn xml_extension_and_cim_dist_token_both_route() {
+    // Recognized from the extension and the per phase classes.
     let net = parse_file(fixture(), None).unwrap();
-    assert_eq!(net.buses.len(), 4);
-    // Explicit token via in-memory text.
+    assert_eq!(net.buses().len(), 4);
+    // The explicit token on in memory text.
     let text = std::fs::read_to_string(fixture()).unwrap();
-    let net = parse_str(&text, "cim").unwrap();
-    assert_eq!(net.buses.len(), 4);
-    // `cim` is a full writable distribution target.
+    let net = parse_str(&text, "cim-dist").unwrap();
+    assert_eq!(net.buses().len(), 4);
+    // `cim-dist` is a writable distribution target.
     assert_eq!(
-        powerio_dist::dist_target_from_name("cim"),
-        Some(DistTargetFormat::CimXml)
+        powerio_dist::parse_dist_target_format("cim-dist"),
+        Some(DistTargetFormat::CimDist)
     );
+    assert_eq!(DistTargetFormat::CimDist.name(), "cim-dist");
+    assert!(powerio_dist::looks_like_cim_dist(text.as_bytes()));
 }
 
-/// The writer is the reader's inverse: parse → write → parse preserves the
-/// projection, imported mRIDs pass through, and a second write is byte
-/// identical.
+/// The writer is the reader's inverse: parse, write, parse keeps the
+/// projection, imported mRIDs pass through, a second write is byte
+/// identical, and a parse writes its own bytes back.
 #[test]
 fn cim_writer_round_trips() {
-    let net = parse_cim_file(fixture()).unwrap();
-    let first = net.to_canonical_format(DistTargetFormat::CimXml);
-    let back = parse_str(&first.text, "cim").unwrap();
+    let net = parse_file(fixture(), None).unwrap();
+    let first = emit_value(&net, DistTargetFormat::CimDist);
+    assert!(first.warnings.is_empty(), "{:#?}", first.warnings);
+    let back = parse_str(&first.text, "cim-dist").unwrap();
 
-    assert_eq!(back.buses.len(), net.buses.len());
-    assert_eq!(back.lines.len(), net.lines.len());
-    assert_eq!(back.loads.len(), net.loads.len());
-    assert_eq!(back.shunts.len(), net.shunts.len());
-    assert_eq!(back.switches.len(), net.switches.len());
-    assert_eq!(back.transformers.len(), net.transformers.len());
-    assert_eq!(back.sources.len(), net.sources.len());
+    assert_eq!(back.buses().len(), net.buses().len());
+    assert_eq!(back.lines().len(), net.lines().len());
+    assert_eq!(back.loads().len(), net.loads().len());
+    assert_eq!(back.shunts().len(), net.shunts().len());
+    assert_eq!(back.switches().len(), net.switches().len());
+    assert_eq!(back.transformers().len(), net.transformers().len());
+    assert_eq!(back.sources().len(), net.sources().len());
+    assert_eq!(back.name(), net.name());
 
-    let lc_a = net.linecode(&net.lines[0].linecode).unwrap();
-    let lc_b = back.linecode(&back.lines[0].linecode).unwrap();
-    for i in 0..lc_a.n_conductors {
-        for j in 0..lc_a.n_conductors {
-            assert!(close(lc_a.r_series[i][j], lc_b.r_series[i][j]), "r {i}{j}");
-            assert!(close(lc_a.x_series[i][j], lc_b.x_series[i][j]), "x {i}{j}");
+    let code_a = net.linecode(&net.lines()[0].linecode).unwrap();
+    let code_b = back.linecode(&back.lines()[0].linecode).unwrap();
+    for i in 0..code_a.n_conductors {
+        for j in 0..code_a.n_conductors {
+            assert!(
+                close(code_a.r_series[i][j], code_b.r_series[i][j]),
+                "r {i}{j}"
+            );
+            assert!(
+                close(code_a.x_series[i][j], code_b.x_series[i][j]),
+                "x {i}{j}"
+            );
             assert!(
                 close(
-                    lc_a.b_from[i][j] + lc_a.b_to[i][j],
-                    lc_b.b_from[i][j] + lc_b.b_to[i][j]
+                    code_a.b_from[i][j] + code_a.b_to[i][j],
+                    code_b.b_from[i][j] + code_b.b_to[i][j]
                 ),
                 "b {i}{j}"
             );
         }
     }
-    assert_eq!(back.loads[0].p_nom, net.loads[0].p_nom);
-    assert_eq!(back.loads[0].configuration, net.loads[0].configuration);
-    assert!(close(back.shunts[0].b[0][0], net.shunts[0].b[0][0]));
-    let (a, b) = (&net.transformers[0], &back.transformers[0]);
+    assert_eq!(back.loads()[0].p_nom, net.loads()[0].p_nom);
+    assert_eq!(back.loads()[0].configuration, net.loads()[0].configuration);
+    assert!(close(back.shunts()[0].b[0][0], net.shunts()[0].b[0][0]));
+    let (a, b) = (&net.transformers()[0], &back.transformers()[0]);
     assert_eq!(a.windings[0].conn, b.windings[0].conn);
     assert!(close(a.windings[0].v_ref, b.windings[0].v_ref));
-    assert!(
-        close(a.windings[0].r_pct, b.windings[0].r_pct),
-        "r_pct {} vs {}",
-        a.windings[0].r_pct,
-        b.windings[0].r_pct
-    );
-    assert!(
-        close(a.xsc_pct[0], b.xsc_pct[0]),
-        "xsc {} vs {}",
-        a.xsc_pct[0],
-        b.xsc_pct[0]
-    );
+    assert!(close(a.windings[0].r_pct, b.windings[0].r_pct));
+    assert!(close(a.xsc_pct[0], b.xsc_pct[0]));
     assert!(close(
-        net.sources[0].v_magnitude[0],
-        back.sources[0].v_magnitude[0]
+        net.sources()[0].v_magnitude[0],
+        back.sources()[0].v_magnitude[0]
     ));
 
     // Deterministic ids: the reparse carries the same mRIDs, so a second
     // write is byte identical.
-    let second = back.to_canonical_format(DistTargetFormat::CimXml);
+    let second = emit_value(&back, DistTargetFormat::CimDist);
     assert_eq!(first.text, second.text);
 
-    // Same-format echo tier: a single-document parse retains its source.
-    assert_eq!(back.to_format(DistTargetFormat::CimXml).text, first.text);
+    // Same format echo: a single document parse writes its source back.
+    assert_eq!(back.emit(DistTargetFormat::CimDist).text, first.text);
+    let original = std::fs::read_to_string(fixture()).unwrap();
+    assert_eq!(net.emit(DistTargetFormat::CimDist).text, original);
 }
 
-/// dss → CIM: any distribution source now writes CIM.
+/// dss to CIM: any distribution source writes CIM, and the reparse keeps the
+/// elements.
 #[test]
 fn dss_converts_to_cim() {
-    let dss = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../tests/data/dist/micro/xfmr_single_phase.dss");
-    let net = parse_file(dss, None).unwrap();
-    let conv = net.to_canonical_format(DistTargetFormat::CimXml);
-    let back = parse_str(&conv.text, "cim").unwrap();
-    assert_eq!(back.transformers.len(), net.transformers.len());
-    assert_eq!(back.loads.len(), net.loads.len());
+    for case in [
+        "xfmr_single_phase.dss",
+        "xfmr_delta_wye.dss",
+        "fourwire_linecode.dss",
+        "switch.dss",
+    ] {
+        let net = parse_file(micro(case), None).unwrap();
+        let out = emit_value(&net, DistTargetFormat::CimDist);
+        let back = parse_str(&out.text, "cim-dist").unwrap();
+        assert_eq!(
+            back.transformers().len(),
+            net.transformers().len(),
+            "{case}"
+        );
+        assert_eq!(back.loads().len(), net.loads().len(), "{case}");
+        assert_eq!(back.lines().len(), net.lines().len(), "{case}");
+        assert_eq!(back.switches().len(), net.switches().len(), "{case}");
+        // The canonical CIM output is idempotent.
+        assert_eq!(
+            emit_value(&back, DistTargetFormat::CimDist).text,
+            out.text,
+            "{case}"
+        );
+    }
+}
+
+/// A four wire segment keeps its neutral conductor and the full 4×4 matrix.
+#[test]
+fn a_neutral_conductor_survives_cim() {
+    let net = parse_file(micro("fourwire_linecode.dss"), None).unwrap();
+    let line = net
+        .lines()
+        .iter()
+        .find(|l| l.terminal_map_from.len() == 4)
+        .expect("a four wire line");
+    let code = net.linecode(&line.linecode).unwrap();
+    let back = parse_str(
+        &emit_value(&net, DistTargetFormat::CimDist).text,
+        "cim-dist",
+    )
+    .unwrap();
+    let back_line = back.lines().iter().find(|l| l.name == line.name).unwrap();
+    assert_eq!(back_line.terminal_map_from, line.terminal_map_from);
+    let back_code = back.linecode(&back_line.linecode).unwrap();
+    assert_eq!(back_code.n_conductors, code.n_conductors);
+    for i in 0..code.n_conductors {
+        for j in 0..code.n_conductors {
+            assert!(
+                close(code.r_series[i][j], back_code.r_series[i][j]),
+                "r {i}{j}"
+            );
+            assert!(
+                close(code.x_series[i][j], back_code.x_series[i][j]),
+                "x {i}{j}"
+            );
+        }
+    }
+}
+
+/// More than four conductors have no `SinglePhaseKind`; the writer says so.
+#[test]
+fn conductors_beyond_four_are_reported_on_output() {
+    let net = parse_file(micro("linecode_10x10.dss"), None).unwrap();
+    let out = emit_value(&net, DistTargetFormat::CimDist);
+    assert!(
+        !findings(&out.warnings, "EMIT.CIM_DIST.FIELD_DROPPED").is_empty(),
+        "{:#?}",
+        out.warnings
+    );
+}
+
+/// A three winding (center tap) transformer writes its pair reactances as
+/// mesh impedances and reads them back, and a tap rides a RatioTapChanger.
+#[test]
+fn three_windings_and_taps_round_trip() {
+    let mut net = parse_file(micro("xfmr_center_tap.dss"), None).unwrap();
+    let xf = net
+        .transformers()
+        .iter()
+        .find(|t| t.windings.len() == 3)
+        .expect("a three winding transformer")
+        .clone();
+    net.transformers_mut()[0].windings[0].tap = 1.0125;
+    let tap = net.transformers()[0].windings[0].tap;
+    let out = emit_value(&net, DistTargetFormat::CimDist);
+    assert!(out.text.contains("TransformerMeshImpedance"));
+    assert!(out.text.contains("RatioTapChanger"));
+    let back = parse_str(&out.text, "cim-dist").unwrap();
+    let back_xf = back
+        .transformers()
+        .iter()
+        .find(|t| t.name == xf.name)
+        .unwrap();
+    assert_eq!(back_xf.xsc_pct.len(), xf.xsc_pct.len());
+    for (a, b) in xf.xsc_pct.iter().zip(&back_xf.xsc_pct) {
+        assert!(close(*a, *b), "xsc {a} vs {b}");
+    }
+    assert!(close(back.transformers()[0].windings[0].tap, tap));
+    assert_eq!(emit_value(&back, DistTargetFormat::CimDist).text, out.text);
+}
+
+/// A directory of documents reads as one case: `rdf:about` objects extend
+/// the ones another document defines, and a disagreement keeps the first
+/// statement with a finding.
+#[test]
+fn a_directory_reads_as_one_case() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a_eq.xml"), feeder("")).unwrap();
+    std::fs::write(
+        dir.path().join("b_ssh.xml"),
+        format!(
+            r##"{RDF_OPEN}
+  <cim:EnergySource rdf:about="#_src">
+    <cim:EnergySource.voltageMagnitude>12000</cim:EnergySource.voltageMagnitude>
+    <cim:EnergySource.voltageAngle>0.1</cim:EnergySource.voltageAngle>
+  </cim:EnergySource>
+</rdf:RDF>
+"##
+        ),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("notes.txt"), "not a document").unwrap();
+    let net = parse_file(dir.path(), Some("cim-dist")).unwrap();
+    assert_eq!(net.lines().len(), 1);
+    let src = &net.sources()[0];
+    // The angle comes from the second document; the magnitude conflict
+    // keeps the first.
+    assert!(close(src.v_angle[0], 0.1));
+    assert!(close(src.v_magnitude[0], 12470.0 / 3.0_f64.sqrt()));
+    assert_eq!(
+        findings(&net.warnings, "READ.CIM_DIST.VALUE_CONFLICT").len(),
+        1,
+        "{:#?}",
+        net.warnings
+    );
+    // A directory has no single source text to echo.
+    assert!(net.source.is_none());
+}
+
+/// What the July reader dropped silently is mapped or reported.
+#[test]
+fn unmapped_and_partial_content_is_reported() {
+    let extra = r##"
+  <cim:ConnectivityNode rdf:ID="_n3"><cim:IdentifiedObject.name>n2</cim:IdentifiedObject.name></cim:ConnectivityNode>
+  <cim:LinearShuntCompensator rdf:ID="_cap">
+    <cim:IdentifiedObject.name>cap</cim:IdentifiedObject.name>
+    <cim:LinearShuntCompensator.bPerSection>0.001</cim:LinearShuntCompensator.bPerSection>
+    <cim:ShuntCompensator.sections>2</cim:ShuntCompensator.sections>
+    <cim:ShuntCompensator.phaseConnection rdf:resource="http://iec.ch/TC57/CIM100#PhaseShuntConnectionKind.Y"/>
+    <cim:ShuntCompensator.nomU>12470</cim:ShuntCompensator.nomU>
+  </cim:LinearShuntCompensator>
+  <cim:Terminal rdf:ID="_cap_t1">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_cap"/>
+    <cim:Terminal.ConnectivityNode rdf:resource="#_n2"/>
+    <cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode.ABC"/>
+  </cim:Terminal>
+  <cim:ACLineSegment rdf:ID="_geo">
+    <cim:IdentifiedObject.name>geo</cim:IdentifiedObject.name>
+    <cim:Conductor.length>50</cim:Conductor.length>
+  </cim:ACLineSegment>
+  <cim:Terminal rdf:ID="_geo_t1">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_geo"/>
+    <cim:Terminal.ConnectivityNode rdf:resource="#_n2"/>
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="_geo_t2">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_geo"/>
+    <cim:Terminal.ConnectivityNode rdf:resource="#_missing"/>
+    <cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:PowerTransformer rdf:ID="_tank_xf"><cim:IdentifiedObject.name>reg</cim:IdentifiedObject.name></cim:PowerTransformer>
+  <cim:TransformerTank rdf:ID="_tank"><cim:TransformerTank.PowerTransformer rdf:resource="#_tank_xf"/></cim:TransformerTank>
+  <cim:WireSpacingInfo rdf:ID="_spacing"/>
+  <cim:BaseVoltage rdf:ID="_bv"/>
+"##;
+    let mut text = feeder(extra);
+    // The source states its Thevenin impedance.
+    text = text.replace(
+        "<cim:EnergySource.voltageMagnitude>12470</cim:EnergySource.voltageMagnitude>",
+        "<cim:EnergySource.voltageMagnitude>12470</cim:EnergySource.voltageMagnitude>\
+         <cim:EnergySource.r>0.1</cim:EnergySource.r><cim:EnergySource.x>0.5</cim:EnergySource.x>\
+         <cim:EnergySource.r0>0.3</cim:EnergySource.r0><cim:EnergySource.x0>1.4</cim:EnergySource.x0>",
+    );
+    let net = parse_str(&text, "cim-dist").unwrap();
+    let w = &net.warnings;
+
+    // Sections multiply the per section admittance.
+    let cap = net.shunts().iter().find(|s| s.name == "cap").unwrap();
+    assert!(close(cap.b[0][0], 0.002));
+    // The source impedance rides the rs/xs matrices the dss and PMD writers
+    // read: self (z0 + 2 z1)/3, mutual (z0 − z1)/3.
+    let src = &net.sources()[0];
+    let rs = src.extras["rs"].as_array().unwrap();
+    assert!(close(rs[0][0].as_f64().unwrap(), (0.3 + 0.2) / 3.0));
+    assert!(close(rs[0][1].as_f64().unwrap(), (0.3 - 0.1) / 3.0));
+
+    // A repeated node name is replaced by the mRID.
+    assert!(net.bus("n3").is_some(), "{w:#?}");
+    assert_eq!(
+        findings(w, "READ.CIM_DIST.IDENTIFIER_SUBSTITUTED").len(),
+        1,
+        "{w:#?}"
+    );
+    // A terminal on an undefined node drops the segment; the reference and
+    // the record are both reported.
+    assert!(
+        !findings(w, "READ.CIM_DIST.REFERENCE_DROPPED").is_empty(),
+        "{w:#?}"
+    );
+    assert!(net.lines().iter().all(|l| l.name != "geo"));
+    // The tank form and the unmapped classes are reported, not dropped
+    // silently.
+    assert!(
+        findings(w, "READ.CIM_DIST.RECORD_DROPPED")
+            .iter()
+            .any(|f| f.contains("TransformerTank form")),
+        "{w:#?}"
+    );
+    let classes = findings(w, "READ.CIM_DIST.CLASS_UNMAPPED");
+    assert!(
+        classes.iter().any(|f| f.contains("TransformerTank")),
+        "{w:#?}"
+    );
+    assert!(
+        classes.iter().any(|f| f.contains("WireSpacingInfo")),
+        "{w:#?}"
+    );
+    assert!(
+        findings(w, "READ.CIM_DIST.CONTEXT_UNMAPPED")
+            .iter()
+            .any(|f| f.contains("BaseVoltage")),
+        "{w:#?}"
+    );
+    // A property the mapping does not read is counted per class.
+    assert!(
+        findings(w, "READ.CIM_DIST.FIELD_UNMAPPED")
+            .iter()
+            .any(|f| f.contains("ShuntCompensator.nomU")),
+        "{w:#?}"
+    );
+}
+
+/// A segment with no impedance at all is an error severity finding.
+#[test]
+fn a_segment_without_impedance_is_flagged() {
+    let text = feeder("").replace(
+        "<cim:ACLineSegment.r>0.1</cim:ACLineSegment.r>\n    <cim:ACLineSegment.x>0.2</cim:ACLineSegment.x>",
+        "",
+    );
+    let net = parse_str(&text, "cim-dist").unwrap();
+    let errors: Vec<_> = net
+        .diagnostics
+        .iter()
+        .filter(|d| d.code() == "READ.CIM_DIST.IMPEDANCE_UNRESOLVED")
+        .collect();
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].severity(), DiagnosticSeverity::Error);
+}
+
+/// Each transformer takes the mesh impedance between its own ends, and a
+/// tap changer position sets the winding tap.
+#[test]
+fn transformer_reactance_and_taps_come_from_their_own_records() {
+    let transformer = |id: &str, x: f64, step: Option<i32>| {
+        let tap = step.map_or_else(String::new, |step| {
+            format!(
+                r##"<cim:RatioTapChanger rdf:ID="_{id}_tap">
+    <cim:RatioTapChanger.TransformerEnd rdf:resource="#_{id}_e1"/>
+    <cim:TapChanger.step>{step}</cim:TapChanger.step>
+    <cim:TapChanger.neutralStep>0</cim:TapChanger.neutralStep>
+    <cim:RatioTapChanger.stepVoltageIncrement>0.625</cim:RatioTapChanger.stepVoltageIncrement>
+  </cim:RatioTapChanger>"##
+            )
+        });
+        let end = |n: u8, bus: &str| {
+            format!(
+                r##"<cim:PowerTransformerEnd rdf:ID="_{id}_e{n}">
+    <cim:PowerTransformerEnd.PowerTransformer rdf:resource="#_{id}"/>
+    <cim:TransformerEnd.endNumber>{n}</cim:TransformerEnd.endNumber>
+    <cim:TransformerEnd.Terminal rdf:resource="#_{id}_t{n}"/>
+    <cim:PowerTransformerEnd.ratedU>12470</cim:PowerTransformerEnd.ratedU>
+    <cim:PowerTransformerEnd.ratedS>1000000</cim:PowerTransformerEnd.ratedS>
+    <cim:PowerTransformerEnd.connectionKind rdf:resource="http://iec.ch/TC57/CIM100#WindingConnection.Yn"/>
+  </cim:PowerTransformerEnd>
+  <cim:Terminal rdf:ID="_{id}_t{n}">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_{id}"/>
+    <cim:Terminal.ConnectivityNode rdf:resource="#_{bus}"/>
+    <cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode.ABCN"/>
+    <cim:ACDCTerminal.sequenceNumber>{n}</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>"##
+            )
+        };
+        format!(
+            r##"<cim:PowerTransformer rdf:ID="_{id}"><cim:IdentifiedObject.name>{id}</cim:IdentifiedObject.name></cim:PowerTransformer>
+  {}
+  {}
+  <cim:TransformerMeshImpedance rdf:ID="_{id}_z">
+    <cim:TransformerMeshImpedance.FromTransformerEnd rdf:resource="#_{id}_e1"/>
+    <cim:TransformerMeshImpedance.ToTransformerEnd rdf:resource="#_{id}_e2"/>
+    <cim:TransformerMeshImpedance.x>{x}</cim:TransformerMeshImpedance.x>
+  </cim:TransformerMeshImpedance>
+  {tap}"##,
+            end(1, "n1"),
+            end(2, "n2"),
+        )
+    };
+    let text = feeder(&format!(
+        "{}\n{}",
+        transformer("ta", 7.775_209, Some(4)),
+        transformer("tb", 15.550_418, None)
+    ));
+    let net = parse_str(&text, "cim-dist").unwrap();
+    let z_base = 12470.0_f64.powi(2) / 1e6;
+    let ta = net.transformers().iter().find(|t| t.name == "ta").unwrap();
+    let tb = net.transformers().iter().find(|t| t.name == "tb").unwrap();
+    assert!(close(ta.xsc_pct[0], 7.775_209 / z_base * 100.0));
+    assert!(close(tb.xsc_pct[0], 15.550_418 / z_base * 100.0));
+    assert!(close(ta.windings[0].tap, 1.025));
+    assert!(close(tb.windings[0].tap, 1.0));
+}
+
+#[test]
+fn malformed_sets_are_refused() {
+    // One id defined twice.
+    let twice = feeder(r#"<cim:ConnectivityNode rdf:ID="_n1"/>"#);
+    let error = parse_str(&twice, "cim-dist").unwrap_err();
+    assert!(error.to_string().contains("defined twice"), "{error}");
+    // A DTD.
+    let dtd = format!(
+        "<!DOCTYPE rdf:RDF>{}",
+        feeder("")
+            .trim_start_matches(|c| c != '<')
+            .split_once("?>")
+            .unwrap()
+            .1
+    );
+    assert!(parse_str(&dtd, "cim-dist").is_err());
+    // Bus branch documents name what is missing.
+    let topological = format!(r#"{RDF_OPEN}<cim:TopologicalNode rdf:ID="_tn"/></rdf:RDF>"#);
+    let error = parse_str(&topological, "cim-dist").unwrap_err();
+    assert!(error.to_string().contains("TopologicalNode"), "{error}");
 }
