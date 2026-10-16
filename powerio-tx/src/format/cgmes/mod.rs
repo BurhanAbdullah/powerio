@@ -368,7 +368,7 @@ fn push_zip(
 /// declare, then refuse entries that disagree with the first count, leave
 /// the entry data, or share bytes.
 ///
-/// zip 8.6 examines end records from the last. It reserves its entry table
+/// ZIP 9.0.3 examines end records from the last. It reserves its entry table
 /// from the count of the first record it accepts and indexes every central
 /// record before `ZipArchive::new` returns; when that fails, it falls back to
 /// an earlier record and reserves again. So before opening, the number of
@@ -436,7 +436,7 @@ fn open_archive<'a>(
         let name = |index| {
             archive
                 .name_for_index(index)
-                .and_then(Result::ok)
+                .and_then(|name| name.ok())
                 .map(|name| name.into_owned())
                 .unwrap_or_default()
         };
