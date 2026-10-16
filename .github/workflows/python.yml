@@ -393,7 +393,8 @@ jobs:
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist
+          # Omit mimalloc only on Linux/aarch64, where libmimalloc-sys fails in the manylinux toolchain.
+          args: ${{ matrix.platform.runner == 'ubuntu-24.04-arm' && '--release --out dist --features extension-module,gridfm' || '--release --out dist --features extension-module,gridfm,mimalloc-allocator' }}
           manylinux: auto
       - name: Check packaged schemas
         shell: bash
