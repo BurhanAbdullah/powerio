@@ -302,7 +302,7 @@ fn push_zip(
         if file.is_dir() {
             continue;
         }
-        let raw_name = file.name().to_owned();
+        let raw_name = file.name().to_string();
         let path = strict_archive_path(&raw_name)?;
         if file
             .unix_mode()
