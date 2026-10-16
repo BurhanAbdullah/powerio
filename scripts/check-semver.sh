@@ -41,28 +41,36 @@ if [ -z "$baseline" ]; then
 fi
 
 baseline_root=$(mktemp -d "${TMPDIR:-/tmp}/powerio-semver-baseline.XXXXXX")
-trap 'rm -rf "$baseline_root"' EXIT
-git archive "$baseline" | tar -x -C "$baseline_root"
+current_root=$(mktemp -d "${TMPDIR:-/tmp}/powerio-semver-current.XXXXXX")
+trap 'rm -rf "$baseline_root" "$current_root"' EXIT
 
-# Keep the released source/API, but avoid resolving the yanked zip 8.6.0 in
-# cargo-semver-checks' temporary consumer projects. 8.5.1 is the last
-# non-yanked compatible 8.x release and preserves the same major API.
-python3 - "$baseline_root/Cargo.toml" <<'PY'
+# Use source snapshots for both sides, since cargo-semver-checks builds each
+# package as a standalone consumer and runs cargo update. The yanked zip 8.6.0
+# breaks that consumer resolution even when the repository Cargo.lock works.
+git archive "$baseline" | tar -x -C "$baseline_root"
+git archive HEAD | tar -x -C "$current_root"
+
+# Narrow only the temporary validation snapshots to zip 8.5.1. The library API
+# being compared is unchanged; this avoids a resolver outage from a yanked
+# dependency while keeping every publishable crate and SemVer lint enabled.
+python3 - "$baseline_root/Cargo.toml" "$current_root/Cargo.toml" <<'PY'
 from pathlib import Path
 import sys
 
-path = Path(sys.argv[1])
-manifest = path.read_text()
-old = 'zip = { version = "8.6",'
-new = 'zip = { version = "8.5.1",'
-if old not in manifest:
-    raise SystemExit("expected workspace zip dependency not found in baseline manifest")
-path.write_text(manifest.replace(old, new, 1))
+for filename in sys.argv[1:]:
+    path = Path(filename)
+    manifest = path.read_text()
+    old = 'zip = { version = "8.6",'
+    new = 'zip = { version = "8.5.1",'
+    if old not in manifest:
+        raise SystemExit(f"expected workspace zip dependency not found in {path}")
+    path.write_text(manifest.replace(old, new, 1))
 PY
 
-echo "comparing the publishable crates at $version against $baseline (baseline zip resolver workaround)"
-# powerio-py and powerio-capi are publish = false; name them anyway so the
-# crate set reads the same as the msrv and archive jobs.
+echo "comparing publishable crates at $version against $baseline using isolated resolver-safe snapshots"
+# powerio-py and powerio-capi are publish = false; exclude them, not any
+# publishable package or SemVer lint.
+cd "$current_root"
 cargo semver-checks check-release --workspace \
     --exclude powerio-py --exclude powerio-capi \
     --baseline-root "$baseline_root" "$@"
