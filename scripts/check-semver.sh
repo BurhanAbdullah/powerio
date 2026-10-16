@@ -66,7 +66,7 @@ for root_name in sys.argv[1:]:
         ),
         (
             '        let name = |index| archive.name_for_index(index).unwrap_or_default();',
-            '        let name = |index| archive.name_for_index(index).and_then(Result::ok).map(|name| name.into_owned()).unwrap_or_default();',
+            '        let name = |index| archive.name_for_index(index).and_then(|result| result.ok()).map(|name| name.into_owned()).unwrap_or_default();',
         ),
     )
     for old, new in replacements:
