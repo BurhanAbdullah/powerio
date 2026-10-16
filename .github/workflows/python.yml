@@ -507,9 +507,8 @@ jobs:
           WHEELS_RESULT: ${{ needs.wheels.result }}
           SMOKE_RESULT: ${{ needs.wheel-smoke.result }}
           SDIST_RESULT: ${{ needs.sdist.result }}
-          DISTRIBUTIONS_RESULT: ${{ needs.validate-distributions.result }}
         run: |
-          for result in "$PREFLIGHT_RESULT" "$LINT_RESULT" "$QUALITY_RESULT" "$TEST_RESULT" "$GRIDFM_RESULT" "$GOC3_RESULT" "$WHEELS_RESULT" "$SMOKE_RESULT" "$SDIST_RESULT" "$DISTRIBUTIONS_RESULT"; do
+          for result in "$PREFLIGHT_RESULT" "$LINT_RESULT" "$QUALITY_RESULT" "$TEST_RESULT" "$GRIDFM_RESULT" "$GOC3_RESULT" "$WHEELS_RESULT" "$SMOKE_RESULT" "$SDIST_RESULT"; do
             if [ "$result" != success ]; then
               echo "Distribution validation prerequisite did not succeed: $result" >&2
               exit 1
@@ -573,8 +572,9 @@ jobs:
           WHEELS_RESULT: ${{ needs.wheels.result }}
           SMOKE_RESULT: ${{ needs.wheel-smoke.result }}
           SDIST_RESULT: ${{ needs.sdist.result }}
+          DISTRIBUTIONS_RESULT: ${{ needs.validate-distributions.result }}
         run: |
-          for result in "$PREFLIGHT_RESULT" "$LINT_RESULT" "$QUALITY_RESULT" "$TEST_RESULT" "$GRIDFM_RESULT" "$GOC3_RESULT" "$WHEELS_RESULT" "$SMOKE_RESULT" "$SDIST_RESULT"; do
+          for result in "$PREFLIGHT_RESULT" "$LINT_RESULT" "$QUALITY_RESULT" "$TEST_RESULT" "$GRIDFM_RESULT" "$GOC3_RESULT" "$WHEELS_RESULT" "$SMOKE_RESULT" "$SDIST_RESULT" "$DISTRIBUTIONS_RESULT"; do
             if [ "$result" != success ]; then
               echo "Refusing to publish: required validation prerequisite did not succeed: $result" >&2
               exit 1
