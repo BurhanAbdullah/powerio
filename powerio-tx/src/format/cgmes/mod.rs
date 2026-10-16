@@ -304,7 +304,11 @@ fn push_zip(
         }
         let raw_name = file
             .name()
-            .map_err(|error| format_error(format!("cannot decode entry {index} name in {archive_name}: {error}")))?
+            .map_err(|error| {
+                format_error(format!(
+                    "cannot decode entry {index} name in {archive_name}: {error}"
+                ))
+            })?
             .into_owned();
         let path = strict_archive_path(&raw_name)?;
         if file
