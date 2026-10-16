@@ -50,7 +50,7 @@ trap 'rm -rf "$baseline_root" "$current_root"' EXIT
 git archive "$baseline" | tar -x -C "$baseline_root"
 git archive HEAD | tar -x -C "$current_root"
 
-# Narrow only the temporary validation snapshots to zip 8.5.1. The library API
+# Narrow only the temporary validation snapshots to zip 8.4.0. The library API
 # being compared is unchanged; this avoids a resolver outage from a yanked
 # dependency while keeping every publishable crate and SemVer lint enabled.
 python3 - "$baseline_root/Cargo.toml" "$current_root/Cargo.toml" <<'PY'
@@ -61,7 +61,7 @@ for filename in sys.argv[1:]:
     path = Path(filename)
     manifest = path.read_text()
     old = 'zip = { version = "8.6",'
-    new = 'zip = { version = "8.5.1",'
+    new = 'zip = { version = "8.4.0",'
     if old not in manifest:
         raise SystemExit(f"expected workspace zip dependency not found in {path}")
     path.write_text(manifest.replace(old, new, 1))
