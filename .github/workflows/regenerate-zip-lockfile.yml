@@ -1,32 +1,28 @@
 name: Regenerate ZIP lockfile
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - repair/pr588-synth-main
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   regenerate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: repair/pr588-synth-main
-          token: ${{ secrets.GITHUB_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
       - name: Regenerate lockfile using Cargo
         run: cargo update -p zip
-      - name: Commit generated lockfile if changed
-        run: |
-          if git diff --quiet -- Cargo.lock; then
-            echo "Cargo generated no lockfile changes."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Cargo.lock
-          git commit -m "chore(deps): regenerate Cargo lockfile"
-          git push origin HEAD:repair/pr588-synth-main
+      - name: Upload Cargo-generated lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-lockfile
+          path: Cargo.lock
+          if-no-files-found: error
+          retention-days: 1
