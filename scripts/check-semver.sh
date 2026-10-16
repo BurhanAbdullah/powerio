@@ -11,6 +11,13 @@
 # the newest tag at or below the workspace version keeps a maintenance branch
 # on its own line after a later minor is tagged.
 #
+# The published v0.11.x baseline lockfiles reference zip 8.6.0, which has been
+# yanked. cargo-semver-checks creates temporary consumer manifests and runs
+# cargo update; those consumers cannot use the baseline lockfile to resolve a
+# yanked release. Build the baseline from a temporary source snapshot and
+# constrain only that snapshot to the last non-yanked compatible 8.x release.
+# This keeps the API comparison enabled; it does not skip any crate or lint.
+#
 # The tags must be present: a shallow clone fails here rather than comparing
 # against nothing. Extra arguments go to cargo-semver-checks.
 set -euo pipefail
@@ -33,9 +40,29 @@ if [ -z "$baseline" ]; then
     exit 1
 fi
 
-echo "comparing the publishable crates at $version against $baseline"
+baseline_root=$(mktemp -d "${TMPDIR:-/tmp}/powerio-semver-baseline.XXXXXX")
+trap 'rm -rf "$baseline_root"' EXIT
+git archive "$baseline" | tar -x -C "$baseline_root"
+
+# Keep the released source/API, but avoid resolving the yanked zip 8.6.0 in
+# cargo-semver-checks' temporary consumer projects. 8.5.1 is the last
+# non-yanked compatible 8.x release and preserves the same major API.
+python3 - "$baseline_root/Cargo.toml" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+manifest = path.read_text()
+old = 'zip = { version = "8.6",'
+new = 'zip = { version = "8.5.1",'
+if old not in manifest:
+    raise SystemExit("expected workspace zip dependency not found in baseline manifest")
+path.write_text(manifest.replace(old, new, 1))
+PY
+
+echo "comparing the publishable crates at $version against $baseline (baseline zip resolver workaround)"
 # powerio-py and powerio-capi are publish = false; name them anyway so the
 # crate set reads the same as the msrv and archive jobs.
 cargo semver-checks check-release --workspace \
     --exclude powerio-py --exclude powerio-capi \
-    --baseline-rev "$baseline" "$@"
+    --baseline-root "$baseline_root" "$@"
