@@ -16,6 +16,8 @@ jobs:
         run: |
           cargo update -p zip --precise 8.4.0
           cargo check --workspace --all-targets --locked
+      - name: Remove temporary workflow
+        run: rm .github/workflows/regenerate-zip8-lockfile.yml
       - name: Commit lockfile if resolution succeeds
         run: |
           if git diff --quiet -- Cargo.lock; then
