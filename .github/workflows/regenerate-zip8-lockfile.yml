@@ -12,9 +12,9 @@ jobs:
           ref: repair/pr588-synth-main
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      - name: Regenerate Cargo.lock for ZIP 8.x
+      - name: Regenerate Cargo.lock for the declared ZIP version
         run: |
-          cargo update -p zip --precise 8.4.0
+          cargo update -p zip
           cargo check --workspace --all-targets --locked
       - name: Remove temporary workflow
         run: rm .github/workflows/regenerate-zip8-lockfile.yml
