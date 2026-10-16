@@ -6314,8 +6314,12 @@ mod tests {
         put_u32(&mut forged, 22, declared);
         put_u32(&mut forged, central + 24, declared);
         let error = archive_error(forged);
+        // zip 9 rejects an overlong deflate stream while opening the entry,
+        // before read_declared_size can observe the extra byte. Accept either
+        // layer's precise rejection, but never accept the forged archive.
         assert!(
-            error.contains(&format!("inflates past the {declared} bytes")),
+            error.contains(&format!("inflates past the {declared} bytes"))
+                || error.contains("File is larger than its declared uncompressed size"),
             "{error}"
         );
 
@@ -6509,7 +6513,13 @@ mod tests {
         let mut outside = honest.clone();
         put_u32(&mut outside, central[0] + 20, 1_000);
         let error = archive_error(outside);
-        assert!(error.contains("entry EQ.xml lies outside"), "{error}");
+        // zip 9 validates the forged local-header/data range before exposing
+        // the entry name, so this malformed archive may be rejected by index.
+        assert!(
+            error.contains("entry EQ.xml lies outside")
+                || error.contains("entry 0 lies outside the archive's entry data"),
+            "{error}"
+        );
 
         // Two directory records under one name collapse in the reader's index.
         let mut duplicate = honest;
