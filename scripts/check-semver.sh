@@ -3,20 +3,14 @@
 # newest stable release tag at or below the workspace version with
 # cargo-semver-checks.
 #
-# A release line takes compatible fixes, performance work, and additive change;
-# a break in the public Rust API goes into the next minor release
-# (docs/src/scope-0.11.md). cargo-semver-checks reads the release type off the
-# version difference, so a branch that keeps the workspace version must keep
-# the API, and a branch that bumps it to the next minor may break it. Taking
-# the newest tag at or below the workspace version keeps a maintenance branch
-# on its own line after a later minor is tagged.
+# Use the tagged release's own dependency versions. In particular, do not
+# rewrite the zip dependency in temporary snapshots: newer zip releases can
+# change APIs and make rustdoc fail before the SemVer comparison runs.
 #
-# The published v0.11.x baseline lockfiles reference zip 8.6.0, which has been
-# yanked. cargo-semver-checks creates temporary consumer manifests and runs
-# cargo update; those consumers cannot use the baseline lockfile to resolve a
-# yanked release. Build the baseline from a temporary source snapshot and
-# constrain only that snapshot to the a currently published compatible release.
-# This keeps the API comparison enabled; it does not skip any crate or lint.
+# cargo-semver-checks creates temporary consumer manifests and runs cargo
+# update. If a historical lockfile references a yanked release, recover that
+# exact crate archive from the repository's committed Cargo.lock and local
+# Cargo cache when available, rather than changing the dependency requirement.
 #
 # The tags must be present: a shallow clone fails here rather than comparing
 # against nothing. Extra arguments go to cargo-semver-checks.
@@ -40,37 +34,8 @@ if [ -z "$baseline" ]; then
     exit 1
 fi
 
-baseline_root=$(mktemp -d "${TMPDIR:-/tmp}/powerio-semver-baseline.XXXXXX")
-current_root=$(mktemp -d "${TMPDIR:-/tmp}/powerio-semver-current.XXXXXX")
-trap 'rm -rf "$baseline_root" "$current_root"' EXIT
-
-# Use source snapshots for both sides, since cargo-semver-checks builds each
-# package as a standalone consumer and runs cargo update. The yanked zip 8.6.0
-# breaks that consumer resolution even when the repository Cargo.lock works.
-git archive "$baseline" | tar -x -C "$baseline_root"
-git archive HEAD | tar -x -C "$current_root"
-
-# Use zip 9.0.3 only in the temporary validation snapshots. The library API
-# being compared is unchanged; this avoids a resolver outage from a yanked
-# dependency while keeping every publishable crate and SemVer lint enabled.
-python3 - "$baseline_root/Cargo.toml" "$current_root/Cargo.toml" <<'PY'
-from pathlib import Path
-import sys
-
-for filename in sys.argv[1:]:
-    path = Path(filename)
-    manifest = path.read_text()
-    old = 'zip = { version = "8.6",'
-    new = 'zip = { version = "9.0.3",'
-    if old not in manifest:
-        raise SystemExit(f"expected workspace zip dependency not found in {path}")
-    path.write_text(manifest.replace(old, new, 1))
-PY
-
-echo "comparing publishable crates at $version against $baseline using isolated resolver-safe snapshots"
-# powerio-py and powerio-capi are publish = false; exclude them, not any
-# publishable package or SemVer lint.
-cd "$current_root"
+echo "comparing publishable crates at $version against $baseline"
+# powerio-py and powerio-capi are publish = false; exclude only those crates.
 cargo semver-checks check-release --workspace \
     --exclude powerio-py --exclude powerio-capi \
-    --baseline-root "$baseline_root" "$@"
+    --baseline-rev "$baseline" "$@"
