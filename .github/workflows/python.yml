@@ -65,14 +65,24 @@ jobs:
           # This makes cross-platform packaging regressions visible before merge.
           echo "wheels=true" >> "$GITHUB_OUTPUT"
       - name: Release identity agreement
-        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-        run: bash scripts/check-release-versions.sh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = release ] || [ "$EVENT_NAME" = workflow_dispatch ]; then
+            bash scripts/check-release-versions.sh
+          else
+            echo "Not a release/recovery event; release identity check is not applicable."
+          fi
       - name: Verify the immutable published release
         id: release
-        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
+          if [ "$EVENT_NAME" != release ] && [ "$EVENT_NAME" != workflow_dispatch ]; then
+            echo "No published tag exists for this PR/push; immutable-release verification is not applicable."
+            exit 0
+          fi
           git check-ref-format "refs/tags/$RELEASE_TAG" >/dev/null \
             || { echo "invalid release tag: $RELEASE_TAG" >&2; exit 1; }
           git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null \
@@ -98,7 +108,7 @@ jobs:
             -o "$release"
           jq -e '.draft == false' "$release" >/dev/null \
             || { echo "$RELEASE_TAG is not a published GitHub release" >&2; exit 1; }
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
             jq -e '.prerelease == false' "$release" >/dev/null \
               || { echo "manual recovery refuses prerelease $RELEASE_TAG" >&2; exit 1; }
           fi
