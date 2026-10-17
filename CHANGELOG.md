@@ -13,6 +13,10 @@
   be overwritten by retained source metadata during emission. Scalar single-coil
   IBR bounds are retained, including zero available PV power.
 
+- Update the internal ZIP dependency to 9.0.4 to clear RUSTSEC-2026-0367,
+  RUSTSEC-2026-0368 and RUSTSEC-2026-0369. CGMES archive reads handle fallible
+  entry names, preserve UTF-8/CP437 names and retain all archive input bounds.
+
 - Remove the paired release workflows and scripts, which were never
   activated. A release stays a tag and a published draft, and PowerIO.jl
   releases itself after each published powerio release.
