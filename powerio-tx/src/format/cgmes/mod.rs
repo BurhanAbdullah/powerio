@@ -302,7 +302,10 @@ fn push_zip(
         if file.is_dir() {
             continue;
         }
-        let raw_name = file.name().to_string();
+        let raw_name = file
+            .name()
+            .map_err(|error| format_error(format!("cannot read entry name in {archive_name}: {error}")))?
+            .into_owned();
         let path = strict_archive_path(&raw_name)?;
         if file
             .unix_mode()
@@ -420,9 +423,11 @@ fn open_archive<'a>(
         {
             Some(end) if end <= directory_start => regions.push((start, end, index)),
             _ => {
+                let entry_name = entry
+                    .name()
+                    .map_err(|error| format_error(format!("cannot read entry name in {archive_name}: {error}")))?;
                 return Err(format_error(format!(
-                    "archive {archive_name} is refused as malformed: entry {} lies outside the archive's entry data",
-                    entry.name()
+                    "archive {archive_name} is refused as malformed: entry {entry_name} lies outside the archive's entry data"
                 )));
             }
         }
@@ -431,7 +436,13 @@ fn open_archive<'a>(
     // (the overlapping entry bomb), so any shared byte is refused.
     regions.sort_unstable();
     if let Some(pair) = regions.windows(2).find(|pair| pair[1].0 < pair[0].1) {
-        let name = |index| archive.name_for_index(index).unwrap_or_default();
+        let name = |index| {
+            archive
+                .name_for_index(index)
+                .and_then(Result::ok)
+                .map(std::borrow::Cow::into_owned)
+                .unwrap_or_default()
+        };
         return Err(format_error(format!(
             "archive {archive_name} is refused as unsafe: entries {} and {} overlap",
             name(pair[0].2),
