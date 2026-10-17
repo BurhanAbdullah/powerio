@@ -476,6 +476,7 @@ fn validate_profile(
 ) -> Result<(f64, f64, f64, f64, f64)> {
     let net = instance.network();
     powerio_dist::require_electrical_readiness(net)?;
+    powerio_dist::readiness::require_earth_referenced_sources(net)?;
     if !bases.voltage_base_v.is_finite()
         || !bases.power_base_va.is_finite()
         || bases.voltage_base_v <= 0.0

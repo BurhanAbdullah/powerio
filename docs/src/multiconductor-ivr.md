@@ -63,10 +63,17 @@ shunts, shared with other preparation and matrix consumers.
 
 ## Formulation restrictions and downstream responsibility
 
-This builder rejects initial points, floating source neutrals, unreferenced
-islands, ideal conductor cycles/paths between fixed references, and angle
-windows outside the strict (-pi/2, pi/2) domain. Those are preparation-profile
+This builder rejects initial points, terminal-referenced voltage sources,
+floating source neutrals, unreferenced islands, ideal conductor cycles/paths
+between fixed references, and angle windows outside the strict (-pi/2, pi/2)
+domain. Those are preparation-profile
 restrictions, not canonical network invalidity or proofs of infeasibility.
+
+Earth-referenced source phasors prescribe absolute terminal voltages. A source
+with an explicit reference terminal prescribes a voltage difference; this IVR
+profile rejects it through the shared source-reference readiness check rather
+than interpreting it as an absolute voltage.
+
 Explicit DC networks, uninterpreted electrical extras, conflicting or unsupported
 IBR policies, and unimplemented tap profiles also fail explicitly. The builder
 checks finite dimensions, units, source identities, and selections before

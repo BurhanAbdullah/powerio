@@ -662,3 +662,40 @@ fn per_coil_bmopf_capacitors_enter_ivr_as_the_same_canonical_shunt() {
     }
     assert!((p.shunts[0].b[3][3] - 0.045).abs() < 1e-14);
 }
+
+#[test]
+fn terminal_referenced_source_is_not_silently_anchored_to_earth() {
+    let mut net = MulticonductorNetwork::new();
+    net.buses_mut().push(DistBus::new("s", names(&["a", "b"])));
+    net.sources_mut().push(VoltageSource::new(
+        "phase-to-b",
+        "s",
+        names(&["a"]),
+        vec![230.0],
+        vec![0.0],
+    ));
+    net.sources_mut().push(VoltageSource::new(
+        "earth",
+        "s",
+        names(&["b"]),
+        vec![230.0],
+        vec![0.0],
+    ));
+    // The ordinary earth-referenced profile remains supported.
+    let prep = prepare(net.clone());
+    assert_eq!(prep.terminals[0].fixed, Some([1.0, 0.0]));
+    assert_eq!(prep.terminals[1].fixed, Some([1.0, 0.0]));
+
+    // Va - Vb = 230 V and Vb = 230 V would require Va = 460 V.
+    // Treating both prescriptions as absolute would instead return Va = Vb.
+    net.sources_mut()[0].reference_terminal = Some("b".into());
+    let instance = McAcOpfInstance::from_network(net).unwrap();
+    let error = build_mc_ac_opf_preparation(&instance, &McAcOpfAssemblyOptions::default())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("phase-to-b"), "{error}");
+    assert!(
+        error.contains("reference-terminal voltage constraints"),
+        "{error}"
+    );
+}
