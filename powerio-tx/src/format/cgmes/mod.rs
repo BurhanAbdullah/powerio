@@ -441,9 +441,8 @@ fn open_archive<'a>(
         let name = |index| {
             archive
                 .name_for_index(index)
-                .ok()
-                .and_then(Result::ok)
-                .map(std::borrow::Cow::into_owned)
+                .and_then(|name| name.ok())
+                .map(|name| name.into_owned())
                 .unwrap_or_default()
         };
         return Err(format_error(format!(
