@@ -302,14 +302,7 @@ fn push_zip(
         if file.is_dir() {
             continue;
         }
-        let raw_name = file
-            .name()
-            .map_err(|error| {
-                format_error(format!(
-                    "cannot read entry {index} name from {archive_name}: {error}"
-                ))
-            })?
-            .into_owned();
+        let raw_name = archive_entry_name(file.name(), archive_name, index)?.into_owned();
         let path = strict_archive_path(&raw_name)?;
         if file
             .unix_mode()
@@ -366,6 +359,18 @@ fn push_zip(
         )?;
     }
     Ok(())
+}
+
+fn archive_entry_name<'a>(
+    name: zip::result::ZipResult<Cow<'a, str>>,
+    archive_name: &str,
+    index: usize,
+) -> Result<Cow<'a, str>> {
+    name.map_err(|error| {
+        format_error(format!(
+            "cannot read entry {index} name from {archive_name}: {error}"
+        ))
+    })
 }
 
 /// Open an archive after bounding its end records and the entry counts they
@@ -429,9 +434,7 @@ fn open_archive<'a>(
             _ => {
                 return Err(format_error(format!(
                     "archive {archive_name} is refused as malformed: entry {} lies outside the archive's entry data",
-                    entry.name().map_err(|error| format_error(format!(
-                        "cannot read entry {index} name from {archive_name}: {error}"
-                    )))?
+                    archive_entry_name(entry.name(), archive_name, index)?
                 )));
             }
         }
@@ -441,14 +444,13 @@ fn open_archive<'a>(
     regions.sort_unstable();
     if let Some(pair) = regions.windows(2).find(|pair| pair[1].0 < pair[0].1) {
         let name = |index| {
-            archive
-                .name_for_index(index)
-                .ok_or_else(|| format_error(format!("missing entry {index} in {archive_name}")))?
-                .map_err(|error| {
-                    format_error(format!(
-                        "cannot read entry {index} name from {archive_name}: {error}"
-                    ))
-                })
+            archive_entry_name(
+                archive
+                    .name_for_index(index)
+                    .unwrap_or(Err(zip::result::ZipError::FileNotFound)),
+                archive_name,
+                index,
+            )
         };
         return Err(format_error(format!(
             "archive {archive_name} is refused as unsafe: entries {} and {} overlap",
@@ -500,7 +502,7 @@ enum EndCount {
     Zip64(u64),
 }
 
-/// Read every end record zip 8.6 may examine, last first.
+/// Read every end record the ZIP reader may examine, last first.
 ///
 /// These checks are a subset of those the reader applies before it reserves
 /// a table, so it may reject a record accepted here and fall back to an
@@ -6228,6 +6230,34 @@ mod tests {
         writer.finish().unwrap().into_inner()
     }
 
+    #[test]
+    fn zip_entry_names_preserve_utf8_and_cp437_identity() {
+        let utf8 = zip_archive(
+            &[("café.xml", b"<rdf:RDF/>")],
+            zip::CompressionMethod::Stored,
+        );
+        let mut cp437 = zip_archive(
+            &[("cafe.xml", b"<rdf:RDF/>")],
+            zip::CompressionMethod::Stored,
+        );
+        let names: Vec<_> = cp437
+            .windows(8)
+            .enumerate()
+            .filter_map(|(index, name)| (name == b"cafe.xml").then_some(index))
+            .collect();
+        assert_eq!(names.len(), 2);
+        for index in names {
+            cp437[index + 3] = 0x82; // CP437 é in both local and central names.
+        }
+        for archive in [utf8, cp437] {
+            let documents = acquire_archive(archive).unwrap();
+            assert_eq!(
+                documents,
+                [("case.zip/café.xml".to_string(), "<rdf:RDF/>".to_string())]
+            );
+        }
+    }
+
     fn acquire_archive(bytes: Vec<u8>) -> Result<Vec<(String, String)>> {
         let source = Source::from_memory("case.zip", bytes).unwrap();
         acquire_documents_with_limit(&source, 1 << 20)
@@ -6320,9 +6350,10 @@ mod tests {
         put_u32(&mut forged, 22, declared);
         put_u32(&mut forged, central + 24, declared);
         let error = archive_error(forged);
+        // ZIP 9 rejects the oversized stream inside its checksum reader before
+        // the outer exact-size guard can report the same mismatch.
         assert!(
-            error.contains(&format!("inflates past the {declared} bytes"))
-                || error.contains("File is larger than its declared uncompressed size"),
+            error.contains("File is larger than its declared uncompressed size"),
             "{error}"
         );
 
@@ -6399,7 +6430,7 @@ mod tests {
     #[test]
     fn every_end_record_the_reader_may_fall_back_to_is_bounded() {
         // The last end record declares one entry, but no central record
-        // follows its directory offset, so zip 8.6 rejects it and falls back
+        // follows its directory offset, so the ZIP reader rejects it and falls back
         // to the earlier Zip64 record, reserving a table from that count.
         let claimed = MAX_FILES as u64 + 1;
         let mut fallback = b"PK\x03\x04".to_vec();
