@@ -304,7 +304,9 @@ fn push_zip(
         }
         let raw_name = file
             .name()
-            .map_err(|error| format_error(format!("cannot read entry name in {archive_name}: {error}")))?
+            .map_err(|error| {
+                format_error(format!("cannot read entry name in {archive_name}: {error}"))
+            })?
             .into_owned();
         let path = strict_archive_path(&raw_name)?;
         if file
@@ -423,9 +425,9 @@ fn open_archive<'a>(
         {
             Some(end) if end <= directory_start => regions.push((start, end, index)),
             _ => {
-                let entry_name = entry
-                    .name()
-                    .map_err(|error| format_error(format!("cannot read entry name in {archive_name}: {error}")))?;
+                let entry_name = entry.name().map_err(|error| {
+                    format_error(format!("cannot read entry name in {archive_name}: {error}"))
+                })?;
                 return Err(format_error(format!(
                     "archive {archive_name} is refused as malformed: entry {entry_name} lies outside the archive's entry data"
                 )));
@@ -439,6 +441,7 @@ fn open_archive<'a>(
         let name = |index| {
             archive
                 .name_for_index(index)
+                .ok()
                 .and_then(Result::ok)
                 .map(std::borrow::Cow::into_owned)
                 .unwrap_or_default()
