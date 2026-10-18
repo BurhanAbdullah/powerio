@@ -623,6 +623,21 @@ enum DeclaredSizeFailure {
 }
 
 impl DeclaredSizeFailure {
+    fn from_read_error(error: std::io::Error) -> Self {
+        // zip 9.x rejects an inflater that produces more bytes than the
+        // central directory declared before our one-byte overrun probe runs.
+        // Preserve the reader's stable malformed-archive diagnostic instead
+        // of leaking the ZIP implementation's internal error text.
+        if error
+            .to_string()
+            .contains("larger than its declared uncompressed size")
+        {
+            Self::Long
+        } else {
+            Self::Read(error)
+        }
+    }
+
     fn into_error(self, archive_name: &str, raw_name: &str, size: u64) -> Error {
         format_error(match self {
             Self::Read(error) => format!("cannot decompress {raw_name}: {error}"),
@@ -658,14 +673,14 @@ fn read_declared_size(
         .by_ref()
         .take(size - prefix.len() as u64)
         .read_to_end(&mut content)
-        .map_err(DeclaredSizeFailure::Read)?;
+        .map_err(DeclaredSizeFailure::from_read_error)?;
     let produced = content.len() as u64;
     if produced != size {
         return Err(DeclaredSizeFailure::Short(produced));
     }
     if entry
         .read(&mut [0_u8; 1])
-        .map_err(DeclaredSizeFailure::Read)?
+        .map_err(DeclaredSizeFailure::from_read_error)?
         != 0
     {
         return Err(DeclaredSizeFailure::Long);
