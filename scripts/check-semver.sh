@@ -35,7 +35,7 @@ fi
 
 echo "comparing the publishable crates at $version against $baseline"
 # cargo-semver-checks runs cargo update in synthetic consumers generated from
-# the current checkout as well as the baseline. Since ZIP 8.6.0 was yanked,
+# the current checkout as well as the baseline. Since ZIP 8.6.0 was yanked and has security advisories,
 # those consumers cannot resolve the current workspace's ^8.6 dependency.
 # Apply the same narrow compatibility adjustment to temporary source archives
 # on both sides of the comparison; neither the real checkout nor the published
@@ -53,10 +53,14 @@ for root in map(pathlib.Path, sys.argv[1:]):
     manifest = root / "Cargo.toml"
     text = manifest.read_text()
     old_zip = 'zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }'
-    new_zip = 'zip = { version = "9.0.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }'
-    if text.count(old_zip) != 1:
-        raise SystemExit(f"expected exactly one ZIP 8.6 dependency in {root}")
-    manifest.write_text(text.replace(old_zip, new_zip))
+    new_zip = 'zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }'
+    if old_zip in text:
+        if text.count(old_zip) != 1:
+            raise SystemExit(f"expected exactly one ZIP 8.6 dependency in {root}")
+        text = text.replace(old_zip, new_zip)
+    elif new_zip not in text:
+        raise SystemExit(f"expected ZIP 8.6 or 9.0.5 dependency in {root}")
+    manifest.write_text(text)
 
     source = root / "powerio-tx/src/format/cgmes/mod.rs"
     text = source.read_text()
