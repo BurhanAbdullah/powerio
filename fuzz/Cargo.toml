@@ -35,6 +35,12 @@ test = false
 bench = false
 
 [[bin]]
+name = "rawx"
+path = "fuzz_targets/rawx.rs"
+test = false
+bench = false
+
+[[bin]]
 name = "stored_module"
 path = "fuzz_targets/stored_module.rs"
 test = false
