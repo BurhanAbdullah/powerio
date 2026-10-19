@@ -1,0 +1,36 @@
+# Vendored case fixtures (MATPOWER .m verbatim from github.com/MATPOWER/matpower,
+# PSS/E .raw, PowerWorld .aux/.RAW/.pwb/.pwd, and friends). Linguist misclassifies
+# several of them (.m as MATLAB, PowerWorld .aux as TeX) and drowns out the Rust
+# source in the language bar. Mark the whole tree vendored to drop it from the
+# language stats and collapse it in diffs. The files stay in the repo so the test
+# suite stays hermetic.
+tests/data/** linguist-vendored
+
+# Julia appears here only as a validation harness, not as the package language.
+benchmarks/**/*.jl linguist-vendored
+powerio-dist/tools/pmd/*.jl linguist-vendored
+
+# Vendored distribution fixtures (BMOPF schema + example networks from
+# frederikgeth/bmopf-report, OpenDSS test feeders): keep them out of the
+# language stats and collapsed in diffs.
+tests/data/dist/** linguist-vendored
+
+# Vendored case fixtures are byte-exact round-trip references: the `parse → write`
+# tests (e.g. powerio/tests/roundtrip.rs) compare the writer output to the file
+# verbatim. `-text` checks them out byte-identical to the committed blob on every
+# platform (no CRLF/LF conversion), so the comparison holds on Windows
+# (`core.autocrlf=true`) too — where the `.m` fixtures (LF in the repo) would
+# otherwise materialize as CRLF while the lossless writer echoes that CRLF and the
+# test (which normalizes only the read side) fails. The PSS/E `.raw` fixtures are
+# intentionally CRLF (the format's native DOS line ending) and stay CRLF. #72.
+tests/data/** -text
+
+# UCTE-DEF uses fixed columns and meaningful trailing padding.
+tests/data/ucte/*.uct -whitespace
+
+# IEEE CDF uses fixed columns and meaningful trailing padding.
+tests/data/ieee-cdf/*.txt -whitespace
+
+# Archived schemas retain their exact upstream bytes on every platform.
+powerio-dist/schemas/bmopf/**/*.json -text linguist-vendored
+python/powerio/schemas/bmopf/**/*.json -text linguist-vendored

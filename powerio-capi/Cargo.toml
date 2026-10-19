@@ -1,0 +1,37 @@
+[package]
+name = "powerio-capi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "C ABI for PowerIO modules, grid exchange formats, and calculations."
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# A C-consumable shared + static library. The header is checked in at
+# powerio-capi/include/powerio.h (regenerate with `cbindgen` via cbindgen.toml).
+[lib]
+name = "powerio_capi"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[features]
+default = []
+# Retained build-feature names for release tooling. ABI 7 exposes one fixed
+# symbol set; none of these names gates a C function.
+arrow = []
+matrix = []
+dist = []
+prob = []
+gridfm = ["powerio/gridfm", "powerio-matrix/gridfm"]
+
+[dependencies]
+powerio-core = { workspace = true }
+powerio-dist.workspace = true
+powerio.workspace = true
+powerio-tx.workspace = true
+powerio-matrix.workspace = true
+powerio-prob.workspace = true
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

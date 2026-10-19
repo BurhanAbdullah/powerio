@@ -1,0 +1,2327 @@
+//! BMOPF JSON into the canonical [`MulticonductorNetwork`].
+//!
+//! The format is fully explicit, so the reader materializes nothing and
+//! `defaulted` stays empty. Reading is liberal where writing is strict:
+//! fields outside the schema land in the element's `extras` with a warning
+//! instead of failing the parse. Transformer subtypes become windings; the
+//! subtype rides in the transformer's extras (`bmopf_subtype`) so writing
+//! back reproduces the same grouping for shapes the windings alone do not
+//! pin down (center tap reads as two windings).
+
+use serde::de::DeserializeOwned;
+use serde_json::{Map, Value};
+
+use super::BmopfSchemaVersion;
+use crate::diagnostics::codes as C;
+use crate::error::{Error, Result};
+use crate::geo::{CoordinateSpace, DistCoordsKind, DistGeoMeta, DistLocation};
+use crate::model::{
+    ActivePowerReference, ActivePowerUnit, ConductorMatrix, Configuration, ControlVoltageReference,
+    DistBus, DistCapacitor, DistControlProfile, DistGenerator, DistIbr, DistLine, DistLineCode,
+    DistLoad, DistLoadVoltageModel, DistShunt, DistSourceFormat, DistSwitch, DistTransformer,
+    DistWinding, DistWindingConn, Extras, IbrPrimeMover, IbrTopology, IbrVoltageAggregation,
+    MulticonductorNetwork, MulticonductorNetworkTables, PowerFactorControl, ReactivePowerReference,
+    ReactivePowerUnit, UntypedObject, VoltVarControl, VoltWattControl, VoltageSource,
+    n_winding_impedance_base, n_winding_phase_count, pair_keys,
+};
+
+pub(crate) fn parse_bmopf_collecting(
+    text: &str,
+    diags: &mut crate::collect::Diagnostics,
+) -> Result<MulticonductorNetwork> {
+    let doc: Value = serde_json::from_str(text).map_err(|e| Error::Json {
+        format: "BMOPF",
+        message: e.to_string(),
+    })?;
+    let Value::Object(doc) = doc else {
+        return Err(Error::Json {
+            format: "BMOPF",
+            message: "top level is not an object".into(),
+        });
+    };
+    let mut net = MulticonductorNetwork::from_tables(MulticonductorNetworkTables {
+        source_format: Some(DistSourceFormat::BmopfJson),
+        base_frequency: 60.0,
+        ..MulticonductorNetworkTables::default()
+    });
+    report_non_numeric_fields(&doc, diags);
+    report_schema_version(&doc, diags);
+    super::validate::report(&doc, diags);
+    let mut rd = Reader {
+        net: &mut net,
+        diagnostics: crate::diagnostics::Diagnostics::new(),
+        frequency_stated: false,
+    };
+    rd.document(&doc);
+    let found = std::mem::take(&mut rd.diagnostics);
+    diags.absorb(found);
+    super::geo::read(&doc, &mut net, diags);
+    crate::model::warn_unresolved_references(&net, diags);
+    Ok(net)
+}
+
+/// Report unresolved schema identities and reject contradictory version declarations.
+fn report_schema_version(doc: &Map<String, Value>, diags: &mut crate::collect::Diagnostics) {
+    let stated = doc
+        .get("meta")
+        .and_then(Value::as_object)
+        .and_then(|m| m.get("$schema"))
+        .and_then(Value::as_str);
+    if let (Some(profile), Some(version)) = (
+        stated.and_then(BmopfSchemaVersion::from_schema_id),
+        doc.get("meta").and_then(|meta| meta.get("schema_version")),
+    ) && version.as_str() != Some(profile.version())
+    {
+        diags.push(
+            &C::READ_BMOPF_SCHEMA_MISMATCH,
+            format!(
+                "meta.schema_version {version} disagrees with the {} schema URI",
+                profile.version()
+            ),
+        );
+    }
+    match stated {
+        None => diags.push(
+            &C::READ_BMOPF_SCHEMA_ABSENT,
+            format!(
+                "the document states no `meta.$schema`, so the BMOPF schema version it was \
+                 written against is unknown; both {} and {} are accepted",
+                BmopfSchemaVersion::Bmopf010.version(),
+                BmopfSchemaVersion::Bmopf020.version()
+            ),
+        ),
+        Some(id) if BmopfSchemaVersion::from_schema_id(id).is_none() => diags.push(
+            &C::READ_BMOPF_SCHEMA_UNKNOWN,
+            format!(
+                "`meta.$schema` is `{id}`, which names no known BMOPF schema version; both {} \
+                 and {} are accepted",
+                BmopfSchemaVersion::Bmopf010.version(),
+                BmopfSchemaVersion::Bmopf020.version()
+            ),
+        ),
+        Some(_) => {}
+    }
+}
+
+fn uniform_bound(value: Option<&Value>) -> Option<f64> {
+    let values = floats(value)?;
+    let first = *values.first()?;
+    values
+        .iter()
+        .all(|&v| v.to_bits() == first.to_bits())
+        .then_some(first)
+}
+
+fn nonuniform_bound(value: Option<&Value>) -> Option<Vec<f64>> {
+    uniform_bound(value)
+        .is_none()
+        .then(|| floats(value))
+        .flatten()
+}
+
+/// Numeric field names shared with 0.1.0, plus draft energy prices. Derived from
+/// the vendored schema; `schema_numeric_fields_match_the_vendored_schema`
+/// holds the two together.
+const NUMERIC_FIELDS: &[&str] = &[
+    "alpha_i",
+    "alpha_p",
+    "alpha_z",
+    "beta_i",
+    "beta_p",
+    "beta_z",
+    "cost",
+    "energy_cost_rate",
+    "frequency",
+    "gamma_p",
+    "gamma_q",
+    "i_max",
+    "i_max_from",
+    "i_max_to",
+    "length",
+    "p_max",
+    "p_min",
+    "p_nom",
+    "q_max",
+    "q_min",
+    "q_nom",
+    "q_rated",
+    "r_series",
+    "r_series_from",
+    "r_series_to",
+    "s_max",
+    "s_rating",
+    "v_angle",
+    "v_magnitude",
+    "v_max",
+    "v_min",
+    "v_nom",
+    "v_nom_from",
+    "v_nom_to",
+    "vn_max",
+    "vneg_max",
+    "vpn_max",
+    "vpn_min",
+    "vpos_max",
+    "vpos_min",
+    "vpp_max",
+    "vpp_min",
+    "vzero_max",
+    "x_series",
+    "x_series_from",
+    "x_series_to",
+];
+
+/// Prefixes of the schema's matrix element patterns, e.g. `R_series_1_2`.
+/// The same spelling the readers pass to [`matrix_indices`] and
+/// [`flat_matrix`].
+const NUMERIC_MATRIX_PREFIXES: &[&str] = &[
+    "B_from", "B_to", "B", "G_from", "G_to", "G", "R_series", "X_series",
+];
+
+/// A `<prefix>_<row>_<col>` matrix element name, by the rule that decides
+/// whether the reader assembles the cell. An index the reader rejects is
+/// outside the schema, so this must not claim it either.
+fn is_numeric_matrix_field(key: &str) -> bool {
+    NUMERIC_MATRIX_PREFIXES
+        .iter()
+        .any(|p| matrix_indices(key, p).is_some())
+}
+
+/// Runs for every key in the document, so the exact set is a binary search
+/// rather than a scan. `NUMERIC_FIELDS` is sorted, which a test holds.
+fn is_numeric_field(key: &str) -> bool {
+    NUMERIC_FIELDS.binary_search(&key).is_ok() || is_numeric_matrix_field(key)
+}
+
+/// Report every schema-numeric field holding something that is not a number.
+///
+/// Schema 0.1.0 spells no `null` anywhere and types the bounds and ratings as
+/// `nonnegative_number`, so every value this reaches is already invalid. Each
+/// reads as `NaN`, which serializes on as `null` and restores as an unbounded
+/// limit — an explicit "no limit" the source never stated. The `Error`
+/// severity carries that to the CLI exit code.
+///
+/// The field stays in the document. Removing it would read as absent, and
+/// absent is a third meaning the reader spells per field: `0.0` for an
+/// optional impedance, `NaN` for a rating, and for `R_series_1_1` the
+/// presence check that picks the inline branch of the line `oneOf` — so a
+/// removal there loses every other matrix entry on that line. Distinguishing
+/// absent from invalid per field needs the typed readers of #293.
+///
+/// `extras` is skipped, since it round trips arbitrary consumer JSON where
+/// these names carry no schema meaning.
+fn report_non_numeric_fields(doc: &Map<String, Value>, diags: &mut crate::collect::Diagnostics) {
+    /// What the value holds, or `None` when the schema allows it.
+    fn not_numeric(v: &Value) -> Option<&'static str> {
+        match v {
+            Value::Number(_) => None,
+            Value::Array(a) if a.iter().all(Value::is_number) => None,
+            Value::Null => Some("null"),
+            Value::Bool(_) => Some("a boolean"),
+            Value::String(_) => Some("a string"),
+            Value::Array(_) => Some("an array holding a value that is not a number"),
+            Value::Object(_) => Some("an object"),
+        }
+    }
+    fn report(diags: &mut crate::collect::Diagnostics, pointer: String, what: &str) {
+        let message = format!(
+            "{pointer}: the schema types this field as a number and it holds {what}; \
+             it reads as NaN and anything derived from it is undefined"
+        );
+        let mut diagnostic = crate::diagnostics::Diagnostic::of(
+            &crate::diagnostics::codes::READ_BMOPF_FIELD_NOT_A_NUMBER,
+            message,
+        )
+        .with_suggested_action("state a number, or omit the field");
+        crate::diagnostics::attach_target(&mut diagnostic, pointer);
+        diags.record(diagnostic);
+    }
+    // A pointer costs an allocation, so it is built for a container the walk
+    // descends into and for a field it reports, never for a sound leaf.
+    fn walk(obj: &Map<String, Value>, path: &str, diags: &mut crate::collect::Diagnostics) {
+        for (key, value) in obj {
+            if key == "extras" {
+                continue;
+            }
+            if is_numeric_field(key) {
+                if let Some(what) = not_numeric(value) {
+                    report(diags, format!("{path}/{key}"), what);
+                }
+                continue;
+            }
+            match value {
+                Value::Object(o) => walk(o, &format!("{path}/{key}"), diags),
+                Value::Array(a) => {
+                    for (i, e) in a.iter().enumerate() {
+                        if let Value::Object(o) = e {
+                            walk(o, &format!("{path}/{key}/{i}"), diags);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    walk(doc, "", diags);
+}
+
+struct Reader<'a> {
+    net: &'a mut MulticonductorNetwork,
+    /// The reader's findings, flushed into the network once the parse is
+    /// done so a helper never borrows the network the caller is writing into.
+    diagnostics: crate::diagnostics::Diagnostics,
+    frequency_stated: bool,
+}
+
+const BMOPF_DELTA_ROLLS_EXTRA: &str = "bmopf_delta_rolls";
+
+fn f(v: &Value) -> f64 {
+    v.as_f64().unwrap_or(f64::NAN)
+}
+
+fn floats(v: Option<&Value>) -> Option<Vec<f64>> {
+    v?.as_array().map(|a| a.iter().map(f).collect())
+}
+
+fn first_float(v: Option<&Value>) -> Option<f64> {
+    match v? {
+        Value::Array(a) => a.first().map(f),
+        v => Some(f(v)),
+    }
+}
+
+fn delta_roll_value(v: Option<&Value>) -> Option<i64> {
+    v.and_then(Value::as_i64)
+        .filter(|roll| matches!(*roll, -1 | 1))
+}
+
+fn value_alias<'a>(o: &'a Map<String, Value>, primary: &str, legacy: &str) -> Option<&'a Value> {
+    o.get(primary).or_else(|| o.get(legacy))
+}
+
+/// Folds `extras.transformer.<subtype>.<name>` fields back onto the raw
+/// transformer objects (the reverse of the writer's overflow split). The
+/// in-place field wins over the overlay on a key collision.
+fn merge_transformer_overlay(
+    subtypes: &Map<String, Value>,
+    overlay: &Map<String, Value>,
+) -> Map<String, Value> {
+    let mut merged = subtypes.clone();
+    for (subtype, names) in overlay {
+        let Value::Object(names) = names else {
+            continue;
+        };
+        if matches!(
+            subtype.as_str(),
+            "n_winding" | "single_phase_autotransformer" | "open_delta_regulator"
+        ) {
+            let table = merged
+                .entry(subtype.clone())
+                .or_insert_with(|| Value::Object(Map::new()));
+            if let Some(table) = table.as_object_mut() {
+                for (name, fields) in names {
+                    table.entry(name.clone()).or_insert_with(|| fields.clone());
+                }
+            }
+        }
+        let Some(Value::Object(table)) = merged.get_mut(subtype) else {
+            continue;
+        };
+        for (name, fields) in names {
+            let (Value::Object(fields), Some(Value::Object(target))) =
+                (fields, table.get_mut(name))
+            else {
+                continue;
+            };
+            for (key, value) in fields {
+                target.entry(key.clone()).or_insert_with(|| value.clone());
+            }
+        }
+    }
+    merged
+}
+
+fn strings(v: Option<&Value>) -> Vec<String> {
+    v.and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(|s| s.as_str().unwrap_or_default().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn string(v: Option<&Value>) -> String {
+    v.and_then(Value::as_str).unwrap_or_default().to_string()
+}
+
+fn enum_field<T: DeserializeOwned>(
+    v: Option<&Value>,
+    what: &str,
+    diagnostics: &mut crate::diagnostics::Diagnostics,
+) -> Option<T> {
+    let value = v?;
+    match serde_json::from_value(value.clone()) {
+        Ok(parsed) => Some(parsed),
+        Err(err) => {
+            diagnostics.push(
+                &C::READ_BMOPF_SOURCE_MALFORMED,
+                format!("{what}: {err}; field ignored"),
+            );
+            None
+        }
+    }
+}
+
+/// Case insensitive on the recognized values (the dss reader's tolerance);
+/// a present but unrecognized string warns and reads as WYE.
+fn config(
+    v: Option<&Value>,
+    what: &str,
+    diagnostics: &mut crate::diagnostics::Diagnostics,
+) -> Configuration {
+    let Some(s) = v.and_then(Value::as_str) else {
+        return Configuration::Wye;
+    };
+    match s.to_ascii_uppercase().as_str() {
+        "WYE" => Configuration::Wye,
+        "DELTA" => Configuration::Delta,
+        "SINGLE_PHASE" => Configuration::SinglePhase,
+        _ => {
+            diagnostics.push(
+                &C::READ_BMOPF_VALUE_UNSUPPORTED,
+                format!(
+                    "{what}: configuration `{s}` is not WYE, DELTA, or SINGLE_PHASE; read as WYE"
+                ),
+            );
+            Configuration::Wye
+        }
+    }
+}
+
+/// The largest conductor index a `prefix_i_j` matrix key may carry. The
+/// largest index seen sizes a dense n×n allocation in [`flat_matrix`], so an
+/// unbounded key (a few bytes of JSON) could demand gigabytes; no physical
+/// conductor bundle comes near this bound. An oversized index makes the key
+/// unrecognized, so it lands in extras with the malformed-key warning.
+const MAX_MATRIX_INDEX: usize = 64;
+
+/// Parses the `_i_j` tail of a `prefix_i_j` matrix key (1 based). None
+/// when the key is not a well formed entry for this prefix.
+fn matrix_indices(key: &str, prefix: &str) -> Option<(usize, usize)> {
+    let rest = key.strip_prefix(prefix)?.strip_prefix('_')?;
+    let (i, j) = rest.split_once('_')?;
+    let (i, j) = (i.parse::<usize>().ok()?, j.parse::<usize>().ok()?);
+    (i >= 1 && j >= 1 && i <= MAX_MATRIX_INDEX && j <= MAX_MATRIX_INDEX).then_some((i, j))
+}
+
+/// Collects `prefix_i_j` keys into a square matrix; `n` is the largest
+/// index seen. Returns None when no key carries the prefix. A cell whose
+/// transpose is not spelled is mirrored: these matrices are symmetric, and
+/// BMOPFTools' reader accepts the same one-triangle shorthand (a spelled
+/// cell always wins; both writers emit full matrices in practice).
+fn flat_matrix(o: &Map<String, Value>, prefix: &str) -> Option<ConductorMatrix> {
+    let mut entries: Vec<(usize, usize, f64)> = Vec::new();
+    let mut n = 0;
+    for (k, v) in o {
+        let Some((i, j)) = matrix_indices(k, prefix) else {
+            continue;
+        };
+        entries.push((i - 1, j - 1, f(v)));
+        n = n.max(i).max(j);
+    }
+    if n == 0 {
+        return None;
+    }
+    let mut m = vec![vec![0.0; n]; n];
+    let mut spelled = vec![vec![false; n]; n];
+    for (i, j, v) in entries {
+        m[i][j] = v;
+        spelled[i][j] = true;
+    }
+    for i in 0..n {
+        for j in 0..n {
+            if spelled[i][j] && !spelled[j][i] {
+                m[j][i] = m[i][j];
+            }
+        }
+    }
+    Some(m)
+}
+
+/// The six linecode-shaped matrices of `o`, padded square to the widest one
+/// present; `ragged` reports a genuine size disagreement between them.
+fn linecode_matrices(o: &Map<String, Value>) -> ([ConductorMatrix; 6], usize, bool) {
+    let mats = [
+        flat_matrix(o, "R_series"),
+        flat_matrix(o, "X_series"),
+        flat_matrix(o, "G_from"),
+        flat_matrix(o, "B_from"),
+        flat_matrix(o, "G_to"),
+        flat_matrix(o, "B_to"),
+    ];
+    let n = mats.iter().flatten().map(Vec::len).max().unwrap_or(0);
+    let ragged = mats.iter().flatten().any(|m| m.len() < n);
+    (mats.map(|m| pad_to(m.unwrap_or_default(), n)), n, ragged)
+}
+
+/// Grows `m` to `n` by `n`, preserving the existing entries.
+fn pad_to(m: ConductorMatrix, n: usize) -> ConductorMatrix {
+    if m.len() >= n {
+        return m;
+    }
+    let mut out = vec![vec![0.0; n]; n];
+    for (i, row) in m.into_iter().enumerate() {
+        for (j, v) in row.into_iter().enumerate() {
+            out[i][j] = v;
+        }
+    }
+    out
+}
+
+/// Element fields outside `known` go to extras with a warning.
+fn take_extras(
+    o: &Map<String, Value>,
+    known: &[&str],
+    what: &str,
+    diagnostics: &mut crate::diagnostics::Diagnostics,
+    matrix_prefixes: &[&str],
+) -> Extras {
+    let mut extras = Extras::new();
+    for (k, v) in o {
+        if known.contains(&k.as_str()) {
+            continue;
+        }
+        if matrix_prefixes
+            .iter()
+            .any(|p| matrix_indices(k, p).is_some())
+        {
+            continue;
+        }
+        diagnostics.push(
+            &C::READ_BMOPF_RETAINED_SOURCE_ONLY,
+            format!("{what}: `{k}` is outside the schema; kept in extras"),
+        );
+        extras.insert(k.clone(), v.clone());
+    }
+    extras
+}
+
+impl Reader<'_> {
+    fn document(&mut self, doc: &Map<String, Value>) {
+        if let Some(name) = doc.get("name").and_then(Value::as_str) {
+            *self.net.name_mut() = Some(name.to_string());
+        }
+        // Schema 0.1.0 carries the frequency in `meta`; the top-level
+        // spellings are the pre-0.1.0 vintage.
+        if let Some(frequency) = first_float(
+            doc.get("meta")
+                .and_then(Value::as_object)
+                .and_then(|m| m.get("frequency")),
+        )
+        .or_else(|| first_float(doc.get("base_frequency")))
+        .or_else(|| first_float(doc.get("frequency")))
+            && frequency.is_finite()
+            && frequency > 0.0
+        {
+            *self.net.base_frequency_mut() = frequency;
+            self.frequency_stated = true;
+        }
+        // `serde_json::Map` iterates in key order, so the loop below reaches
+        // `line` before `linecode`. A line with inline impedance synthesizes a
+        // linecode named after the line, and that name must not collide with a
+        // linecode the document declares. Read the declared table first, then
+        // skip it in the loop.
+        if let Some(Value::Object(items)) = doc.get("linecode") {
+            self.line_codes(items);
+        }
+        // `ibr` and `control_profile` can also arrive under `extras`, and the
+        // reader keeps whichever copy it reads first. Key order alone decides
+        // that: `control_profile` sorts before `extras` and `ibr` sorts after,
+        // so the same document would resolve the two classes in opposite
+        // directions. Read both canonical tables here, ahead of `extras`, so
+        // the top-level copy always wins and the rule holds whatever the key
+        // order is.
+        for (key, read) in [
+            ("ibr", Self::ibrs as fn(&mut Self, &Map<String, Value>)),
+            ("control_profile", Self::control_profiles),
+        ] {
+            if let Some(Value::Object(items)) = doc.get(key) {
+                read(self, items);
+            }
+        }
+        for (key, value) in doc {
+            let Value::Object(items) = value else {
+                continue;
+            };
+            match key.as_str() {
+                "bus" => self.buses(items),
+                // All read before the loop: `linecode` ahead of any line that
+                // could synthesize a linecode name, `ibr` and
+                // `control_profile` ahead of `extras`, `name` with the rest of
+                // the document header.
+                // `transformer` is also read after the loop: the regulator
+                // subtypes recover their voltage base from buses and voltage
+                // sources, which a document can state after its transformer
+                // section.
+                "linecode" | "name" | "ibr" | "control_profile" | "transformer" => {}
+                "line" => self.lines(items),
+                "switch" => self.switches(items),
+                "load" => self.loads(items),
+                "generator" => self.generators(items),
+                "capacitor" => self.capacitors(items),
+                "shunt" => self.shunts(items),
+                "voltage_source" => self.sources_with_overlay(items, doc),
+                "extras" => self.extras_block(items),
+                // The phase/neutral label conventions block: no typed slot,
+                // stashed whole so a round trip keeps it (the meta pattern).
+                "terminal_conventions" => {
+                    self.net.extras_mut().insert(
+                        "bmopf_terminal_conventions".into(),
+                        Value::Object(items.clone()),
+                    );
+                }
+                // `meta` is provenance (license, authors, generator tool),
+                // with no typed slot in the model. Stash it whole, the way the
+                // PMD reader stashes `pmd_settings`; the BMOPF writer owns
+                // `$schema`/`frequency`/`case_study_generator` and folds the
+                // other schema fields back from this stash.
+                "meta" => {
+                    self.net
+                        .extras_mut()
+                        .insert("bmopf_meta".into(), Value::Object(items.clone()));
+                }
+                other => {
+                    self.diagnostics.push(
+                        &C::READ_BMOPF_RETAINED_SOURCE_ONLY,
+                        format!("top level `{other}` has no typed PowerIO representation; kept as named JSON data"),
+                    );
+                    for (name, v) in items {
+                        self.net.untyped_objects_mut().push(UntypedObject {
+                            class: other.to_string(),
+                            name: name.clone(),
+                            props: vec![(None, v.to_string())],
+                        });
+                    }
+                }
+            }
+        }
+        let empty = Map::new();
+        let items = doc
+            .get("transformer")
+            .and_then(Value::as_object)
+            .unwrap_or(&empty);
+        let overlay = doc
+            .get("extras")
+            .and_then(|e| e.get("transformer"))
+            .and_then(Value::as_object);
+        if let Some(overlay) = overlay {
+            self.transformers(&merge_transformer_overlay(items, overlay));
+        } else {
+            self.transformers(items);
+        }
+
+        self.warn_orphan_transformer_overlay(doc);
+        if !self.frequency_stated {
+            crate::model::warn_defaulted_frequency(self.net, "frequency", &mut self.diagnostics);
+        }
+    }
+
+    /// Report parameter overlays that have no declared transformer target.
+    fn warn_orphan_transformer_overlay(&mut self, doc: &Map<String, Value>) {
+        let overlay = doc
+            .get("extras")
+            .and_then(Value::as_object)
+            .and_then(|e| e.get("transformer"))
+            .and_then(Value::as_object)
+            .filter(|o| !o.is_empty());
+        if overlay.is_some() && self.net.transformers().is_empty() {
+            self.diagnostics.push(
+                &C::READ_BMOPF_FIELD_DROPPED,
+                "`extras.transformer` carries fields for transformers the document does \
+                 not declare; the fields are dropped",
+            );
+        }
+    }
+
+    /// The top-level `extras` escape hatch (schema 0.1.0). The IBR and
+    /// control profile tables that lost their top-level slots read typed from
+    /// here, the transformer overflow is consumed by the transformer merge,
+    /// and everything else is stashed verbatim for the writer to re-emit.
+    fn extras_block(&mut self, items: &Map<String, Value>) {
+        let mut stash = Map::new();
+        for (key, value) in items {
+            match (key.as_str(), value) {
+                ("ibr", Value::Object(table)) => self.ibrs(table),
+                ("control_profile", Value::Object(table)) => self.control_profiles(table),
+                ("transformer", Value::Object(_)) => {}
+                _ => {
+                    stash.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        if !stash.is_empty() {
+            self.net
+                .extras_mut()
+                .insert("bmopf_extras".into(), Value::Object(stash));
+        }
+    }
+
+    fn capacitors(&mut self, items: &Map<String, Value>) {
+        for (name, v) in items {
+            let Value::Object(o) = v else { continue };
+            let known = ["bus", "terminal_map", "configuration", "q_rated", "v_nom"];
+            for (field, value) in [("q_rated", o.get("q_rated")), ("v_nom", o.get("v_nom"))] {
+                if value.is_none() {
+                    self.diagnostics.push(
+                        &C::READ_BMOPF_VALUE_DEFAULTED,
+                        format!("capacitor {name}: `{field}` missing; read as NaN"),
+                    );
+                }
+            }
+            self.net.capacitors_mut().push(DistCapacitor {
+                name: name.clone(),
+                bus: string(o.get("bus")),
+                terminal_map: strings(o.get("terminal_map")),
+                configuration: config(
+                    o.get("configuration"),
+                    &format!("capacitor {name}"),
+                    &mut self.diagnostics,
+                ),
+                q_rated: o.get("q_rated").map_or(f64::NAN, f),
+                v_nom: o.get("v_nom").map_or(f64::NAN, f),
+                extras: take_extras(
+                    o,
+                    &known,
+                    &format!("capacitor {name}"),
+                    &mut self.diagnostics,
+                    &[],
+                ),
+            });
+        }
+    }
+
+    fn ibrs(&mut self, items: &Map<String, Value>) {
+        const TYPED: &[&str] = &[
+            "bus",
+            "terminal_map",
+            "topology",
+            "prime_mover",
+            "s_max",
+            "i_max",
+            "p_avail",
+            "p_min",
+            "p_max",
+            "q_min",
+            "q_max",
+            "control_profile",
+            "voltage_aggregation",
+        ];
+        let mut taken: std::collections::BTreeSet<String> = self
+            .net
+            .ibrs()
+            .iter()
+            .map(|x| x.name.to_ascii_lowercase())
+            .collect();
+        for (name, v) in items {
+            let Value::Object(o) = v else { continue };
+            if self.reject_duplicate("ibr", name, &taken) {
+                continue;
+            }
+            taken.insert(name.to_ascii_lowercase());
+            let topology = enum_field::<IbrTopology>(
+                o.get("topology"),
+                &format!("ibr {name} topology"),
+                &mut self.diagnostics,
+            )
+            .unwrap_or(IbrTopology::SinglePhase);
+            let prime_mover = enum_field::<IbrPrimeMover>(
+                o.get("prime_mover"),
+                &format!("ibr {name} prime_mover"),
+                &mut self.diagnostics,
+            )
+            .unwrap_or(IbrPrimeMover::Generic);
+            let mut extras = Extras::new();
+            for (key, value) in o {
+                if !TYPED.contains(&key.as_str()) {
+                    extras.insert(key.clone(), value.clone());
+                }
+            }
+            self.net.ibrs_mut().push(DistIbr {
+                name: name.clone(),
+                bus: string(o.get("bus")),
+                terminal_map: strings(o.get("terminal_map")),
+                topology,
+                prime_mover,
+                s_max: floats(o.get("s_max")).unwrap_or_default(),
+                i_max: floats(o.get("i_max")),
+                p_avail: first_float(o.get("p_avail")),
+                p_min: floats(o.get("p_min")),
+                p_max: floats(o.get("p_max")),
+                q_min: floats(o.get("q_min")),
+                q_max: floats(o.get("q_max")),
+                control_profile: o
+                    .get("control_profile")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                voltage_aggregation: enum_field::<IbrVoltageAggregation>(
+                    o.get("voltage_aggregation"),
+                    &format!("ibr {name} voltage_aggregation"),
+                    &mut self.diagnostics,
+                ),
+                extras,
+            });
+        }
+    }
+
+    /// True when `name` (case-insensitive) is already in `taken`. Schema
+    /// 0.1.0 moved the IBR and control profile tables under `extras`, and the
+    /// reader accepts both places, so a part-migrated document can declare
+    /// the same name twice. Two elements of one name double every count and
+    /// let the writer silently keep only the last, so the second reads as a
+    /// duplicate and drops with a warning.
+    fn reject_duplicate(
+        &mut self,
+        class: &str,
+        name: &str,
+        taken: &std::collections::BTreeSet<String>,
+    ) -> bool {
+        if !taken.contains(&name.to_ascii_lowercase()) {
+            return false;
+        }
+        self.diagnostics.push(
+            &C::READ_BMOPF_RECORD_DROPPED,
+            format!(
+                "{class} {name}: the document declares this name at the top level and under \
+             `extras`; the second copy is dropped"
+            ),
+        );
+        true
+    }
+
+    fn control_profiles(&mut self, items: &Map<String, Value>) {
+        let mut taken: std::collections::BTreeSet<String> = self
+            .net
+            .control_profiles()
+            .iter()
+            .map(|x| x.name.to_ascii_lowercase())
+            .collect();
+        for (name, v) in items {
+            let Value::Object(o) = v else { continue };
+            if self.reject_duplicate("control_profile", name, &taken) {
+                continue;
+            }
+            taken.insert(name.to_ascii_lowercase());
+            let mut profile = DistControlProfile::new(name.clone());
+            if let Some(Value::Object(pf)) = o.get("power_factor") {
+                profile.power_factor =
+                    first_float(pf.get("pf")).map(|pf| PowerFactorControl { pf });
+            }
+            if let Some(Value::Object(vv)) = o.get("volt_var") {
+                profile.volt_var = Some(VoltVarControl {
+                    voltage_reference: enum_field::<ControlVoltageReference>(
+                        vv.get("voltage_reference"),
+                        &format!("control_profile {name} volt_var voltage_reference"),
+                        &mut self.diagnostics,
+                    ),
+                    breakpoints: floats(vv.get("breakpoints")).unwrap_or_default(),
+                    q_limits: floats(vv.get("q_limits")).unwrap_or_default(),
+                    q_unit: enum_field::<ReactivePowerUnit>(
+                        vv.get("q_unit"),
+                        &format!("control_profile {name} volt_var q_unit"),
+                        &mut self.diagnostics,
+                    ),
+                    q_ref: enum_field::<ReactivePowerReference>(
+                        vv.get("q_ref"),
+                        &format!("control_profile {name} volt_var q_ref"),
+                        &mut self.diagnostics,
+                    ),
+                    p_min_for_q: first_float(vv.get("p_min_for_q")),
+                    p_min_for_q_max: first_float(vv.get("p_min_for_q_max")),
+                });
+            }
+            if let Some(Value::Object(vw)) = o.get("volt_watt") {
+                profile.volt_watt = Some(VoltWattControl {
+                    voltage_reference: enum_field::<ControlVoltageReference>(
+                        vw.get("voltage_reference"),
+                        &format!("control_profile {name} volt_watt voltage_reference"),
+                        &mut self.diagnostics,
+                    ),
+                    breakpoints: floats(vw.get("breakpoints")).unwrap_or_default(),
+                    p_limits: floats(vw.get("p_limits")).unwrap_or_default(),
+                    p_unit: enum_field::<ActivePowerUnit>(
+                        vw.get("p_unit"),
+                        &format!("control_profile {name} volt_watt p_unit"),
+                        &mut self.diagnostics,
+                    ),
+                    p_ref: enum_field::<ActivePowerReference>(
+                        vw.get("p_ref"),
+                        &format!("control_profile {name} volt_watt p_ref"),
+                        &mut self.diagnostics,
+                    ),
+                });
+            }
+            for (key, value) in o {
+                if !matches!(key.as_str(), "power_factor" | "volt_var" | "volt_watt") {
+                    profile.extras.insert(key.clone(), value.clone());
+                }
+            }
+            self.net.control_profiles_mut().push(profile);
+        }
+    }
+
+    fn buses(&mut self, items: &Map<String, Value>) {
+        for (id, v) in items {
+            let Value::Object(o) = v else { continue };
+            let known = [
+                "terminal_names",
+                "perfectly_grounded_terminals",
+                "longitude",
+                "latitude",
+                "v_min",
+                "v_max",
+                "vpn_min",
+                "vpn_max",
+                "vpp_min",
+                "vpp_max",
+                "vpos_min",
+                "vpos_max",
+                "vneg_max",
+                "vzero_max",
+                "vn_max",
+                "vsym_min",
+                "vsym_max",
+            ];
+            let lon = first_float(o.get("longitude")).filter(|v| v.is_finite());
+            let lat = first_float(o.get("latitude")).filter(|v| v.is_finite());
+            let has_lon = o.contains_key("longitude");
+            let has_lat = o.contains_key("latitude");
+            let location = match (lon, lat) {
+                (Some(x), Some(y)) => {
+                    *self.net.geo_mut() = Some(DistGeoMeta {
+                        space: CoordinateSpace::Geographic { crs: None },
+                        kind: Some(DistCoordsKind::Source),
+                    });
+                    Some(DistLocation { x, y, kind: None })
+                }
+                _ if has_lon || has_lat => {
+                    self.diagnostics.push(&C::READ_BMOPF_RETAINED_SOURCE_ONLY, format!(
+                        "bus {id}: longitude/latitude sideload is incomplete or nonfinite; kept in extras"
+                    ));
+                    None
+                }
+                _ => None,
+            };
+            let mut extras =
+                take_extras(o, &known, &format!("bus {id}"), &mut self.diagnostics, &[]);
+            if location.is_none() {
+                if let Some(value) = o.get("longitude") {
+                    extras.insert("longitude".into(), value.clone());
+                }
+                if let Some(value) = o.get("latitude") {
+                    extras.insert("latitude".into(), value.clone());
+                }
+            }
+            // Legacy (pre-0.1.0) `vsym_min`/`vsym_max` arrays carried the
+            // symmetrical component bounds in zero/positive/negative order.
+            // Schema 0.1.0 replaced them with named per-sequence scalars;
+            // map what has a slot and warn about what does not (the negative
+            // and zero sequence lower bounds are fixed at 0 in 0.1.0).
+            let legacy_min = floats(o.get("vsym_min"));
+            let legacy_max = floats(o.get("vsym_max"));
+            if legacy_min.is_some() || legacy_max.is_some() {
+                self.diagnostics.push(
+                    &C::READ_BMOPF_VALUE_INFERRED,
+                    format!(
+                        "bus {id}: legacy vsym_min/vsym_max arrays mapped to the per-sequence \
+                     scalars assuming zero/positive/negative order"
+                    ),
+                );
+            }
+            let legacy_vpos_min = legacy_min.as_ref().and_then(|v| v.get(1).copied());
+            let legacy_vpos_max = legacy_max.as_ref().and_then(|v| v.get(1).copied());
+            let legacy_vzero_max = legacy_max.as_ref().and_then(|v| v.first().copied());
+            let legacy_vneg_max = legacy_max.as_ref().and_then(|v| v.get(2).copied());
+            if legacy_min
+                .as_ref()
+                .is_some_and(|v| [v.first(), v.get(2)].iter().flatten().any(|&&m| m != 0.0))
+            {
+                self.diagnostics.push(
+                    &C::READ_BMOPF_FIELD_DROPPED,
+                    format!(
+                        "bus {id}: legacy vsym_min zero/negative sequence lower bounds have no \
+                     slot in schema 0.1.0 (fixed at 0); dropped"
+                    ),
+                );
+            }
+            self.net.buses_mut().push(DistBus {
+                id: id.clone(),
+                terminals: strings(o.get("terminal_names")),
+                grounded: strings(o.get("perfectly_grounded_terminals")),
+                v_min: uniform_bound(o.get("v_min")),
+                v_max: uniform_bound(o.get("v_max")),
+                v_min_phase: nonuniform_bound(o.get("v_min")),
+                v_max_phase: nonuniform_bound(o.get("v_max")),
+                vpn_min: floats(o.get("vpn_min")),
+                vpn_max: floats(o.get("vpn_max")),
+                vpp_min: floats(o.get("vpp_min")),
+                vpp_max: floats(o.get("vpp_max")),
+                vpos_min: first_float(o.get("vpos_min")).or(legacy_vpos_min),
+                vpos_max: first_float(o.get("vpos_max")).or(legacy_vpos_max),
+                vneg_max: first_float(o.get("vneg_max")).or(legacy_vneg_max),
+                vzero_max: first_float(o.get("vzero_max")).or(legacy_vzero_max),
+                vn_max: first_float(o.get("vn_max")),
+                location,
+                extras,
+            });
+        }
+    }
+
+    fn line_codes(&mut self, items: &Map<String, Value>) {
+        for (name, v) in items {
+            let Value::Object(o) = v else { continue };
+            // Conductor count is the widest matrix present; absent matrices
+            // read as zero, smaller ones pad without losing entries.
+            let ([r, x, gf, bf, gt, bt], n, ragged) = linecode_matrices(o);
+            if ragged {
+                self.diagnostics.push(
+                    &C::READ_BMOPF_VALUE_DEFAULTED,
+                    format!(
+                        "linecode {name}: matrix sizes disagree; smaller ones padded \
+                     with zeros to {n}x{n}"
+                    ),
+                );
+            }
+            let code = DistLineCode {
+                name: name.clone(),
+                n_conductors: n,
+                r_series: r,
+                x_series: x,
+                g_from: gf,
+                b_from: bf,
+                g_to: gt,
+                b_to: bt,
+                i_max: floats(o.get("i_max")),
+                s_max: floats(o.get("s_max")),
+                source: o.get("source").and_then(Value::as_str).map(String::from),
+                extras: take_extras(
+                    o,
+                    &["i_max", "s_max", "source"],
+                    &format!("linecode {name}"),
+                    &mut self.diagnostics,
+                    &["R_series", "X_series", "G_from", "G_to", "B_from", "B_to"],
+                ),
+            };
+            self.net.line_codes_mut().push(code);
+        }
+    }
+
+    fn lines(&mut self, items: &Map<String, Value>) {
+        // `MulticonductorNetwork::linecode` resolves a name case-insensitively, so the
+        // taken set holds lowercase keys and a synthesized name avoids a
+        // declared linecode that differs only in case.
+        let mut taken: std::collections::BTreeSet<String> = self
+            .net
+            .line_codes()
+            .iter()
+            .map(|c| c.name.to_ascii_lowercase())
+            .collect();
+        for (name, v) in items {
+            let Value::Object(o) = v else { continue };
+            let known = [
+                "length",
+                "linecode",
+                "bus_from",
+                "bus_to",
+                "terminal_map_from",
+                "terminal_map_to",
+                "i_max",
+                "s_max",
+            ];
+            // Schema 0.1.0 lines carry either a linecode + length or inline
+            // impedance matrices (the linecode oneOf). Inline matrices read
+            // into a synthesized single-use linecode named after the line.
+            let mut linecode = string(o.get("linecode"));
+            let mut length = o.get("length").map_or(f64::NAN, f);
+            // The inline branch of the schema's oneOf requires R_series_1_1.
+            let inline = linecode.is_empty() && o.contains_key("R_series_1_1");
+            if inline {
+                linecode = self.synthesized_linecode(name, o, &mut taken);
+                // Inline matrices are the whole impedance of the line, in
+                // ohms. The schema calls `length` "purely descriptive" on
+                // this branch, so it must not scale them. The synthesized
+                // linecode holds those ohms per meter at unit length.
+                if length.is_finite() && (length - 1.0).abs() > f64::EPSILON {
+                    self.diagnostics.push(
+                        &C::READ_BMOPF_VALUE_DEFAULTED,
+                        format!(
+                            "line {name}: inline impedance matrices are absolute, so the \
+                         descriptive `length` {length} does not scale them; the model \
+                         keeps the line at unit length"
+                        ),
+                    );
+                }
+                length = 1.0;
+            } else if !length.is_finite() {
+                // The schema requires `length` alongside a linecode; a missing
+                // one becomes NaN in the model, which every impedance
+                // computation downstream inherits, so name the gap the way the
+                // transformer reader names a missing s_rating instead of
+                // letting the NaN travel silently.
+                self.diagnostics.push(
+                    &C::READ_BMOPF_VALUE_DEFAULTED,
+                    format!(
+                        "line {name}: `length` missing or non-finite; impedances derived from \
+                     this line are undefined"
+                    ),
+                );
+            }
+            self.net.lines_mut().push(DistLine {
+                name: name.clone(),
+                bus_from: string(o.get("bus_from")),
+                bus_to: string(o.get("bus_to")),
+                terminal_map_from: strings(o.get("terminal_map_from")),
+                terminal_map_to: strings(o.get("terminal_map_to")),
+                linecode,
+                length,
+                route: None,
+                i_max: floats(o.get("i_max")),
+                s_max: floats(o.get("s_max")),
+                extras: take_extras(
+                    o,
+                    &known,
+                    &format!("line {name}"),
+                    &mut self.diagnostics,
+                    if inline {
+                        &["R_series", "X_series", "G_from", "G_to", "B_from", "B_to"]
+                    } else {
+                        &[]
+                    },
+                ),
+            });
+        }
+    }
+
+    /// Reads a line's inline impedance matrices into a linecode named after
+    /// the line (suffixed if taken), returning the linecode name. `taken`
+    /// holds lowercase keys: the declared linecodes plus the names already
+    /// synthesized on this pass.
+    fn synthesized_linecode(
+        &mut self,
+        line: &str,
+        o: &Map<String, Value>,
+        taken: &mut std::collections::BTreeSet<String>,
+    ) -> String {
+        let mut name = line.to_string();
+        while taken.contains(&name.to_ascii_lowercase()) {
+            name.push('_');
+        }
+        taken.insert(name.to_ascii_lowercase());
+        self.diagnostics.push(
+            &C::READ_BMOPF_VALUE_INFERRED,
+            format!(
+                "line {line}: inline impedance matrices read into synthesized linecode `{name}`"
+            ),
+        );
+        let ([r, x, gf, bf, gt, bt], n, ragged) = linecode_matrices(o);
+        if ragged {
+            // The declared-linecode path reports this. An inline matrix set
+            // that disagrees in size is padded the same way, and a conductor
+            // that gains a zero where the document held nothing is a change
+            // of physics, so it needs the same warning.
+            self.diagnostics.push(
+                &C::READ_BMOPF_VALUE_DEFAULTED,
+                format!(
+                    "line {line}: inline matrix sizes disagree; smaller ones padded \
+                 with zeros to {n}x{n}"
+                ),
+            );
+        }
+        self.net.line_codes_mut().push(DistLineCode {
+            name: name.clone(),
+            n_conductors: n,
+            r_series: r,
+            x_series: x,
+            g_from: gf,
+            b_from: bf,
+            g_to: gt,
+            b_to: bt,
+            i_max: None,
+            s_max: None,
+            source: None,
+            extras: Extras::new(),
+        });
+        name
+    }
+
+    fn switches(&mut self, items: &Map<String, Value>) {
+        for (name, v) in items {
+            let Value::Object(o) = v else { continue };
+            let known = [
+                "bus_from",
+                "bus_to",
+                "terminal_map_from",
+                "terminal_map_to",
+                "open_switch",
+                "i_max",
+            ];
+            self.net.switches_mut().push(DistSwitch {
+                name: name.clone(),
+                bus_from: string(o.get("bus_from")),
+                bus_to: string(o.get("bus_to")),
+                terminal_map_from: strings(o.get("terminal_map_from")),
+                terminal_map_to: strings(o.get("terminal_map_to")),
+                open: o
+                    .get("open_switch")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                i_max: floats(o.get("i_max")),
+                extras: take_extras(
+                    o,
+                    &known,
+                    &format!("switch {name}"),
+                    &mut self.diagnostics,
+                    &[],
+                ),
+            });
+        }
+    }
+
+    fn loads(&mut self, items: &Map<String, Value>) {
+        for (name, v) in items {
+            let Value::Object(o) = v else { continue };
+            let known = [
+                "p_nom",
+                "q_nom",
+                "bus",
+                "configuration",
+                "terminal_map",
+                "model",
+                "v_nom",
+                "alpha_z",
+                "alpha_i",
+                "alpha_p",
+                "beta_z",
+                "beta_i",
+                "beta_p",
+                "gamma_p",
+                "gamma_q",
+            ];
+            let v_nom = floats(o.get("v_nom")).unwrap_or_default();
+            let has_zip = [
+                "alpha_z", "alpha_i", "alpha_p", "beta_z", "beta_i", "beta_p",
+            ]
+            .iter()
+            .any(|key| o.get(*key).is_some());
+            let has_exp = o.get("gamma_p").is_some() || o.get("gamma_q").is_some();
+            let model = o
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or("POWER")
+                .to_ascii_uppercase();
+            let voltage_model = if has_exp {
+                DistLoadVoltageModel::Exponential {
+                    v_nom,
+                    gamma_p: floats(o.get("gamma_p")).unwrap_or_default(),
+                    gamma_q: floats(o.get("gamma_q")).unwrap_or_default(),
+                }
+            } else if has_zip {
+                DistLoadVoltageModel::Zip {
+                    v_nom,
+                    alpha_z: floats(o.get("alpha_z")).unwrap_or_default(),
+                    alpha_i: floats(o.get("alpha_i")).unwrap_or_default(),
+                    alpha_p: floats(o.get("alpha_p")).unwrap_or_default(),
+                    beta_z: floats(o.get("beta_z")).unwrap_or_default(),
+                    beta_i: floats(o.get("beta_i")).unwrap_or_default(),
+                    beta_p: floats(o.get("beta_p")).unwrap_or_default(),
+                }
+            } else if model.contains("IMPEDANCE") {
+                DistLoadVoltageModel::ConstantImpedance { v_nom }
+            } else if model.contains("CURRENT") {
+                DistLoadVoltageModel::ConstantCurrent { v_nom }
+            } else {
+                DistLoadVoltageModel::ConstantPower { v_nom }
+            };
+            self.net.loads_mut().push(DistLoad {
+                name: name.clone(),
+                bus: string(o.get("bus")),
+                terminal_map: strings(o.get("terminal_map")),
+                configuration: config(
+                    o.get("configuration"),
+                    &format!("load {name}"),
+                    &mut self.diagnostics,
+                ),
+                p_nom: floats(o.get("p_nom")).unwrap_or_default(),
+                q_nom: floats(o.get("q_nom")).unwrap_or_default(),
+                voltage_model,
+                extras: take_extras(
+                    o,
+                    &known,
+                    &format!("load {name}"),
+                    &mut self.diagnostics,
+                    &[],
+                ),
+            });
+        }
+    }
+
+    fn generators(&mut self, items: &Map<String, Value>) {
+        for (name, v) in items {
+            let Value::Object(o) = v else { continue };
+            let known = [
+                "p_min",
+                "p_max",
+                "q_min",
+                "q_max",
+                "s_max",
+                "i_max",
+                "cost",
+                "energy_cost_rate",
+                "bus",
+                "configuration",
+                "terminal_map",
+            ];
+            let p_min = floats(o.get("p_min"));
+            let p_max = floats(o.get("p_max"));
+            let q_min = floats(o.get("q_min"));
+            let q_max = floats(o.get("q_max"));
+            // Pinned bounds are a fixed dispatch; surface them as the
+            // setpoint too so a power flow oriented target has one.
+            let pinned = |lo: &Option<Vec<f64>>, hi: &Option<Vec<f64>>| match (lo, hi) {
+                (Some(a), Some(b)) if a == b => a.clone(),
+                _ => Vec::new(),
+            };
+            // Cost is a per-phase array in the schema, kept exactly as
+            // stated. A bare scalar is still accepted for documents written
+            // before v0.0.1 and reads as a one-entry statement.
+            let cost = match o.get("energy_cost_rate").or_else(|| o.get("cost")) {
+                Some(Value::Array(a)) => Some(a.iter().map(f).collect::<Vec<f64>>()),
+                Some(v) => Some(vec![f(v)]),
+                None => None,
+            };
+            self.net.generators_mut().push(DistGenerator {
+                name: name.clone(),
+                bus: string(o.get("bus")),
+                terminal_map: strings(o.get("terminal_map")),
+                configuration: config(
+                    o.get("configuration"),
+                    &format!("generator {name}"),
+                    &mut self.diagnostics,
+                ),
+                p_nom: pinned(&p_min, &p_max),
+                q_nom: pinned(&q_min, &q_max),
+                p_min,
+                p_max,
+                q_min,
+                q_max,
+                cost,
+                s_max: floats(o.get("s_max")),
+                i_max: floats(o.get("i_max")),
+                extras: take_extras(
+                    o,
+                    &known,
+                    &format!("generator {name}"),
+                    &mut self.diagnostics,
+                    &[],
+                ),
+            });
+        }
+    }
+
+    fn shunts(&mut self, items: &Map<String, Value>) {
+        for (name, v) in items {
+            let Value::Object(o) = v else { continue };
+            let g = flat_matrix(o, "G").unwrap_or_default();
+            let b = flat_matrix(o, "B").unwrap_or_default();
+            let n = g.len().max(b.len());
+            if g.len() != b.len() {
+                self.diagnostics.push(
+                    &C::READ_BMOPF_VALUE_DEFAULTED,
+                    format!(
+                        "shunt {name}: G is {gx}x{gx} but B is {bx}x{bx}; the smaller \
+                     padded with zeros to {n}x{n}",
+                        gx = g.len(),
+                        bx = b.len(),
+                    ),
+                );
+            }
+            self.net.shunts_mut().push(DistShunt {
+                name: name.clone(),
+                bus: string(o.get("bus")),
+                terminal_map: strings(o.get("terminal_map")),
+                g: pad_to(g, n),
+                b: pad_to(b, n),
+                extras: take_extras(
+                    o,
+                    &["bus", "terminal_map"],
+                    &format!("shunt {name}"),
+                    &mut self.diagnostics,
+                    &["G", "B"],
+                ),
+            });
+        }
+    }
+
+    fn sources_with_overlay(&mut self, items: &Map<String, Value>, doc: &Map<String, Value>) {
+        let mut merged = items.clone();
+        if let Some(overlay) = doc
+            .get("extras")
+            .and_then(|e| e.get("voltage_source"))
+            .and_then(Value::as_object)
+        {
+            for (name, fields) in overlay {
+                if let (Some(target), Some(fields)) = (
+                    merged.get_mut(name).and_then(Value::as_object_mut),
+                    fields.as_object(),
+                ) {
+                    for (key, value) in fields {
+                        target.entry(key.clone()).or_insert_with(|| value.clone());
+                    }
+                }
+            }
+        }
+        self.sources(&merged);
+    }
+
+    fn sources(&mut self, items: &Map<String, Value>) {
+        for (name, v) in items {
+            let Value::Object(o) = v else { continue };
+            let known = [
+                "v_magnitude",
+                "v_angle",
+                "bus",
+                "terminal_map",
+                "energy_cost_rate",
+                "cost",
+            ];
+            let energy_cost_rate = floats(o.get("energy_cost_rate").or_else(|| o.get("cost")));
+            self.net.sources_mut().push(VoltageSource {
+                name: name.clone(),
+                bus: string(o.get("bus")),
+                terminal_map: strings(o.get("terminal_map")),
+                v_magnitude: floats(o.get("v_magnitude")).unwrap_or_default(),
+                v_angle: floats(o.get("v_angle")).unwrap_or_default(),
+                energy_cost_rate,
+                extras: take_extras(
+                    o,
+                    &known,
+                    &format!("voltage source {name}"),
+                    &mut self.diagnostics,
+                    &[],
+                ),
+            });
+        }
+    }
+
+    fn transformers(&mut self, subtypes: &Map<String, Value>) {
+        // Every regulator and center tap winding resolves its voltage base
+        // from a bus by id; buses are fully read before `transformers` runs
+        // (see `document`), so one index built here replaces a bus table
+        // scan per winding with a lookup.
+        let bus_index: std::collections::BTreeMap<String, usize> = self
+            .net
+            .buses()
+            .iter()
+            .enumerate()
+            .map(|(row, bus)| (bus.id.clone(), row))
+            .collect();
+        for (subtype, group) in subtypes {
+            let Value::Object(items) = group else {
+                continue;
+            };
+            for (name, v) in items {
+                let Value::Object(o) = v else { continue };
+                match subtype.as_str() {
+                    "n_winding" => {
+                        let t = self.n_winding_transformer(name, o);
+                        self.net.transformers_mut().push(t);
+                    }
+                    "single_phase_autotransformer" => {
+                        let t = self.autotransformer_regulator(name, o, &bus_index);
+                        self.net.transformers_mut().push(t);
+                    }
+                    "open_delta_regulator" => {
+                        for t in self.open_delta_regulator(name, o, &bus_index) {
+                            self.net.transformers_mut().push(t);
+                        }
+                    }
+                    _ => {
+                        let t = self.transformer(subtype, name, o, &bus_index);
+                        self.net.transformers_mut().push(t);
+                    }
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_lines)] // one BMOPF transformer record maps many optional schema aliases
+    fn transformer(
+        &mut self,
+        subtype: &str,
+        name: &str,
+        o: &Map<String, Value>,
+        bus_index: &std::collections::BTreeMap<String, usize>,
+    ) -> DistTransformer {
+        let known = [
+            "bus_from",
+            "bus_to",
+            "terminal_map_from",
+            "terminal_map_to",
+            "s_rating",
+            "v_nom_from",
+            "v_nom_to",
+            "v_ref_from",
+            "v_ref_to",
+            "g_no_load",
+            "b_no_load",
+            "no_load_shunt",
+            "r_series",
+            "x_series",
+            "r_series_from",
+            "r_series_to",
+            "x_series_from",
+            "x_series_to",
+            "r_neutral_from",
+            "x_neutral_from",
+            "r_neutral_to",
+            "x_neutral_to",
+            "tap",
+            "tap_min",
+            "tap_max",
+            "tap_ratio",
+            "tap_ratio_min",
+            "tap_ratio_max",
+        ];
+        if !matches!(
+            subtype,
+            "single_phase" | "center_tap" | "wye_delta" | "delta_wye"
+        ) {
+            self.diagnostics.push(
+                &C::READ_BMOPF_VALUE_UNSUPPORTED,
+                format!(
+                    "transformer {name}: subtype `{subtype}` is outside the schema; \
+                 read as a single phase pair"
+                ),
+            );
+        }
+        let s = o.get("s_rating").map_or(f64::NAN, f);
+        let v_from = value_alias(o, "v_nom_from", "v_ref_from").map_or(f64::NAN, f);
+        let v_to = value_alias(o, "v_nom_to", "v_ref_to").map_or(f64::NAN, f);
+        let positive = |v: f64| v.is_finite() && v > 0.0;
+        if !positive(s) || !positive(v_from) || !positive(v_to) {
+            self.diagnostics.push(
+                &C::READ_BMOPF_VALUE_DEFAULTED,
+                format!(
+                    "transformer {name}: s_rating or v_nom missing or nonpositive; \
+                 impedances read as zero"
+                ),
+            );
+        }
+        let three_phase = matches!(subtype, "wye_delta" | "delta_wye");
+        let phases = if three_phase { 3 } else { 1 };
+
+        let pct = |x_ohm: f64, v: f64| {
+            if s > 0.0 && v > 0.0 {
+                x_ohm / (v * v / s) * 100.0
+            } else {
+                0.0
+            }
+        };
+        let has_split_three_phase_fields = [
+            "r_series_from",
+            "r_series_to",
+            "x_series_from",
+            "x_series_to",
+        ]
+        .iter()
+        .any(|k| o.contains_key(*k));
+        let (r_from_pct, r_to_pct, xsc_pct) = if three_phase && has_split_three_phase_fields {
+            let r_from = pct(o.get("r_series_from").map_or(0.0, f), v_from);
+            let r_to = pct(o.get("r_series_to").map_or(0.0, f), v_to);
+            let x_from = pct(o.get("x_series_from").map_or(0.0, f), v_from);
+            let x_to = pct(o.get("x_series_to").map_or(0.0, f), v_to);
+            (r_from, r_to, vec![x_from + x_to])
+        } else if three_phase {
+            let wye_v = if subtype == "wye_delta" { v_from } else { v_to };
+            // The schema puts one series impedance on the wye side; the
+            // model splits resistance evenly across the windings.
+            let r = pct(o.get("r_series").map_or(0.0, f), wye_v);
+            let x = pct(o.get("x_series").map_or(0.0, f), wye_v);
+            (r / 2.0, r / 2.0, vec![x])
+        } else {
+            let r_from = pct(o.get("r_series_from").map_or(0.0, f), v_from);
+            let r_to = pct(o.get("r_series_to").map_or(0.0, f), v_to);
+            let x_from = pct(o.get("x_series_from").map_or(0.0, f), v_from);
+            let x_to = pct(o.get("x_series_to").map_or(0.0, f), v_to);
+            let xsc = if subtype == "center_tap" {
+                vec![x_from + x_to, x_from + x_to, 2.0 * x_to]
+            } else {
+                vec![x_from + x_to]
+            };
+            (r_from, r_to, xsc)
+        };
+
+        let conn = |delta: bool| {
+            if delta {
+                DistWindingConn::Delta
+            } else {
+                DistWindingConn::Wye
+            }
+        };
+        let mut windings = vec![
+            DistWinding {
+                bus: string(o.get("bus_from")),
+                terminal_map: strings(o.get("terminal_map_from")),
+                conn: conn(subtype == "delta_wye"),
+                v_ref: v_from,
+                s_rating: s,
+                r_pct: r_from_pct,
+                tap: first_float(o.get("tap_ratio").or_else(|| o.get("tap"))).unwrap_or(1.0),
+                r_neutral: first_float(o.get("r_neutral_from")),
+                x_neutral: first_float(o.get("x_neutral_from")),
+            },
+            DistWinding {
+                bus: string(o.get("bus_to")),
+                terminal_map: strings(o.get("terminal_map_to")),
+                conn: conn(subtype == "wye_delta"),
+                v_ref: v_to,
+                s_rating: s,
+                r_pct: r_to_pct,
+                tap: 1.0,
+                r_neutral: first_float(o.get("r_neutral_to")),
+                x_neutral: first_float(o.get("x_neutral_to")),
+            },
+        ];
+        expand_center_tap_windings(subtype, &mut windings, self.net.buses());
+        if subtype == "center_tap"
+            && let Some(w) = windings.get(1)
+            && let Some(band) = phase_to_neutral_midpoint(w, self.net.buses(), bus_index)
+            && (w.v_ref - band).abs() > (w.v_ref / 2.0 - band).abs() * 4.0
+        {
+            self.diagnostics.push(
+                &C::READ_BMOPF_VALUE_DEFAULTED,
+                format!(
+                    "transformer {name}: v_nom_to {} is about twice the {band} V the \
+                 secondary bus states phase to neutral, the value a full span \
+                 reading gives; the convention is the per leg voltage",
+                    w.v_ref
+                ),
+            );
+        }
+        let mut extras = take_extras(
+            o,
+            &known,
+            &format!("transformer {name}"),
+            &mut self.diagnostics,
+            &[],
+        );
+        for (key, current) in [("tap_min", "tap_ratio_min"), ("tap_max", "tap_ratio_max")] {
+            if let Some(value) = o.get(current).or_else(|| o.get(key)) {
+                extras.insert(key.into(), value.clone());
+            }
+        }
+        for key in ["g_no_load", "b_no_load", "no_load_shunt"] {
+            if let Some(v) = o.get(key) {
+                extras.insert(key.into(), v.clone());
+            }
+        }
+        // Windings alone cannot tell single_phase from center_tap back
+        // apart; record the subtype for the writer.
+        extras.insert("bmopf_subtype".into(), subtype.into());
+        DistTransformer {
+            name: name.to_string(),
+            windings,
+            xsc_pct,
+            phases,
+            extras,
+        }
+    }
+
+    /// Cap the winding list a document supplies. The short circuit pair
+    /// enumeration is quadratic in the winding count, so an unbounded count
+    /// would be a quadratic blowup from a linear document; no physical
+    /// transformer comes near the cap.
+    fn bounded_windings<'a>(&mut self, name: &str, items: &'a [Value]) -> &'a [Value] {
+        const MAX_WINDINGS: usize = 64;
+        if items.len() > MAX_WINDINGS {
+            self.diagnostics.push(
+                &C::READ_BMOPF_RECORD_DROPPED,
+                format!(
+                    "transformer {name}: {} windings exceed the supported maximum of \
+                 {MAX_WINDINGS}; the rest are ignored",
+                    items.len()
+                ),
+            );
+        }
+        &items[..items.len().min(MAX_WINDINGS)]
+    }
+
+    /// The `single_phase_autotransformer` shape of the BMOPFTools schema
+    /// extension: a step voltage regulator as series plus common winding. The
+    /// object states no voltage base, so the connected buses' stated voltage
+    /// bands supply one; without a band the impedances read as zero, the
+    /// same rule as a missing `v_nom` on the general shapes.
+    fn autotransformer_regulator(
+        &mut self,
+        name: &str,
+        o: &Map<String, Value>,
+        bus_index: &std::collections::BTreeMap<String, usize>,
+    ) -> DistTransformer {
+        let tm_from = strings(o.get("terminal_map_from"));
+        let tm_to = strings(o.get("terminal_map_to"));
+        let ratio = first_float(o.get("tap_ratio")).unwrap_or(1.0);
+        self.regulator_rows(
+            name,
+            o,
+            "single_phase_autotransformer",
+            tm_from,
+            tm_to,
+            ratio,
+            bus_index,
+        )
+    }
+
+    /// The `open_delta_regulator` shape of the BMOPFTools schema extension:
+    /// two identical line to line regulating legs stated once, the phase
+    /// pairing carried by `connection` and per leg `tap_ratio` entries. The
+    /// object reads as its two legs; the second gets a synthesized name, so
+    /// writing back merges the pair into one object under the first name
+    /// again.
+    fn open_delta_regulator(
+        &mut self,
+        name: &str,
+        o: &Map<String, Value>,
+        bus_index: &std::collections::BTreeMap<String, usize>,
+    ) -> Vec<DistTransformer> {
+        let connection = o.get("connection").and_then(Value::as_str).unwrap_or("");
+        let Some((first_pair, second_pair)) = open_delta_pairs_of(connection) else {
+            self.diagnostics.push(
+                &C::READ_BMOPF_VALUE_UNSUPPORTED,
+                format!(
+                    "transformer {name}: open delta connection `{connection}` is outside the \
+                     schema; read as one leg on the stated terminals"
+                ),
+            );
+            let tm_from = strings(o.get("terminal_map_from"));
+            let tm_to = strings(o.get("terminal_map_to"));
+            let ratio = first_float(o.get("tap_ratio")).unwrap_or(1.0);
+            return vec![self.regulator_rows(
+                name,
+                o,
+                "open_delta_regulator",
+                tm_from,
+                tm_to,
+                ratio,
+                bus_index,
+            )];
+        };
+        let ratios = match o.get("tap_ratio") {
+            Some(Value::Array(a)) => {
+                let vals: Vec<f64> = a.iter().map(f).collect();
+                [
+                    vals.first().copied().unwrap_or(1.0),
+                    vals.get(1).copied().unwrap_or(1.0),
+                ]
+            }
+            Some(v) => [f(v); 2],
+            None => [1.0; 2],
+        };
+        let second_name = format!("{name}:leg2");
+        self.diagnostics.push(
+            &C::READ_BMOPF_TRANSFORMER_OPEN_DELTA_SPLIT,
+            format!(
+                "transformer {name}: open_delta_regulator (connection {connection}) reads as \
+                 legs `{name}` and `{second_name}`"
+            ),
+        );
+        let leg_terminals = |(lead, lag): (u8, u8)| vec![lead.to_string(), lag.to_string()];
+        vec![
+            self.regulator_rows(
+                name,
+                o,
+                "open_delta_regulator",
+                leg_terminals(first_pair),
+                leg_terminals(first_pair),
+                ratios[0],
+                bus_index,
+            ),
+            self.regulator_rows(
+                &second_name,
+                o,
+                "open_delta_regulator",
+                leg_terminals(second_pair),
+                leg_terminals(second_pair),
+                ratios[1],
+                bus_index,
+            ),
+        ]
+    }
+
+    /// The two windings both regulator subtypes share: buses and rating from
+    /// the object, series impedance in referred ohms converted on the bus
+    /// stated voltage band, regulation as the to side tap.
+    #[allow(clippy::too_many_lines)]
+    // The bus index rides beside seven established parameters; bundling
+    // them into a struct for one private helper buys nothing.
+    #[allow(clippy::too_many_arguments)]
+    fn regulator_rows(
+        &mut self,
+        name: &str,
+        o: &Map<String, Value>,
+        subtype: &str,
+        tm_from: Vec<String>,
+        tm_to: Vec<String>,
+        ratio: f64,
+        bus_index: &std::collections::BTreeMap<String, usize>,
+    ) -> DistTransformer {
+        let known = [
+            "bus_from",
+            "bus_to",
+            "terminal_map_from",
+            "terminal_map_to",
+            "s_rating",
+            "r_series_from",
+            "r_series_to",
+            "x_series_from",
+            "x_series_to",
+            "g_no_load",
+            "b_no_load",
+            "no_load_shunt",
+            "tap_ratio",
+            "tap_ratio_min",
+            "tap_ratio_max",
+            "regulator_type",
+            "i_max_from",
+            "i_max_to",
+            "connection",
+        ];
+        let bus_from = string(o.get("bus_from"));
+        let bus_to = string(o.get("bus_to"));
+        let s = o.get("s_rating").map_or(f64::NAN, f);
+        if !(s.is_finite() && s > 0.0) {
+            self.diagnostics.push(
+                &C::READ_BMOPF_VALUE_DEFAULTED,
+                format!(
+                    "transformer {name}: s_rating missing or nonpositive; impedances read as zero"
+                ),
+            );
+        }
+        // The regulator objects state no voltage base. Recover one per side
+        // from the bus's stated voltage band, then from a voltage source at
+        // the bus; a regulator connects same-voltage buses, so one resolved
+        // side covers the other. The base only refers the stated ohms into
+        // the winding percent and back, so any consistently reused positive
+        // value reproduces the document exactly; 1.0 is the last resort and
+        // is reported.
+        let v_from = regulator_voltage(self.net, &bus_from, &tm_from, bus_index);
+        let v_to = regulator_voltage(self.net, &bus_to, &tm_to, bus_index);
+        let (v_from, v_to) = match (v_from, v_to) {
+            (Some(a), Some(b)) => (a, b),
+            (Some(a), None) => (a, a),
+            (None, Some(b)) => (b, b),
+            (None, None) => {
+                self.diagnostics.push(
+                    &C::READ_BMOPF_VALUE_DEFAULTED,
+                    format!(
+                        "transformer {name}: neither bus states a voltage band or source; \
+                         winding voltage bases read as 1"
+                    ),
+                );
+                (1.0, 1.0)
+            }
+        };
+        let pct = |x_ohm: f64, v: f64| {
+            if s > 0.0 && v > 0.0 {
+                x_ohm / (v * v / s) * 100.0
+            } else {
+                0.0
+            }
+        };
+        let r_from_pct = pct(o.get("r_series_from").map_or(0.0, f), v_from);
+        let r_to_pct = pct(o.get("r_series_to").map_or(0.0, f), v_to);
+        let x_from = pct(o.get("x_series_from").map_or(0.0, f), v_from);
+        let x_to = pct(o.get("x_series_to").map_or(0.0, f), v_to);
+        let windings = vec![
+            DistWinding {
+                bus: bus_from,
+                terminal_map: tm_from,
+                conn: DistWindingConn::Wye,
+                v_ref: v_from,
+                s_rating: s,
+                r_pct: r_from_pct,
+                tap: 1.0,
+                r_neutral: None,
+                x_neutral: None,
+            },
+            DistWinding {
+                bus: bus_to,
+                terminal_map: tm_to,
+                conn: DistWindingConn::Wye,
+                v_ref: v_to,
+                s_rating: s,
+                r_pct: r_to_pct,
+                tap: ratio,
+                r_neutral: None,
+                x_neutral: None,
+            },
+        ];
+        let mut extras = take_extras(
+            o,
+            &known,
+            &format!("transformer {name}"),
+            &mut self.diagnostics,
+            &[],
+        );
+        for key in [
+            "g_no_load",
+            "b_no_load",
+            "no_load_shunt",
+            "tap_ratio_min",
+            "tap_ratio_max",
+            "regulator_type",
+            "i_max_from",
+            "i_max_to",
+            "r_series_from",
+            "r_series_to",
+            "x_series_from",
+            "x_series_to",
+        ] {
+            if let Some(v) = o.get(key) {
+                extras.insert(key.into(), v.clone());
+            }
+        }
+        extras.insert("bmopf_subtype".into(), subtype.into());
+        DistTransformer {
+            name: name.to_string(),
+            windings,
+            xsc_pct: vec![x_from + x_to],
+            phases: 1,
+            extras,
+        }
+    }
+
+    // One block per object field; splitting it would scatter a list that
+    // reads end to end.
+    #[expect(clippy::too_many_lines)]
+    fn n_winding_transformer(&mut self, name: &str, o: &Map<String, Value>) -> DistTransformer {
+        let known = [
+            "windings",
+            "x_sc",
+            "s_rating",
+            "g_no_load",
+            "b_no_load",
+            "no_load_shunt",
+        ];
+        let s = o.get("s_rating").map_or(f64::NAN, f);
+        let mut windings = Vec::new();
+        let mut delta_rolls = Map::new();
+        let mut winding_metadata = Map::new();
+        if let Some(items) = o.get("windings").and_then(Value::as_array) {
+            for (idx, item) in self.bounded_windings(name, items).iter().enumerate() {
+                let Some(w) = item.as_object() else {
+                    self.diagnostics.push(
+                        &C::READ_BMOPF_SOURCE_MALFORMED,
+                        format!(
+                            "transformer {name}: winding {} is not an object; skipped",
+                            idx + 1
+                        ),
+                    );
+                    continue;
+                };
+                let terminal_map = strings(w.get("terminal_map"));
+                let bmopf_v_nom = value_alias(w, "v_nom", "v_ref").map_or(f64::NAN, f);
+                let r_winding = w.get("r_winding").map_or(0.0, f);
+                let rating = w.get("s_rating").map_or(s, f);
+                let retained: Map<String, Value> = ["i_max", "tap_ratio_min", "tap_ratio_max"]
+                    .iter()
+                    .filter_map(|key| w.get(*key).map(|v| ((*key).to_owned(), v.clone())))
+                    .collect();
+                if !retained.is_empty() {
+                    winding_metadata.insert(idx.to_string(), Value::Object(retained));
+                }
+                let connection = w
+                    .get("configuration")
+                    .or_else(|| w.get("connection"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("WYE")
+                    .to_ascii_uppercase();
+                if !matches!(connection.as_str(), "WYE" | "DELTA") {
+                    self.diagnostics.push(&C::READ_BMOPF_VALUE_UNSUPPORTED, format!(
+                        "transformer {name}: winding {} connection `{connection}` is not WYE or DELTA; read as WYE",
+                        idx + 1
+                    ));
+                }
+                let conn = if connection == "DELTA" {
+                    DistWindingConn::Delta
+                } else {
+                    DistWindingConn::Wye
+                };
+                if let Some(delta_roll) = delta_roll_value(w.get("delta_roll")) {
+                    delta_rolls.insert((idx + 1).to_string(), Value::from(delta_roll));
+                }
+                let r_pct = if let Some(base_z) =
+                    n_winding_base_from_bmopf(conn, &terminal_map, bmopf_v_nom, rating)
+                {
+                    r_winding / base_z * 100.0
+                } else {
+                    0.0
+                };
+                windings.push(DistWinding {
+                    bus: string(w.get("bus")),
+                    terminal_map: terminal_map.clone(),
+                    conn,
+                    v_ref: n_winding_internal_v_ref(conn, &terminal_map, bmopf_v_nom),
+                    s_rating: rating,
+                    r_pct,
+                    tap: w.get("tap_ratio").map_or(1.0, f),
+                    r_neutral: w.get("r_neutral").map(f),
+                    x_neutral: w.get("x_neutral").map(f),
+                });
+            }
+        }
+        let base_z = windings
+            .first()
+            .and_then(|w| n_winding_base_from_internal(w, s))
+            .unwrap_or(f64::NAN);
+        let mut xsc_pct = Vec::new();
+        let x_sc = o.get("x_sc").and_then(Value::as_object);
+        for (i, j) in pair_keys(windings.len()) {
+            let key = format!("{}_{}", i + 1, j + 1);
+            let x = x_sc.and_then(|m| m.get(&key)).map_or(0.0, f);
+            xsc_pct.push(if base_z.is_finite() && base_z > 0.0 {
+                x / base_z * 100.0
+            } else {
+                0.0
+            });
+        }
+        let mut extras = take_extras(
+            o,
+            &known,
+            &format!("transformer {name}"),
+            &mut self.diagnostics,
+            &[],
+        );
+        extras.insert("bmopf_subtype".into(), "n_winding".into());
+        extras.insert("bmopf_power_base".into(), Value::from(s));
+        if !winding_metadata.is_empty() {
+            extras.insert(
+                "bmopf_winding_metadata".into(),
+                Value::Object(winding_metadata),
+            );
+        }
+        if !delta_rolls.is_empty() {
+            extras.insert(BMOPF_DELTA_ROLLS_EXTRA.into(), Value::Object(delta_rolls));
+        }
+        for key in ["g_no_load", "b_no_load", "no_load_shunt"] {
+            if let Some(v) = o.get(key) {
+                extras.insert(key.into(), v.clone());
+            }
+        }
+        DistTransformer {
+            name: name.to_string(),
+            phases: windings
+                .iter()
+                .map(|w| n_winding_phase_count(w.conn, &w.terminal_map))
+                .max()
+                .unwrap_or(1)
+                .max(1),
+            windings,
+            xsc_pct,
+            extras,
+        }
+    }
+}
+
+/// The middle of the secondary bus's phase to neutral band, when it states
+/// one. A center tapped winding's `v_nom_to` is the per leg voltage, so the
+/// two agree; a source that states the full span across both legs lands at
+/// twice this.
+fn phase_to_neutral_midpoint(
+    w: &DistWinding,
+    buses: &[DistBus],
+    index: &std::collections::BTreeMap<String, usize>,
+) -> Option<f64> {
+    let bus = &buses[*index.get(&w.bus)?];
+    let lo = bus.vpn_min.as_ref()?.first()?;
+    let hi = bus.vpn_max.as_ref()?.first()?;
+    let mid = (lo + hi) / 2.0;
+    (mid.is_finite() && mid > 0.0 && w.v_ref.is_finite()).then_some(mid)
+}
+
+/// The voltage base a regulator winding reads from its bus: the middle of
+/// the phase to phase band when the terminal map names two distinct phase
+/// conductors, else the phase to neutral band; a voltage source magnitude at
+/// the bus (times sqrt(3) for a line to line pair, assuming a balanced
+/// source) when the bus states no band.
+fn regulator_voltage(
+    net: &crate::model::MulticonductorNetwork,
+    bus: &str,
+    terminal_map: &[String],
+    index: &std::collections::BTreeMap<String, usize>,
+) -> Option<f64> {
+    let record = &net.buses()[*index.get(bus)?];
+    let phase = |term: &String| term.parse::<u8>().ok().filter(|n| (1..=3).contains(n));
+    let line_to_line = matches!(
+        terminal_map,
+        [a, b] if phase(a).is_some() && phase(b).is_some() && a != b
+    );
+    let band = |lo: Option<&Vec<f64>>, hi: Option<&Vec<f64>>| {
+        let mid = (lo?.first()? + hi?.first()?) / 2.0;
+        (mid.is_finite() && mid > 0.0).then_some(mid)
+    };
+    let from_band = if line_to_line {
+        band(record.vpp_min.as_ref(), record.vpp_max.as_ref())
+    } else {
+        band(record.vpn_min.as_ref(), record.vpn_max.as_ref())
+    };
+    if from_band.is_some() {
+        return from_band;
+    }
+    let magnitude = net
+        .sources()
+        .iter()
+        .filter(|source| source.bus == bus)
+        .flat_map(|source| source.v_magnitude.iter().copied())
+        .find(|v| v.is_finite() && *v > 0.0)?;
+    Some(if line_to_line {
+        magnitude * 3.0_f64.sqrt()
+    } else {
+        magnitude
+    })
+}
+
+/// The two ordered line to line phase pairs an open delta connection names,
+/// the inverse of [`crate::model::open_delta_connection`]'s unswapped rows.
+fn open_delta_pairs_of(connection: &str) -> Option<((u8, u8), (u8, u8))> {
+    match connection {
+        "ABBC" => Some(((1, 2), (2, 3))),
+        "BCAC" => Some(((2, 3), (1, 3))),
+        "CABA" => Some(((3, 1), (2, 1))),
+        _ => None,
+    }
+}
+
+fn expand_center_tap_windings(subtype: &str, windings: &mut Vec<DistWinding>, buses: &[DistBus]) {
+    if subtype != "center_tap" || windings[1].terminal_map.len() < 3 {
+        return;
+    }
+    let to = windings.pop().expect("secondary winding exists");
+    let neutral_idx = center_tap_neutral_index(&to, buses);
+    let canonical = neutral_idx == 1;
+    let common = to
+        .terminal_map
+        .get(neutral_idx)
+        .cloned()
+        .unwrap_or_default();
+    let hots: Vec<String> = to
+        .terminal_map
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, term)| (idx != neutral_idx).then_some(term.clone()))
+        .collect();
+    let hot_a = hots.first().cloned().unwrap_or_default();
+    let hot_b = hots.get(1).cloned().unwrap_or_default();
+    let v_ref = if canonical { to.v_ref } else { to.v_ref / 2.0 };
+    let r_pct = if canonical { to.r_pct } else { to.r_pct * 2.0 };
+    let half = DistWinding {
+        bus: to.bus.clone(),
+        terminal_map: vec![hot_a, common.clone()],
+        conn: DistWindingConn::Wye,
+        v_ref,
+        s_rating: to.s_rating,
+        r_pct,
+        tap: to.tap,
+        r_neutral: to.r_neutral,
+        x_neutral: to.x_neutral,
+    };
+    let other_half = DistWinding {
+        bus: to.bus,
+        terminal_map: vec![common, hot_b],
+        conn: DistWindingConn::Wye,
+        v_ref,
+        s_rating: to.s_rating,
+        r_pct,
+        tap: to.tap,
+        r_neutral: None,
+        x_neutral: None,
+    };
+    windings.push(half);
+    windings.push(other_half);
+}
+
+fn center_tap_neutral_index(to: &DistWinding, buses: &[DistBus]) -> usize {
+    if let Some(bus) = buses.iter().find(|bus| bus.id == to.bus)
+        && let Some((idx, _)) = to
+            .terminal_map
+            .iter()
+            .enumerate()
+            .find(|(_, term)| bus.grounded.iter().any(|ground| ground == *term))
+    {
+        return idx;
+    }
+    to.terminal_map
+        .iter()
+        .position(|term| term.eq_ignore_ascii_case("n") || term == "4")
+        .unwrap_or_else(|| to.terminal_map.len() - 1)
+}
+
+fn n_winding_internal_v_ref(
+    conn: DistWindingConn,
+    terminal_map: &[String],
+    bmopf_v_nom: f64,
+) -> f64 {
+    if conn == DistWindingConn::Wye && n_winding_phase_count(conn, terminal_map) >= 2 {
+        bmopf_v_nom * 3f64.sqrt()
+    } else {
+        bmopf_v_nom
+    }
+}
+
+fn n_winding_bmopf_v_nom_from_internal(w: &DistWinding) -> f64 {
+    if w.conn == DistWindingConn::Wye && n_winding_phase_count(w.conn, &w.terminal_map) >= 2 {
+        w.v_ref / 3f64.sqrt()
+    } else {
+        w.v_ref
+    }
+}
+
+fn n_winding_base_from_bmopf(
+    conn: DistWindingConn,
+    terminal_map: &[String],
+    bmopf_v_nom: f64,
+    s: f64,
+) -> Option<f64> {
+    n_winding_impedance_base(n_winding_phase_count(conn, terminal_map), bmopf_v_nom, s)
+}
+
+fn n_winding_base_from_internal(w: &DistWinding, s: f64) -> Option<f64> {
+    n_winding_base_from_bmopf(
+        w.conn,
+        &w.terminal_map,
+        n_winding_bmopf_v_nom_from_internal(w),
+        s,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_MATRIX_INDEX, is_numeric_field, matrix_indices};
+    use serde_json::Value;
+
+    /// A matrix key the reader will not assemble is outside the schema, and
+    /// the numeric check must not claim it. The two ran on separate rules
+    /// once, so an index past the bound was reported as a schema field while
+    /// the reader put it in extras.
+    #[test]
+    fn the_numeric_check_claims_exactly_the_matrix_keys_the_reader_assembles() {
+        let over = MAX_MATRIX_INDEX + 1;
+        for key in [
+            "R_series_1_1",
+            "X_series_2_3",
+            &format!("B_from_{MAX_MATRIX_INDEX}_{MAX_MATRIX_INDEX}"),
+            "G_to_1_2",
+            "B_1_1",
+        ] {
+            assert!(is_numeric_field(key), "{key} should be numeric");
+        }
+        for key in [
+            "R_series_0_1",
+            "R_series_1_0",
+            &format!("R_series_{over}_1"),
+            &format!("R_series_1_{over}"),
+            "R_series_1",
+            "R_series_a_b",
+            "R_series",
+        ] {
+            assert!(!is_numeric_field(key), "{key} should not be numeric");
+            assert!(
+                super::NUMERIC_MATRIX_PREFIXES
+                    .iter()
+                    .all(|p| matrix_indices(key, p).is_none()),
+                "{key} disagrees with the reader"
+            );
+        }
+    }
+
+    /// [`super::NUMERIC_FIELDS`] and [`super::NUMERIC_MATRIX_PREFIXES`] copy
+    /// what the schema types as a number. Derive the set again from the
+    /// vendored schema so the copy cannot drift when upstream moves.
+    #[test]
+    fn numeric_field_names_match_the_vendored_schema() {
+        fn number(v: &Value) -> bool {
+            v.get("type").and_then(Value::as_str) == Some("number")
+                || v.get("$ref")
+                    .and_then(Value::as_str)
+                    .is_some_and(|r| r.ends_with("nonnegative_number"))
+        }
+        fn is_numeric(v: &Value) -> bool {
+            number(v)
+                || (v.get("type").and_then(Value::as_str) == Some("array")
+                    && v.get("items").is_some_and(number))
+        }
+        fn walk(node: &Value, names: &mut Vec<String>, patterns: &mut Vec<String>) {
+            match node {
+                Value::Object(o) => {
+                    for (key, target) in
+                        [("properties", &mut *names), ("patternProperties", patterns)]
+                    {
+                        if let Some(Value::Object(props)) = o.get(key) {
+                            target.extend(
+                                props
+                                    .iter()
+                                    .filter(|(_, v)| is_numeric(v))
+                                    .map(|(k, _)| k.clone()),
+                            );
+                        }
+                    }
+                    o.values().for_each(|v| walk(v, names, patterns));
+                }
+                Value::Array(a) => a.iter().for_each(|v| walk(v, names, patterns)),
+                _ => {}
+            }
+        }
+
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/data/dist/bmopf/draft_bmopf_schema.json");
+        let schema: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let (mut names, mut patterns) = (Vec::new(), Vec::new());
+        walk(&schema, &mut names, &mut patterns);
+        names.sort_unstable();
+        names.dedup();
+        patterns.sort_unstable();
+        patterns.dedup();
+        assert!(!names.is_empty() && !patterns.is_empty());
+
+        for name in &names {
+            assert!(is_numeric_field(name), "the reader does not know `{name}`");
+        }
+        // Each matrix pattern resolves through a `<prefix>_<row>_<col>` sample.
+        for pattern in &patterns {
+            let sample = pattern
+                .trim_start_matches('^')
+                .trim_end_matches('$')
+                .replace("\\d+", "7");
+            assert!(
+                is_numeric_field(&sample),
+                "the reader does not know `{sample}` (from `{pattern}`)"
+            );
+        }
+        let draft_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("schemas/bmopf/0.2.0/bmopf.schema.json");
+        let draft: Value =
+            serde_json::from_str(&std::fs::read_to_string(draft_path).unwrap()).unwrap();
+        walk(&draft, &mut names, &mut patterns);
+        // Each recognized numeric name belongs to a supported schema.
+        for name in super::NUMERIC_FIELDS {
+            assert!(
+                names.iter().any(|n| n == name),
+                "`{name}` is not a schema number"
+            );
+        }
+        // `is_numeric_field` binary searches this list.
+        assert!(
+            super::NUMERIC_FIELDS.is_sorted(),
+            "NUMERIC_FIELDS must stay sorted"
+        );
+    }
+}

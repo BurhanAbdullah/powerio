@@ -1,0 +1,408 @@
+{
+  "bus": {
+    "n2": {
+      "terminal_names": [
+        "1",
+        "2",
+        "3"
+      ]
+    },
+    "n3": {
+      "perfectly_grounded_terminals": [
+        "4"
+      ],
+      "terminal_names": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ]
+    },
+    "n4": {
+      "perfectly_grounded_terminals": [
+        "4"
+      ],
+      "terminal_names": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ]
+    },
+    "sourcebus": {
+      "perfectly_grounded_terminals": [
+        "4"
+      ],
+      "terminal_names": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ]
+    }
+  },
+  "line": {
+    "line1": {
+      "bus_from": "sourcebus",
+      "bus_to": "n2",
+      "length": 609.6,
+      "linecode": "_line_line1",
+      "terminal_map_from": [
+        "1",
+        "2",
+        "3"
+      ],
+      "terminal_map_to": [
+        "1",
+        "2",
+        "3"
+      ]
+    },
+    "line2": {
+      "bus_from": "n3",
+      "bus_to": "n4",
+      "length": 762.0,
+      "linecode": "_line_line2",
+      "terminal_map_from": [
+        "1",
+        "2",
+        "3"
+      ],
+      "terminal_map_to": [
+        "1",
+        "2",
+        "3"
+      ]
+    }
+  },
+  "linecode": {
+    "_line_line1": {
+      "B_from_1_1": 1.731586501978626e-6,
+      "B_from_1_2": -3.710542504239913e-7,
+      "B_from_1_3": -3.710542504239913e-7,
+      "B_from_2_1": -3.710542504239913e-7,
+      "B_from_2_2": 1.731586501978626e-6,
+      "B_from_2_3": -3.710542504239913e-7,
+      "B_from_3_1": -3.710542504239913e-7,
+      "B_from_3_2": -3.710542504239913e-7,
+      "B_from_3_3": 1.731586501978626e-6,
+      "B_to_1_1": 1.731586501978626e-6,
+      "B_to_1_2": -3.710542504239913e-7,
+      "B_to_1_3": -3.710542504239913e-7,
+      "B_to_2_1": -3.710542504239913e-7,
+      "B_to_2_2": 1.731586501978626e-6,
+      "B_to_2_3": -3.710542504239913e-7,
+      "B_to_3_1": -3.710542504239913e-7,
+      "B_to_3_2": -3.710542504239913e-7,
+      "B_to_3_3": 1.731586501978626e-6,
+      "G_from_1_1": 0.0,
+      "G_from_1_2": 0.0,
+      "G_from_1_3": 0.0,
+      "G_from_2_1": 0.0,
+      "G_from_2_2": 0.0,
+      "G_from_2_3": 0.0,
+      "G_from_3_1": 0.0,
+      "G_from_3_2": 0.0,
+      "G_from_3_3": 0.0,
+      "G_to_1_1": 0.0,
+      "G_to_1_2": 0.0,
+      "G_to_1_3": 0.0,
+      "G_to_2_1": 0.0,
+      "G_to_2_2": 0.0,
+      "G_to_2_3": 0.0,
+      "G_to_3_1": 0.0,
+      "G_to_3_2": 0.0,
+      "G_to_3_3": 0.0,
+      "R_series_1_1": 0.32195975503062113,
+      "R_series_1_2": 0.13167104111986,
+      "R_series_1_3": 0.13167104111986,
+      "R_series_2_1": 0.13167104111986,
+      "R_series_2_2": 0.32195975503062113,
+      "R_series_2_3": 0.13167104111986,
+      "R_series_3_1": 0.13167104111986,
+      "R_series_3_2": 0.13167104111986,
+      "R_series_3_3": 0.32195975503062113,
+      "X_series_1_1": 0.7063648293963255,
+      "X_series_1_2": 0.31069553805774275,
+      "X_series_1_3": 0.31069553805774275,
+      "X_series_2_1": 0.31069553805774275,
+      "X_series_2_2": 0.7063648293963255,
+      "X_series_2_3": 0.31069553805774275,
+      "X_series_3_1": 0.31069553805774275,
+      "X_series_3_2": 0.31069553805774275,
+      "X_series_3_3": 0.7063648293963255,
+      "i_max": [
+        600.0,
+        600.0,
+        600.0
+      ]
+    },
+    "_line_line2": {
+      "B_from_1_1": 1.731586501978626e-6,
+      "B_from_1_2": -3.710542504239913e-7,
+      "B_from_1_3": -3.710542504239913e-7,
+      "B_from_2_1": -3.710542504239913e-7,
+      "B_from_2_2": 1.731586501978626e-6,
+      "B_from_2_3": -3.710542504239913e-7,
+      "B_from_3_1": -3.710542504239913e-7,
+      "B_from_3_2": -3.710542504239913e-7,
+      "B_from_3_3": 1.731586501978626e-6,
+      "B_to_1_1": 1.731586501978626e-6,
+      "B_to_1_2": -3.710542504239913e-7,
+      "B_to_1_3": -3.710542504239913e-7,
+      "B_to_2_1": -3.710542504239913e-7,
+      "B_to_2_2": 1.731586501978626e-6,
+      "B_to_2_3": -3.710542504239913e-7,
+      "B_to_3_1": -3.710542504239913e-7,
+      "B_to_3_2": -3.710542504239913e-7,
+      "B_to_3_3": 1.731586501978626e-6,
+      "G_from_1_1": 0.0,
+      "G_from_1_2": 0.0,
+      "G_from_1_3": 0.0,
+      "G_from_2_1": 0.0,
+      "G_from_2_2": 0.0,
+      "G_from_2_3": 0.0,
+      "G_from_3_1": 0.0,
+      "G_from_3_2": 0.0,
+      "G_from_3_3": 0.0,
+      "G_to_1_1": 0.0,
+      "G_to_1_2": 0.0,
+      "G_to_1_3": 0.0,
+      "G_to_2_1": 0.0,
+      "G_to_2_2": 0.0,
+      "G_to_2_3": 0.0,
+      "G_to_3_1": 0.0,
+      "G_to_3_2": 0.0,
+      "G_to_3_3": 0.0,
+      "R_series_1_1": 0.32195975503062113,
+      "R_series_1_2": 0.13167104111986,
+      "R_series_1_3": 0.13167104111986,
+      "R_series_2_1": 0.13167104111986,
+      "R_series_2_2": 0.32195975503062113,
+      "R_series_2_3": 0.13167104111986,
+      "R_series_3_1": 0.13167104111986,
+      "R_series_3_2": 0.13167104111986,
+      "R_series_3_3": 0.32195975503062113,
+      "X_series_1_1": 0.7063648293963255,
+      "X_series_1_2": 0.31069553805774275,
+      "X_series_1_3": 0.31069553805774275,
+      "X_series_2_1": 0.31069553805774275,
+      "X_series_2_2": 0.7063648293963255,
+      "X_series_2_3": 0.31069553805774275,
+      "X_series_3_1": 0.31069553805774275,
+      "X_series_3_2": 0.31069553805774275,
+      "X_series_3_3": 0.7063648293963255,
+      "i_max": [
+        600.0,
+        600.0,
+        600.0
+      ]
+    }
+  },
+  "load": {
+    "load1": {
+      "bus": "n4",
+      "configuration": "WYE",
+      "model": "CONSTANT_POWER",
+      "p_nom": [
+        1800000.0,
+        1800000.0,
+        1800000.0
+      ],
+      "q_nom": [
+        871779.7887081346,
+        871779.7887081346,
+        871779.7887081346
+      ],
+      "terminal_map": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ]
+    }
+  },
+  "meta": {
+    "$schema": "https://raw.githubusercontent.com/eigenergy/powerio/5234df55cd13ad31455697cffbdc16ca50662667/powerio-dist/schemas/bmopf/0.2.0/bmopf.schema.json",
+    "case_study_generator": {
+      "tool": "powerio",
+      "version": "0.11.5"
+    },
+    "frequency": 60.0,
+    "provenance": {
+      "powerio_bmopf": {
+        "producer": "powerio",
+        "producer_version": "0.11.0",
+        "schema_commit": "2560b3bb9cdfee89321e02a12c320c9fb6519af0",
+        "schema_id": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/main/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_retrieval_url": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/2560b3bb9cdfee89321e02a12c320c9fb6519af0/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_sha256": "7f8ab08476b610d7bc9ecf3539d209b3bc212e8472bc38987afedc1163d71bce",
+        "schema_status": "proposal",
+        "schema_version": "0.2.0"
+      },
+      "powerio_bmopf_1": {
+        "producer": "powerio",
+        "producer_version": "0.11.0",
+        "schema_commit": "5e692902329b06342913b1a57c546a5fae51b2f1",
+        "schema_id": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/main/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_retrieval_url": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/5e692902329b06342913b1a57c546a5fae51b2f1/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_sha256": "e08521ca45c5406194019c31e0389ba070545b4b720bfbefa2947f5446b581fa",
+        "schema_status": "proposal",
+        "schema_version": "0.2.0"
+      },
+      "powerio_bmopf_10": {
+        "producer": "powerio",
+        "producer_version": "0.11.5",
+        "schema_commit": "664b494f2ee31ee76f8f78e7852cdb1f1c9a8e7d",
+        "schema_id": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/main/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_retrieval_url": "https://raw.githubusercontent.com/eigenergy/powerio/5234df55cd13ad31455697cffbdc16ca50662667/powerio-dist/schemas/bmopf/0.2.0/bmopf.schema.json",
+        "schema_sha256": "74d6c6de3637d52e42a26c4cb0584f51df70d69f360b236cf5e23afaf7669462",
+        "schema_status": "proposal",
+        "schema_upstream_url": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/664b494f2ee31ee76f8f78e7852cdb1f1c9a8e7d/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_version": "0.2.0"
+      },
+      "powerio_bmopf_2": {
+        "producer": "powerio",
+        "producer_version": "0.11.0",
+        "schema_commit": "d83cfc9ce61a81e78c544c0561d0d418fa69a4ff",
+        "schema_id": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/main/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_retrieval_url": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/d83cfc9ce61a81e78c544c0561d0d418fa69a4ff/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_sha256": "15405bb43be48ce77fa6e59be67b5fee58ad10474c8db67306f837df5e9846b2",
+        "schema_status": "proposal",
+        "schema_version": "0.2.0"
+      },
+      "powerio_bmopf_3": {
+        "producer": "powerio",
+        "producer_version": "0.11.0",
+        "schema_commit": "fe8671a74d2fc1a15a499c5b1f66cbb80fc22e12",
+        "schema_id": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/main/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_retrieval_url": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/fe8671a74d2fc1a15a499c5b1f66cbb80fc22e12/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_sha256": "74d6c6de3637d52e42a26c4cb0584f51df70d69f360b236cf5e23afaf7669462",
+        "schema_status": "proposal",
+        "schema_version": "0.2.0"
+      },
+      "powerio_bmopf_4": {
+        "producer": "powerio",
+        "producer_version": "0.11.1",
+        "schema_commit": "fe8671a74d2fc1a15a499c5b1f66cbb80fc22e12",
+        "schema_id": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/main/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_retrieval_url": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/fe8671a74d2fc1a15a499c5b1f66cbb80fc22e12/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_sha256": "74d6c6de3637d52e42a26c4cb0584f51df70d69f360b236cf5e23afaf7669462",
+        "schema_status": "proposal",
+        "schema_version": "0.2.0"
+      },
+      "powerio_bmopf_5": {
+        "producer": "powerio",
+        "producer_version": "0.11.1",
+        "schema_commit": "664b494f2ee31ee76f8f78e7852cdb1f1c9a8e7d",
+        "schema_id": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/main/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_retrieval_url": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/664b494f2ee31ee76f8f78e7852cdb1f1c9a8e7d/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_sha256": "74d6c6de3637d52e42a26c4cb0584f51df70d69f360b236cf5e23afaf7669462",
+        "schema_status": "proposal",
+        "schema_version": "0.2.0"
+      },
+      "powerio_bmopf_6": {
+        "producer": "powerio",
+        "producer_version": "0.11.1",
+        "schema_commit": "664b494f2ee31ee76f8f78e7852cdb1f1c9a8e7d",
+        "schema_id": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/main/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_retrieval_url": "https://raw.githubusercontent.com/eigenergy/powerio/5234df55cd13ad31455697cffbdc16ca50662667/powerio-dist/schemas/bmopf/0.2.0/bmopf.schema.json",
+        "schema_sha256": "74d6c6de3637d52e42a26c4cb0584f51df70d69f360b236cf5e23afaf7669462",
+        "schema_status": "proposal",
+        "schema_upstream_url": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/664b494f2ee31ee76f8f78e7852cdb1f1c9a8e7d/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_version": "0.2.0"
+      },
+      "powerio_bmopf_7": {
+        "producer": "powerio",
+        "producer_version": "0.11.2",
+        "schema_commit": "664b494f2ee31ee76f8f78e7852cdb1f1c9a8e7d",
+        "schema_id": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/main/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_retrieval_url": "https://raw.githubusercontent.com/eigenergy/powerio/5234df55cd13ad31455697cffbdc16ca50662667/powerio-dist/schemas/bmopf/0.2.0/bmopf.schema.json",
+        "schema_sha256": "74d6c6de3637d52e42a26c4cb0584f51df70d69f360b236cf5e23afaf7669462",
+        "schema_status": "proposal",
+        "schema_upstream_url": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/664b494f2ee31ee76f8f78e7852cdb1f1c9a8e7d/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_version": "0.2.0"
+      },
+      "powerio_bmopf_8": {
+        "producer": "powerio",
+        "producer_version": "0.11.3",
+        "schema_commit": "664b494f2ee31ee76f8f78e7852cdb1f1c9a8e7d",
+        "schema_id": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/main/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_retrieval_url": "https://raw.githubusercontent.com/eigenergy/powerio/5234df55cd13ad31455697cffbdc16ca50662667/powerio-dist/schemas/bmopf/0.2.0/bmopf.schema.json",
+        "schema_sha256": "74d6c6de3637d52e42a26c4cb0584f51df70d69f360b236cf5e23afaf7669462",
+        "schema_status": "proposal",
+        "schema_upstream_url": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/664b494f2ee31ee76f8f78e7852cdb1f1c9a8e7d/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_version": "0.2.0"
+      },
+      "powerio_bmopf_9": {
+        "producer": "powerio",
+        "producer_version": "0.11.4",
+        "schema_commit": "664b494f2ee31ee76f8f78e7852cdb1f1c9a8e7d",
+        "schema_id": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/main/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_retrieval_url": "https://raw.githubusercontent.com/eigenergy/powerio/5234df55cd13ad31455697cffbdc16ca50662667/powerio-dist/schemas/bmopf/0.2.0/bmopf.schema.json",
+        "schema_sha256": "74d6c6de3637d52e42a26c4cb0584f51df70d69f360b236cf5e23afaf7669462",
+        "schema_status": "proposal",
+        "schema_upstream_url": "https://raw.githubusercontent.com/distribution-system-opt/dsopt-schema/664b494f2ee31ee76f8f78e7852cdb1f1c9a8e7d/schema/bmopf/0.2.0/bmopf.schema.json",
+        "schema_version": "0.2.0"
+      }
+    },
+    "schema_version": "0.2.0"
+  },
+  "name": "4busDYBal",
+  "terminal_conventions": {
+    "neutral": [],
+    "phase": [
+      "1",
+      "2",
+      "3",
+      "4"
+    ]
+  },
+  "transformer": {
+    "delta_wye": {
+      "t1": {
+        "bus_from": "n2",
+        "bus_to": "n3",
+        "r_series": 0.028842666666666666,
+        "s_rating": 6000000.0,
+        "terminal_map_from": [
+          "1",
+          "2",
+          "3"
+        ],
+        "terminal_map_to": [
+          "1",
+          "2",
+          "3",
+          "4"
+        ],
+        "v_nom_from": 12470.0,
+        "v_nom_to": 4160.0,
+        "x_series": 0.173056
+      }
+    }
+  },
+  "voltage_source": {
+    "source": {
+      "bus": "sourcebus",
+      "terminal_map": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "v_angle": [
+        0.0,
+        -2.0943951023931953,
+        2.0943951023931957,
+        0.0
+      ],
+      "v_magnitude": [
+        7199.557856794634,
+        7199.557856794634,
+        7199.557856794634,
+        0.0
+      ]
+    }
+  }
+}

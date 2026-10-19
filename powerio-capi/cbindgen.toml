@@ -1,0 +1,216 @@
+language = "C"
+include_guard = "POWERIO_H"
+pragma_once = false
+cpp_compat = true
+tab_width = 4
+style = "type"
+usize_is_size_t = true
+
+header = """
+/* PowerIO C ABI 7.
+ *
+ * Grid exchange data enters through PioSource and pio_parse. pio_emit writes
+ * a selected grid exchange format. PowerIO IR uses pio_module_serialize and
+ * pio_module_deserialize. Every input and returned span carries a byte or
+ * element count.
+ *
+ * Values use canonical structural type names. pio_value_is_type performs an
+ * exact comparison, and the typed accessors return owner-rooted views without
+ * serializing or copying the module value.
+ *
+ * Each opaque handle has retain and release functions. A child value,
+ * network, collection entry, or artifact keeps its owner alive. Concurrent
+ * immutable access is allowed; releasing one raw handle concurrently with a
+ * call that uses that same raw handle is caller error. pio_apply_updates and
+ * pio_apply_bus_load_active_power need exclusive access to their PioModule
+ * handle for the duration of the call, and they invalidate every plain
+ * Pio*View struct previously read from that handle; owner rooted handles
+ * stay valid. Every pointer a caller passes must be aligned for its type and
+ * must address at most PTRDIFF_MAX bytes.
+ *
+ * Every fallible operation reports through PioError **. A NULL error
+ * parameter discards the error. Branch on pio_error_code, not on message
+ * text. No Rust panic crosses the ABI boundary.
+ *
+ * Generated from the Rust declarations with cbindgen using this file.
+ */"""
+
+after_includes = """
+typedef struct PioArtifact PioArtifact;
+typedef struct PioActivePower PioActivePower;
+typedef struct PioAcOpfPreparation PioAcOpfPreparation;
+typedef struct PioDcOpfPreparation PioDcOpfPreparation;
+typedef struct PioDcOperators PioDcOperators;
+typedef struct PioApparentPower PioApparentPower;
+typedef struct PioBalancedNetwork PioBalancedNetwork;
+typedef struct PioCalculationUpdate PioCalculationUpdate;
+typedef struct PioCalculationInstance PioCalculationInstance;
+typedef struct PioCalculationSolution PioCalculationSolution;
+typedef struct PioComponentId PioComponentId;
+typedef struct PioContingencyResolution PioContingencyResolution;
+typedef struct PioContingencySet PioContingencySet;
+typedef struct PioDestination PioDestination;
+typedef struct PioDetailedConnectivity PioDetailedConnectivity;
+typedef struct PioDiagnostics PioDiagnostics;
+typedef struct PioEmitResult PioEmitResult;
+typedef struct PioError PioError;
+typedef struct PioGeoApplyReport PioGeoApplyReport;
+typedef struct PioGeoLayer PioGeoLayer;
+typedef struct PioJsonValue PioJsonValue;
+typedef struct PioModule PioModule;
+typedef struct PioMonitoredSet PioMonitoredSet;
+typedef struct PioMulticonductorNetwork PioMulticonductorNetwork;
+typedef struct PioNetworkUpdate PioNetworkUpdate;
+typedef struct PioOperatingPoint PioOperatingPoint;
+typedef struct PioOperatingPointUpdate PioOperatingPointUpdate;
+typedef struct PioReactivePower PioReactivePower;
+typedef struct PioScenarioSetHandle PioScenarioSetHandle;
+typedef struct PioSource PioSource;
+typedef struct PioSparseMatrix PioSparseMatrix;
+typedef struct PioString PioString;
+typedef struct PioSubsystemSet PioSubsystemSet;
+typedef struct PioTimeSeriesHandle PioTimeSeriesHandle;
+typedef struct PioUpdateChange PioUpdateChange;
+typedef struct PioUpdateReport PioUpdateReport;
+typedef struct PioValueHandle PioValueHandle;
+typedef struct PioVector PioVector;"""
+
+[export]
+prefix = ""
+include = [
+    "PioAcOpfBranchView",
+    "PioAcOpfBusView",
+    "PioAcOpfGeneratorView",
+    "PioAcOpfPreparationView",
+    "PioAcOpfStorageView",
+    "PioDcOpfBranchView",
+    "PioDcOpfBusView",
+    "PioDcOpfGeneratorView",
+    "PioDcOpfPreparationView",
+    "PioBalancedBranchView",
+    "PioBalancedBusView",
+    "PioBalancedGeoView",
+    "PioBalancedLocationView",
+    "PioBalancedGeneratorView",
+    "PioBalancedLoadView",
+    "PioBalancedLoadVoltageModelView",
+    "PioBalancedShuntView",
+    "PioBalancedStorageView",
+    "PioBalancedStaticVarCompensatorView",
+    "PioBalancedSwitchView",
+    "PioBalancedHvdcConverterView",
+    "PioBalancedHvdcView",
+    "PioBalancedThreeWindingTransformerView",
+    "PioThreeWindingTransformerWindingView",
+    "PioThreeWindingTransformerImpedanceView",
+    "PioBalancedAreaView",
+    "PioDetailedConnectivityCountsView",
+    "PioOmittedFieldView",
+    "PioCaseMetadataView",
+    "PioSubnetworkView",
+    "PioReactiveCapabilityCurvePointView",
+    "PioReactiveLimitsView",
+    "PioEquipmentReactiveLimitsView",
+    "PioBoundaryLineGenerationView",
+    "PioBoundaryLineView",
+    "PioTieLineView",
+    "PioComponentMetadataView",
+    "PioComponentAliasView",
+    "PioExternalIdentifierView",
+    "PioStringPropertyView",
+    "PioSubstationView",
+    "PioVoltageLevelView",
+    "PioConnectivityNodeView",
+    "PioBusBreakerBusView",
+    "PioCalculatedBusView",
+    "PioBusbarSectionView",
+    "PioDetailedTerminalView",
+    "PioTopologySwitchView",
+    "PioInternalConnectionView",
+    "PioOperationalLimitGroupView",
+    "PioTemporaryLimitView",
+    "PioTapChangerView",
+    "PioTapChangerStepView",
+    "PioDcTerminalView",
+    "PioDcEquipmentView",
+    "PioDcNodeView",
+    "PioDcConverterUnitView",
+    "PioDroopCurveSegmentView",
+    "PioAcDcConverterView",
+    "PioMulticonductorLocationView",
+    "PioMulticonductorGeoView",
+    "PioMulticonductorNetworkCountsView",
+    "PioMulticonductorBusView",
+    "PioMulticonductorLineCodeView",
+    "PioMulticonductorLineView",
+    "PioMulticonductorSwitchView",
+    "PioMulticonductorTransformerView",
+    "PioMulticonductorTransformerWindingView",
+    "PioMulticonductorLoadView",
+    "PioMulticonductorGeneratorView",
+    "PioInverterBasedResourceView",
+    "PioControlProfileView",
+    "PioMulticonductorShuntView",
+    "PioMulticonductorCapacitorView",
+    "PioVoltageSourceView",
+    "PioMulticonductorUntypedObjectView",
+    "PioMulticonductorUntypedPropertyView",
+    "PioMulticonductorCommandView",
+    "PioAcBusSpecificationView",
+    "PioActiveConstraintView",
+    "PioActiveControlView",
+    "PioActivePowerControlView",
+    "PioBranchRatingView",
+    "PioByteView",
+    "PioF64View",
+    "PioGeneratorCapabilityView",
+    "PioGeneratorCostView",
+    "PioDcBusSpecificationView",
+    "PioDiagnosticSpanView",
+    "PioJsonObjectEntryView",
+    "PioJsonValueView",
+    "PioIsolatedTerminalView",
+    "PioObjectiveTermView",
+    "PioModuleExtensionView",
+    "PioModuleHistoryEntryView",
+    "PioModuleHistoryParameterView",
+    "PioModuleProducerView",
+    "PioModuleSourceMapEntryView",
+    "PioModuleSourceView",
+    "PioPrescribedSourceVoltageView",
+    "PioPrescribedTerminalPowerView",
+    "PioComponentIdView",
+    "PioContingencyComponentView",
+    "PioScucDevicePeriodView",
+    "PioScucDeviceView",
+    "PioScucRampLimitsView",
+    "PioScucReserveLimitsView",
+    "PioScucReserveCostsView",
+    "PioScucInitialCommitmentView",
+    "PioScucReactiveCapabilityView",
+    "PioScucStartupCostAdjustmentView",
+    "PioScucStartupLimitView",
+    "PioScucEnergyRequirementView",
+    "PioScucEnergyCostBlockView",
+    "PioScucDimensionsView",
+    "PioScucShuntView",
+    "PioScucBranchSwitchingCostView",
+    "PioScucTransformerControlView",
+    "PioScucActiveReserveZoneView",
+    "PioScucActiveReservePeriodView",
+    "PioScucReactiveReserveZoneView",
+    "PioScucReactiveReservePeriodView",
+    "PioScucContingencyView",
+    "PioScucContingencyComponentView",
+    "PioScucViolationCostView",
+    "PioShuntBlockView",
+    "PioSizeView",
+    "PioSourceSpanView",
+    "PioStringView",
+    "PioTerminalPowerView",
+    "PioTerminalReferenceView",
+    "PioTerminalVoltageView",
+]
+
+[parse]
+parse_deps = false
