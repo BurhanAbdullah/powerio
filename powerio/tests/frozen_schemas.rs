@@ -106,7 +106,7 @@ fn historical_schemas_preserve_their_original_identifiers() {
     }
 }
 
-/// The current schema uses the public PowerIO IR identity and generation.
+/// The current schema uses the public PowerIO IR identity and version.
 #[test]
 fn the_current_powerio_ir_schema_is_committed() {
     let schema: serde_json::Value =
