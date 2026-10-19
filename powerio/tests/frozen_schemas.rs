@@ -163,6 +163,15 @@ fn the_generation_two_catalog_preserves_published_shapes() {
                             });
                         assert_preserved(value, current_value, path);
                     }
+                } else if path.ends_with(".enum") {
+                    // Enum catalogs may grow by adding values, but published
+                    // values must remain accepted by the current schema.
+                    for value in old {
+                        assert!(
+                            new.contains(value),
+                            "{path}: published enum value {value} was removed"
+                        );
+                    }
                 } else {
                     assert_eq!(old, new, "{path}: non-discriminated array changed");
                 }
