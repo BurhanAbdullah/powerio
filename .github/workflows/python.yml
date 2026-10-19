@@ -1,21 +1,22 @@
 name: Python
-# Release and recovery runs carry their tag; an empty name keeps GitHub's
-# commit or pull request title for ordinary CI runs.
-run-name: ${{ (github.event_name == 'release' || github.event_name == 'workflow_dispatch') && format('PowerIO Python {0}', github.event_name == 'release' && github.event.release.tag_name || inputs.tag) || '' }}
+run-name: ${{ inputs.tag && format('PowerIO Python {0}', inputs.tag) || '' }}
 
 on:
   push:
     branches: [ "main" ]
   # No branch filter: stacked PRs must run this too (see rust.yml).
   pull_request:
-  release:
-    types: [ published ]
-  workflow_dispatch:
+  workflow_call:
     inputs:
       tag:
-        description: Existing published stable release tag to retry
-        required: true
+        description: Existing published release tag for a reusable release build
+        required: false
         type: string
+      prerelease:
+        description: Whether the calling release is a prerelease
+        required: false
+        default: false
+        type: boolean
 
 # One run per workflow per branch. A force push to a stacked pull request
 # otherwise leaves the superseded run going: it finishes, it fails or it
@@ -25,8 +26,7 @@ on:
 # Only a pull request run is ever superseded, so only a pull request run is
 # cancelled. A push to `main` is a release candidate whose result must stand
 # on its own, and a release run is the release itself: `python.yml` publishes
-# wheels to PyPI from one, behind an environment whose reviewer gate can hold
-# it for a long time. Keying the switch on the ref instead would make every
+# release publication runs separately in python-release.yml, outside pull request CI. Keying the switch on the ref instead would make every
 # tag run cancellable, and a re-published release or a re-run of the same tag
 # would then cancel a publish in flight.
 concurrency:
@@ -37,8 +37,8 @@ permissions:
   contents: read
 
 env:
-  RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
-  SOURCE_REF: ${{ github.event_name == 'release' && format('refs/tags/{0}', github.event.release.tag_name) || github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.sha }}
+  RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag || '' }}
+  SOURCE_REF: ${{ github.event_name == 'release' && format('refs/tags/{0}', github.event.release.tag_name) || (inputs.tag && format('refs/tags/{0}', inputs.tag)) || github.sha }}
 
 jobs:
   # A release or recovery run verifies the published tag here. Every other run
@@ -48,37 +48,27 @@ jobs:
   release-preflight:
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.release.outputs.tag }}
-      sha: ${{ steps.release.outputs.sha || steps.source.outputs.sha }}
-      wheels: ${{ steps.release.outputs.sha && 'true' || steps.source.outputs.wheels }}
+      tag: ${{ steps.preflight.outputs.tag }}
+      sha: ${{ steps.preflight.outputs.sha }}
+      wheels: ${{ steps.preflight.outputs.wheels }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.SOURCE_REF }}
           fetch-depth: 0
-      - name: Decide whether this run builds the release wheels
-        id: source
-        if: github.event_name == 'push' || github.event_name == 'pull_request'
-        run: |
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          wheels=true
-          # A pull request checks out its merge commit, whose first parent is
-          # the base branch.
-          if [ "$GITHUB_EVENT_NAME" = pull_request ] \
-            && ! git diff --name-only HEAD^1 HEAD \
-              | grep -qE '^(\.github/workflows/python\.yml|Cargo\.(toml|lock)|pyproject\.toml|rust-toolchain(\.toml)?|powerio-py/)'; then
-            wheels=false
-          fi
-          echo "wheels=$wheels" >> "$GITHUB_OUTPUT"
-      - name: Release identity agreement
-        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-        run: bash scripts/check-release-versions.sh
-      - name: Verify the immutable published release
-        id: release
-        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+      - name: Preflight source or release
+        id: preflight
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # All PRs and main pushes run the complete package build matrix.
+          if [ "$GITHUB_EVENT_NAME" = "push" ] || [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            echo "wheels=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          bash scripts/check-release-versions.sh
           git check-ref-format "refs/tags/$RELEASE_TAG" >/dev/null \
             || { echo "invalid release tag: $RELEASE_TAG" >&2; exit 1; }
           git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null \
@@ -104,12 +94,13 @@ jobs:
             -o "$release"
           jq -e '.draft == false' "$release" >/dev/null \
             || { echo "$RELEASE_TAG is not a published GitHub release" >&2; exit 1; }
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$${{ inputs.prerelease }}" != "true" ]; then
             jq -e '.prerelease == false' "$release" >/dev/null \
               || { echo "manual recovery refuses prerelease $RELEASE_TAG" >&2; exit 1; }
           fi
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$head_commit" >> "$GITHUB_OUTPUT"
+          echo "wheels=true" >> "$GITHUB_OUTPUT"
 
   lint:
     runs-on: ubuntu-latest
@@ -440,20 +431,19 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - name: Smoke the x86_64 wheel under Rosetta
-        if: matrix.platform.runner == 'macos-14' && matrix.platform.target == 'x86_64'
-        run: |
-          arch -x86_64 /usr/bin/python3 -m venv smoke-venv
-          arch -x86_64 smoke-venv/bin/python -m pip install --quiet "$(ls dist/*.whl)[all]"
-          arch -x86_64 smoke-venv/bin/python scripts/wheel-smoke.py
-      - name: Smoke the wheel natively
-        if: ${{ !(matrix.platform.runner == 'macos-14' && matrix.platform.target == 'x86_64') }}
+      - name: Smoke built wheel
         shell: bash
         run: |
-          python -m venv smoke-venv
-          if [ -x smoke-venv/bin/python ]; then py=smoke-venv/bin/python; else py=smoke-venv/Scripts/python.exe; fi
-          "$py" -m pip install --quiet "$(ls dist/*.whl)[all]"
-          "$py" scripts/wheel-smoke.py
+          if [ "${{ matrix.platform.runner }}" = "macos-14" ] && [ "${{ matrix.platform.target }}" = "x86_64" ]; then
+            arch -x86_64 /usr/bin/python3 -m venv smoke-venv
+            arch -x86_64 smoke-venv/bin/python -m pip install --quiet "$(ls dist/*.whl)[all]"
+            arch -x86_64 smoke-venv/bin/python scripts/wheel-smoke.py
+          else
+            python -m venv smoke-venv
+            if [ -x smoke-venv/bin/python ]; then py=smoke-venv/bin/python; else py=smoke-venv/Scripts/python.exe; fi
+            "$py" -m pip install --quiet "$(ls dist/*.whl)[all]"
+            "$py" scripts/wheel-smoke.py
+          fi
 
   sdist:
     if: needs.release-preflight.outputs.wheels == 'true'
@@ -487,36 +477,3 @@ jobs:
           name: sdist
           path: dist
 
-  publish:
-    name: publish to PyPI
-    # release-binaries.yml stages each release as a draft a human publishes, so
-    # the release event fires with a user actor (events from a workflow's
-    # GITHUB_TOKEN are swallowed by the recursion guard). Manual dispatch is the
-    # recovery path for a missed event. A prerelease still builds wheels and an
-    # sdist as run artifacts, but never uploads them to PyPI.
-    if: (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch'
-    needs: [ release-preflight, lint, quality, test, test-gridfm, goc3-reference, wheels, wheel-smoke, sdist ]
-    runs-on: ubuntu-latest
-    # Deployment protection (required reviewers, tag rules) lives on the pypi
-    # environment in the repo settings, not in this file.
-    environment: pypi
-    permissions:
-      id-token: write  # PyPI trusted publishing; no stored token
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          path: dist
-          merge-multiple: true
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.x"
-      - name: Check distributions
-        run: |
-          python -m pip install twine
-          python -m twine check dist/*
-      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
-        with:
-          packages-dir: dist
-          # A partially failed upload (e.g. wheels in, sdist rejected) is
-          # recovered by re-running; already-uploaded files are skipped.
-          skip-existing: true
