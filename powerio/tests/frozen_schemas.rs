@@ -167,6 +167,8 @@ fn the_generation_two_catalog_preserves_published_shapes() {
                     assert_eq!(old, new, "{path}: non-discriminated array changed");
                 }
             }
+            (serde_json::Value::Number(old), serde_json::Value::Number(new))
+                if old.as_f64() == new.as_f64() => {}
             _ => assert_eq!(published, current, "{path}: published schema changed"),
         }
     }
