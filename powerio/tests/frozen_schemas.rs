@@ -163,7 +163,7 @@ fn the_generation_two_catalog_preserves_published_shapes() {
                             });
                         assert_preserved(value, current_value, path);
                     }
-                } else if path.ends_with(".enum") {
+                } else if Path::new(path).extension().is_some_and(|ext| ext.eq_ignore_ascii_case("enum")) {
                     // Enum catalogs may grow by adding values, but published
                     // values must remain accepted by the current schema.
                     for value in old {
