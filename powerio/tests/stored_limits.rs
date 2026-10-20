@@ -686,7 +686,6 @@ fn a_solution_over_106038_terminals_round_trips() {
     );
 }
 
-
 fn repeated_time_points(count: usize) -> Vec<TimePoint> {
     (0..count)
         .map(|index| TimePoint::new(format!("h{index}"), None).unwrap())
@@ -694,11 +693,8 @@ fn repeated_time_points(count: usize) -> Vec<TimePoint> {
 }
 
 fn nested_balanced_network_series_module(count: usize) -> PioModule<PioValue> {
-    let series = TimeSeries::new(
-        repeated_time_points(count),
-        vec![small_network(); count],
-    )
-    .expect("time points and values have equal lengths");
+    let series = TimeSeries::new(repeated_time_points(count), vec![small_network(); count])
+        .expect("time points and values have equal lengths");
     let scenarios = ScenarioSet::new(vec![Scenario::new(
         ScenarioId::new("base").unwrap(),
         Some(1.0),
@@ -729,11 +725,8 @@ fn small_multiconductor_network() -> MulticonductorNetwork {
 
 fn nested_multiconductor_network_series_module(count: usize) -> PioModule<PioValue> {
     let network = small_multiconductor_network();
-    let series = TimeSeries::new(
-        repeated_time_points(count),
-        vec![network; count],
-    )
-    .expect("time points and values have equal lengths");
+    let series = TimeSeries::new(repeated_time_points(count), vec![network; count])
+        .expect("time points and values have equal lengths");
     let scenarios = ScenarioSet::new(vec![Scenario::new(
         ScenarioId::new("base").unwrap(),
         Some(1.0),
