@@ -193,19 +193,38 @@ pub fn parse_dyr(text: &str) -> Result<DynamicCase, DyrError> {
     let mut start_line = 1;
     let mut line = 1;
     let mut in_quote = false;
+    let mut record_started = false;
     let bytes = uncommented.as_bytes();
     let mut index = 0;
 
     while index < bytes.len() {
         match bytes[index] {
             b'\n' => {
-                if uncommented[start..index].trim().is_empty() {
-                    start_line = line + 1;
-                }
                 line += 1;
+                if !record_started {
+                    start_line = line;
+                }
+                index += 1;
+            }
+            b'/' if !in_quote => {
+                if record_started {
+                    if records.len() >= MAX_RECORDS {
+                        return Err(DyrError::TooManyRecords {
+                            maximum: MAX_RECORDS,
+                        });
+                    }
+                    records.push(parse_record(uncommented[start..index].trim(), start_line)?);
+                }
+                start = index + 1;
+                start_line = line;
+                record_started = false;
                 index += 1;
             }
             b'\'' => {
+                if !record_started {
+                    record_started = true;
+                    start_line = line;
+                }
                 if in_quote && index + 1 < bytes.len() && bytes[index + 1] == b'\'' {
                     index += 2;
                 } else {
@@ -213,26 +232,17 @@ pub fn parse_dyr(text: &str) -> Result<DynamicCase, DyrError> {
                     index += 1;
                 }
             }
-            b'/' if !in_quote => {
-                let raw = uncommented[start..index].trim();
-                if !raw.is_empty() {
-                    if records.len() >= MAX_RECORDS {
-                        return Err(DyrError::TooManyRecords {
-                            maximum: MAX_RECORDS,
-                        });
-                    }
-                    records.push(parse_record(raw, start_line)?);
+            byte => {
+                if !record_started && !byte.is_ascii_whitespace() {
+                    record_started = true;
+                    start_line = line;
                 }
-                start = index + 1;
-                start_line = line;
                 index += 1;
             }
-            _ => index += 1,
         }
     }
 
-    let trailing = &uncommented[start..];
-    if !trailing.trim().is_empty() {
+    if record_started {
         return Err(DyrError::UnterminatedRecord { line: start_line });
     }
 
@@ -328,42 +338,72 @@ fn parse_record(raw: &str, line: usize) -> Result<DynamicRecord, DyrError> {
 
 fn split_fields(raw: &str, line: usize) -> Result<Vec<String>, DyrError> {
     let mut fields = Vec::new();
-    let mut start = 0;
+    let mut token_start = None;
     let mut in_quote = false;
+    let mut pending_comma = false;
     let bytes = raw.as_bytes();
     let mut index = 0;
 
     while index < bytes.len() {
-        if bytes[index] == b'\'' {
-            if in_quote && index + 1 < bytes.len() && bytes[index + 1] == b'\'' {
-                index += 2;
-                continue;
+        match bytes[index] {
+            b'\'' => {
+                if token_start.is_none() {
+                    token_start = Some(index);
+                    pending_comma = false;
+                }
+                if in_quote && index + 1 < bytes.len() && bytes[index + 1] == b'\'' {
+                    index += 2;
+                    continue;
+                }
+                in_quote = !in_quote;
+                index += 1;
             }
-            in_quote = !in_quote;
-        } else if bytes[index] == b',' && !in_quote {
-            fields.push(decode_field(&raw[start..index], line)?);
-            if fields.len() > MAX_FIELDS_PER_RECORD {
-                return Err(DyrError::TooManyFields {
-                    line,
-                    maximum: MAX_FIELDS_PER_RECORD,
-                });
+            b',' if !in_quote => {
+                if let Some(start) = token_start.take() {
+                    push_decoded_field(&mut fields, &raw[start..index], line)?;
+                } else if pending_comma || fields.is_empty() {
+                    push_decoded_field(&mut fields, "", line)?;
+                }
+                pending_comma = true;
+                index += 1;
             }
-            start = index + 1;
+            byte if byte.is_ascii_whitespace() && !in_quote => {
+                if let Some(start) = token_start.take() {
+                    push_decoded_field(&mut fields, &raw[start..index], line)?;
+                    pending_comma = false;
+                }
+                index += 1;
+            }
+            _ => {
+                if token_start.is_none() {
+                    token_start = Some(index);
+                    pending_comma = false;
+                }
+                index += 1;
+            }
         }
-        index += 1;
     }
 
     if in_quote {
         return Err(DyrError::UnterminatedQuote { line });
     }
-    fields.push(decode_field(&raw[start..], line)?);
+    if let Some(start) = token_start {
+        push_decoded_field(&mut fields, &raw[start..], line)?;
+    } else if pending_comma {
+        push_decoded_field(&mut fields, "", line)?;
+    }
+    Ok(fields)
+}
+
+fn push_decoded_field(fields: &mut Vec<String>, raw: &str, line: usize) -> Result<(), DyrError> {
+    fields.push(decode_field(raw, line)?);
     if fields.len() > MAX_FIELDS_PER_RECORD {
         return Err(DyrError::TooManyFields {
             line,
             maximum: MAX_FIELDS_PER_RECORD,
         });
     }
-    Ok(fields)
+    Ok(())
 }
 
 fn decode_field(raw: &str, line: usize) -> Result<String, DyrError> {
@@ -465,4 +505,42 @@ mod tests {
             Err(DyrError::InputTooLarge { .. })
         ));
     }
+    #[test]
+    fn accepts_comma_whitespace_mixed_tab_and_multiline_dyr_records() {
+        let cases = [
+            "1, 'GENCLS', '1', 13.0000, 0.000000 /",
+            "1 'GENCLS' '1' 13.0000 0.000000 /",
+            "1, 'GENCLS', '1', 13.0000 0.000000 /",
+            "1\\t'GENCLS'\\t'1'\\t13.0000\\t0.000000 /",
+            "1, 'GENCLS',\\n  '1', 13.0000\\n 0.000000 /",
+        ];
+        for source in cases {
+            let case = parse_dyr(source).unwrap_or_else(|error| panic!("{source:?}: {error}"));
+            assert_eq!(case.records().len(), 1, "{source:?}");
+            let record = &case.records()[0];
+            assert_eq!(record.bus_id(), 1, "{source:?}");
+            assert_eq!(record.model_name(), "GENCLS", "{source:?}");
+            assert_eq!(record.device_id(), Some("1"), "{source:?}");
+            assert_eq!(record.parameters(), ["13.0000", "0.000000"], "{source:?}");
+            assert_eq!(case.to_dyr_string(), source);
+        }
+    }
+
+    #[test]
+    fn quoted_whitespace_commas_and_explicit_empty_fields_are_preserved() {
+        let source = "1, 'USERMODEL', '1', 'alpha, beta', 1.0, , 3.0 /";
+        let case = parse_dyr(source).unwrap();
+        assert_eq!(case.records()[0].model_name(), "USERMODEL");
+        assert_eq!(case.records()[0].parameters(), ["alpha, beta", "1.0", "", "3.0"]);
+        assert_eq!(case.to_dyr_string(), source);
+    }
+
+    #[test]
+    fn long_blank_and_comment_prefixes_are_scanned_once() {
+        let source = format!("{}{}1 'GENCLS' '1' 13.0 0.0 /\\n", "\\n".repeat(100_000), "! comment\\n".repeat(100_000));
+        let case = parse_dyr(&source).expect("long blank/comment prefix");
+        assert_eq!(case.records().len(), 1);
+        assert_eq!(case.records()[0].line(), 200_001);
+    }
+
 }
