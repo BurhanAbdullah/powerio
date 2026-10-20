@@ -292,6 +292,8 @@ fn encode_time_series(series: &PioTimeSeries) -> Result<dto::StoredValue> {
 fn encode_balanced_network_series(
     series: &PioTimeSeries,
 ) -> Result<dto::StoredTimeSeries<crate::BalancedNetwork>> {
+    check_collection_len("time points", series.time_points().len())?;
+    check_collection_len("time-series values", series.values().len())?;
     let values = series
         .values()
         .values()
@@ -310,6 +312,8 @@ fn encode_balanced_network_series(
 fn encode_multiconductor_network_series(
     series: &PioTimeSeries,
 ) -> Result<dto::StoredTimeSeries<powerio_dist::MulticonductorNetwork>> {
+    check_collection_len("time points", series.time_points().len())?;
+    check_collection_len("time-series values", series.values().len())?;
     let values = series
         .values()
         .values()
