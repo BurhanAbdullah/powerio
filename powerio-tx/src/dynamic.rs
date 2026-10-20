@@ -533,6 +533,11 @@ mod tests {
         assert_eq!(case.records()[0].model_name(), "USERMODEL");
         assert_eq!(case.records()[0].parameters(), ["alpha, beta", "1.0", "", "3.0"]);
         assert_eq!(case.to_dyr_string(), source);
+
+        let quoted = "1, 'USERMODEL', '1', 'O''Brien, alpha', 1.0 /";
+        let case = parse_dyr(quoted).unwrap();
+        assert_eq!(case.records()[0].parameters(), ["O'Brien, alpha", "1.0"]);
+        assert_eq!(case.to_dyr_string(), quoted);
     }
 
     #[test]
