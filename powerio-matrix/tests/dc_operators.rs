@@ -760,7 +760,6 @@ fn update_rejects_changed_three_winding_impedance() {
     assert!(error.to_string().contains("branch parameters"), "{error}");
 }
 
-
 #[test]
 fn update_rejects_changed_three_winding_source_row_mapping_without_mutation() {
     let buses = vec![
@@ -787,7 +786,9 @@ fn update_rejects_changed_three_winding_source_row_mapping_without_mutation() {
 
     let mut original_net =
         BalancedNetwork::in_memory("source-row-mapping", 100.0, buses.clone(), Vec::new());
-    original_net.transformers_3w_mut().push(make_transformer("active"));
+    original_net
+        .transformers_3w_mut()
+        .push(make_transformer("active"));
     let original = DcPfInstance::from_network(original_net).unwrap();
     let mut operators = DcOperators::build(&original).unwrap();
     let sources_before = operators.analysis_sources().to_vec();
@@ -798,7 +799,9 @@ fn update_rejects_changed_three_winding_source_row_mapping_without_mutation() {
     let mut offline = make_transformer("offline");
     offline.in_service = false;
     changed_net.transformers_3w_mut().push(offline);
-    changed_net.transformers_3w_mut().push(make_transformer("active"));
+    changed_net
+        .transformers_3w_mut()
+        .push(make_transformer("active"));
     let changed = DcPfInstance::from_network(changed_net).unwrap();
 
     let error = operators.update(&changed).unwrap_err();
