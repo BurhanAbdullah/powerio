@@ -9222,6 +9222,46 @@ COMMENT
     }
 
     #[test]
+    fn three_winding_extra_ratings_keep_revision_specific_control_columns() {
+        let mut net = parse_psse(&three_winding_status_case()).unwrap();
+        let mut control = TransformerControl::new(TransformerControlMode::Voltage);
+        control.controlled_bus = Some(BusId(2));
+        control.tap_max = 1.08;
+        control.ntp = 17;
+        net.transformers_3w_mut()[0].windings[0].control = Some(control);
+        for revision in [34, 35] {
+            let emitted = write_psse_rev(&net, revision);
+            let lines: Vec<_> = emitted.text.lines().collect();
+            let header = lines
+                .iter()
+                .position(|line| line.starts_with("1, 2, 3, '"))
+                .unwrap();
+            let winding = fields(lines[header + 2]);
+            assert_eq!(winding.len(), 27);
+            close(winding[6].parse().unwrap(), 130.0);
+            close(winding[14].parse().unwrap(), 190.0);
+            let (node, rma, ntp) = if revision == 34 {
+                (26, 17, 21)
+            } else {
+                (17, 18, 22)
+            };
+            assert_eq!(winding[node], "0", "NOD at revision {revision}");
+            close(winding[rma].parse().unwrap(), 1.08);
+            assert_eq!(winding[ntp], "17", "NTP at revision {revision}");
+            let back = parse_psse(&emitted.text).unwrap();
+            assert_three_winding_ratings(&back);
+            close(
+                back.transformers_3w()[0].windings[0]
+                    .control
+                    .as_ref()
+                    .unwrap()
+                    .tap_max,
+                1.08,
+            );
+        }
+    }
+
+    #[test]
     fn three_winding_status_and_ratings_survive_rawx() {
         let net = parse_psse(&three_winding_status_case()).unwrap();
         let emitted = super::super::rawx::write_rawx(&net).unwrap();
