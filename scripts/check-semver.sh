@@ -54,9 +54,16 @@ for root in map(pathlib.Path, sys.argv[1:]):
     text = manifest.read_text()
     old_zip = 'zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }'
     new_zip = 'zip = { version = "9.0.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }'
-    if text.count(old_zip) != 1:
-        raise SystemExit(f"expected exactly one ZIP 8.6 dependency in {root}")
-    manifest.write_text(text.replace(old_zip, new_zip))
+    # Only the baseline normally needs this workaround for the yanked ZIP 8.6
+    # release. The current tree may already use ZIP 9.x (for example after
+    # the reader/fuzzer compatibility upgrade); leave that tree untouched.
+    if old_zip in text:
+        if text.count(old_zip) != 1:
+            raise SystemExit(f"expected at most one ZIP 8.6 dependency in {root}")
+        text = text.replace(old_zip, new_zip)
+        manifest.write_text(text)
+    elif 'zip = { version = "9.' not in text:
+        raise SystemExit(f"expected a supported ZIP 8.6 or 9.x dependency in {root}")
 
     source = root / "powerio-tx/src/format/cgmes/mod.rs"
     text = source.read_text()
