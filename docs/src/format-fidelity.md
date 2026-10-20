@@ -158,7 +158,11 @@ extension namespace `http://entsoe.eu/CIM/SchemaExtension/3/1#` (IEC TS
 61970-600-1/-2:2017); CGMES 3.0 uses `http://iec.ch/TC57/CIM100#` and
 `http://iec.ch/TC57/CIM100-European#` (IEC 61970-600-1/-2:2021). Both use the
 IEC 61970-552 CIMXML instance syntax, in which `rdf:ID` defines a record,
-`rdf:about` extends one, and `md:FullModel` heads each profile document. EQ is
+`rdf:about` extends one, and `md:FullModel` heads each profile document. A
+CIM100 document with no `md:FullModel` header and with per phase distribution
+classes (`ACLineSegmentPhase`, `EnergyConsumerPhase`, …) is distribution CIM
+and routes to `cim-dist` instead; see
+[Distribution networks](distribution.md#distribution-cim). EQ is
 required, and SSH, SV, and boundary profile data are used when present. SSH
 assignments take precedence over SV observations, so an SV shunt section count
 that differs from the SSH assignment is reported and not kept. A set with
