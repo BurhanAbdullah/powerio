@@ -175,7 +175,7 @@ impl std::error::Error for DyrError {}
 /// Parse PSS/E DYR text without assuming a closed list of model names.
 ///
 /// Records are delimited by slash outside quoted strings. Exclamation mark
-/// starts a line-comment outside quotes. Fields are comma-separated; single-
+/// starts a line-comment outside quotes. Fields are separated by commas or ASCII whitespace; single-
 /// quoted values may contain commas or slashes, and doubled single quotes
 /// represent one literal quote. Parameter tokens remain strings because their
 /// types and meanings depend on the model schema.
@@ -511,8 +511,8 @@ mod tests {
             "1, 'GENCLS', '1', 13.0000, 0.000000 /",
             "1 'GENCLS' '1' 13.0000 0.000000 /",
             "1, 'GENCLS', '1', 13.0000 0.000000 /",
-            "1\\t'GENCLS'\\t'1'\\t13.0000\\t0.000000 /",
-            "1, 'GENCLS',\\n  '1', 13.0000\\n 0.000000 /",
+            "1\t'GENCLS'\t'1'\t13.0000\t0.000000 /",
+            "1, 'GENCLS',\n  '1', 13.0000\n 0.000000 /",
         ];
         for source in cases {
             let case = parse_dyr(source).unwrap_or_else(|error| panic!("{source:?}: {error}"));
@@ -531,7 +531,10 @@ mod tests {
         let source = "1, 'USERMODEL', '1', 'alpha, beta', 1.0, , 3.0 /";
         let case = parse_dyr(source).unwrap();
         assert_eq!(case.records()[0].model_name(), "USERMODEL");
-        assert_eq!(case.records()[0].parameters(), ["alpha, beta", "1.0", "", "3.0"]);
+        assert_eq!(
+            case.records()[0].parameters(),
+            ["alpha, beta", "1.0", "", "3.0"]
+        );
         assert_eq!(case.to_dyr_string(), source);
 
         let quoted = "1, 'USERMODEL', '1', 'O''Brien, alpha', 1.0 /";
@@ -542,10 +545,13 @@ mod tests {
 
     #[test]
     fn long_blank_and_comment_prefixes_are_scanned_once() {
-        let source = format!("{}{}1 'GENCLS' '1' 13.0 0.0 /\\n", "\\n".repeat(100_000), "! comment\\n".repeat(100_000));
+        let source = format!(
+            "{}{}1 'GENCLS' '1' 13.0 0.0 /\n",
+            "\n".repeat(100_000),
+            "! comment\n".repeat(100_000)
+        );
         let case = parse_dyr(&source).expect("long blank/comment prefix");
         assert_eq!(case.records().len(), 1);
         assert_eq!(case.records()[0].line(), 200_001);
     }
-
 }
