@@ -74,7 +74,7 @@ def self_test() -> None:
             (root / "powerio-tx/src/format/cgmes").mkdir(parents=True)
             (root / "Cargo.toml").write_text(
                 f'zip = {{ version = "{version}", default-features = false, '
-                'features = ["deflate-flate2-zlib-rs"] } }\n'
+                'features = ["deflate-flate2-zlib-rs"] }\n'
             )
             (root / "powerio-tx/src/format/cgmes/mod.rs").write_text("// fixture\n")
 
