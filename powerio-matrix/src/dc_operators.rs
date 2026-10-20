@@ -328,14 +328,26 @@ impl DcOperators {
                 )
             })
             .collect();
+        // Expanded electrical branches alone do not identify their source
+        // rows: inserting an out-of-service three-winding transformer can
+        // shift transformer_row while leaving every expanded branch unchanged.
+        // Compare the source mapping for every operator column before touching
+        // any cached injections, so a rejected update leaves operators intact.
+        let current_sources = crate::opf::analysis_branch_sources(instance.network());
+        let source_mappings_match = self
+            .branch_rows
+            .iter()
+            .zip(&self.analysis_sources)
+            .all(|(&row, saved)| current_sources.get(row) == Some(saved));
         if network.base_mva().to_bits() != self.network_base_mva_bits
             || network.is_normalized() != self.network_normalized
             || instance.branch_susceptance_formula() != self.branch_susceptance_formula
             || branch_signature != self.analysis_branch_signature
+            || !source_mappings_match
         {
             return Err(Error::new(
                 &codes::BUILD_INSTANCE_SHAPE_MISMATCH,
-                "the network base, normalization, branch parameters, topology, or DC formula differ from those used to build the DC operators; rebuild the operators before updating",
+                "the network base, normalization, branch parameters, topology, source mappings, or DC formula differ from those used to build the DC operators; rebuild the operators before updating",
             ));
         }
         self.refresh_injections(instance, network.base_mva())
