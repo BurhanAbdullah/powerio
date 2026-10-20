@@ -192,6 +192,13 @@
 
 ### Changed results
 
+- Normalization keeps the surviving connection of a three winding transformer
+  when one terminal bus is removed. The removed winding is taken out of
+  service; fewer than two surviving windings still drops the transformer.
+  Newly disabled windings report `CANONICALIZE.NORMALIZE.WINDING_TAKEN_OUT`.
+  This brings forward the focused correction from #596 without its island
+  policy changes.
+
 - PSS/E three winding transformers keep each winding's status and all
   twelve winding ratings. The three winding `STAT` codes 2, 3, and 4 take only
   winding 2, 3, or 1 out of service, but the RAW and RAWX readers read every
