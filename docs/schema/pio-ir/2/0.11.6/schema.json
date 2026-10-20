@@ -850,7 +850,7 @@
               "type": "string"
             }
           ],
-          "default": 60,
+          "default": 60.0,
           "description": "System base frequency in hertz (50 or 60). Threaded through the formats\nthat record it (PSS/E `BASFRQ`, pandapower `f_hz`) and defaulted to\n[`DEFAULT_BASE_FREQUENCY`] for the rest. Load-bearing for any\nreactance↔henry conversion (pandapower line charging) and reported as a\nfidelity loss when a non-default value writes to a format with no\nfrequency field."
         },
         "base_mva": {
