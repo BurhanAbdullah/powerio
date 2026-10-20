@@ -18,7 +18,7 @@ history, and extensions. A current document begins like this:
 
 Use `serialize` to produce it and `deserialize` to read it. PowerIO IR is not
 one of the grid exchange formats. MATPOWER, PSS/E, XIIDM, CGMES, OpenDSS, PMD
-JSON, BMOPF, and the other formats in the format registry exist to exchange
+JSON, BMOPF, distribution CIM, and the other formats in the format registry exist to exchange
 power system data with other tools, and they enter through `parse` and leave
 through `emit`. PowerIO IR preserves PowerIO types and module records instead,
 and it is deliberately left out of grid exchange format discovery. Use it when
@@ -26,8 +26,8 @@ both sides consume PowerIO values, including calculation instances, solutions,
 time series, and scenario sets.
 
 The generated JSON Schema is checked in at
-`docs/schema/pio-ir/2/0.11.5/schema.json` and served from
-`https://powerio.dev/schema/pio-ir/2/0.11.5/schema.json`. That schema, the
+`docs/schema/pio-ir/2/0.11.6/schema.json` and served from
+`https://powerio.dev/schema/pio-ir/2/0.11.6/schema.json`. That schema, the
 serializer, and the deserializer are all tested from the same Rust types.
 `docs/schema/README.md` lists the earlier `pio-package` and
 `powerio.module` documents as one history under `pio-ir`.
@@ -179,18 +179,20 @@ only when an existing representation changes incompatibly. `producer.version` re
 that wrote the document; the reader reports it and ignores it when deciding
 compatibility.
 
-PowerIO 0.11.5 keeps IR version 2. `powerio::IR_VERSION` and
+PowerIO 0.11.6 keeps IR version 2. `powerio::IR_VERSION` and
 `powerio::IR_MIN_VERSION` are both `2`. Additive structural types do not change
 the IR version: older readers continue to accept existing types and reject
-types they do not implement. An incompatible change to an existing record's
+types they do not implement. A list of allowed names can gain a name the same
+way; an older reader rejects a document that uses the new name. An incompatible change to an existing record's
 representation or meaning requires a version bump and a release decision.
 
 Schema snapshots describe the structural types available in a release.
 `pio-ir/2/schema.json` is the frozen 0.11.0 catalog,
 `pio-ir/2/0.11.1/schema.json` adds the LinDist3Flow OPF instance and solution
 types, `pio-ir/2/0.11.3/schema.json` adds the three PSS/E contingency
-analysis files, and `pio-ir/2/0.11.4/schema.json` adds the fixed-dispatch
-LinDist3Flow instance and solution types.
+analysis files, `pio-ir/2/0.11.4/schema.json` adds the fixed-dispatch
+LinDist3Flow instance and solution types, and `pio-ir/2/0.11.6/schema.json`
+adds `cim-dist` to the distribution source formats.
 The release in that path identifies the snapshot, not another document version.
 Patch releases without catalog changes can reuse the same snapshot.
 A refused document is reported with the schema name,
