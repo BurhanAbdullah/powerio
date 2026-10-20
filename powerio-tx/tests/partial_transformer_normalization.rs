@@ -76,5 +76,8 @@ fn a_removed_live_terminal_reports_the_winding_change() {
 #[test]
 fn fewer_than_two_live_windings_couple_nothing() {
     let net = case([true, true, false], 1);
-    assert!(net.to_normalized().unwrap().transformers_3w().is_empty());
+    assert_eq!(
+        net.to_normalized().unwrap().transformers_3w().as_slice(),
+        []
+    );
 }
