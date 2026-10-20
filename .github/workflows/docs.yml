@@ -1,18 +1,31 @@
 name: Docs
 
-# Build and validate documentation on PRs. Publication is in docs-deploy.yml,
-# which is only triggered by main pushes or explicit manual dispatch.
+# Build the workspace rustdoc and publish it to GitHub Pages. This renders all
+# eight library crates, including powerio-capi and powerio-py (publish = false),
+# whose //! docs docs.rs would never host. docs.rs takes over for the published
+# crates (powerio, powerio-core, powerio-matrix, powerio-prob, powerio-dist,
+# retired crates) once they reach crates.io.
+# PRs build the docs too (so a broken intra-doc link fails review, not main),
+# but only push to main / dispatch deploys to Pages; see the `deploy` gate.
 on:
+  push:
+    branches: [ "main" ]
+  # No branch filter: stacked PRs must run this too (see rust.yml).
   pull_request:
-  workflow_call:
+  workflow_dispatch:
 
 permissions:
   contents: read
   pages: write
   id-token: write
 
+# Serialize per ref. On main, queue rather than cancel: a cancelled in-flight
+# Pages deployment can leave the backend rejecting the next deployment
+# ("Deployment failed, try again later"), so successive main pushes must each
+# deploy in order. A pull request run never deploys (see the `deploy` gate),
+# so a superseded one is cancelled like the other pull request workflows.
 concurrency:
-  group: pages-build-${{ github.ref }}
+  group: pages-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -204,3 +217,14 @@ jobs:
       with:
         path: target/doc
 
+  deploy:
+    needs: build
+    # PR runs build to catch doc breakage but never publish; only main / dispatch deploy.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - id: deployment
+      uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

@@ -35,7 +35,7 @@ fi
 
 echo "comparing the publishable crates at $version against $baseline"
 # cargo-semver-checks runs cargo update in synthetic consumers generated from
-# the current checkout as well as the baseline. Since ZIP 8.6.0 was yanked and has security advisories,
+# the current checkout as well as the baseline. Since ZIP 8.6.0 was yanked,
 # those consumers cannot resolve the current workspace's ^8.6 dependency.
 # Apply the same narrow compatibility adjustment to temporary source archives
 # on both sides of the comparison; neither the real checkout nor the published
@@ -45,64 +45,10 @@ current_root=$(mktemp -d)
 trap 'rm -rf "$baseline_root" "$current_root"' EXIT
 git archive "$baseline" | tar -x -C "$baseline_root"
 git archive HEAD | tar -x -C "$current_root"
-python3 - "$baseline_root" "$current_root" <<'PY'
-import pathlib
-import sys
-
-for root in map(pathlib.Path, sys.argv[1:]):
-    manifest = root / "Cargo.toml"
-    text = manifest.read_text()
-    old_zip = 'zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }'
-    new_zip = 'zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }'
-    if old_zip in text:
-        if text.count(old_zip) != 1:
-            raise SystemExit(f"expected exactly one ZIP 8.6 dependency in {root}")
-        text = text.replace(old_zip, new_zip)
-    elif new_zip not in text:
-        raise SystemExit(f"expected ZIP 8.6 or 9.0.5 dependency in {root}")
-    manifest.write_text(text)
-
-    source = root / "powerio-tx/src/format/cgmes/mod.rs"
-    text = source.read_text()
-    replacements = [
-        (
-            'let raw_name = file.name().to_string();',
-            '''let raw_name = file
-            .name()
-            .map_err(|error| {
-                format_error(format!(
-                    "cannot decode entry {index} name in {archive_name}: {error}"
-                ))
-            })?
-            .into_owned();''',
-        ),
-        (
-            '''"archive {archive_name} is refused as malformed: entry {} lies outside the archive's entry data",
-                    entry.name()''',
-            '''"archive {archive_name} is refused as malformed: entry {index} lies outside the archive's entry data"''',
-        ),
-        (
-            'let name = |index| archive.name_for_index(index).unwrap_or_default();',
-            '''let name = |index| {
-            archive
-                .name_for_index(index)
-                .and_then(std::result::Result::ok)
-                .map(std::borrow::Cow::into_owned)
-                .unwrap_or_default()
-        };''',
-        ),
-    ]
-    for old_anchor, new_anchor in replacements:
-        if old_anchor not in text:
-            # The current checkout may already carry the ZIP 9 compatibility
-            # code. Only the baseline is expected to require these edits.
-            continue
-        if text.count(old_anchor) != 1:
-            raise SystemExit(f"expected exactly one ZIP API compatibility anchor in {root}: {old_anchor!r}")
-        text = text.replace(old_anchor, new_anchor)
-    source.write_text(text)
-PY
-
+# Exercise the old-baseline/new-current dependency combination explicitly, then
+# apply the same preparation to the isolated source archives.
+python3 scripts/semver_zip_compat.py --self-test
+python3 scripts/semver_zip_compat.py "$baseline_root" "$current_root"
 # Run SemVer against the isolated current checkout. cargo-semver-checks creates
 # synthetic consumer packages from this workspace, so running it against the
 # original checkout would still attempt to resolve the yanked ^8.6 dependency.

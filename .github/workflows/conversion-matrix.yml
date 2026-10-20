@@ -32,7 +32,9 @@ env:
 
 jobs:
   report:
-    # Run the conversion matrix for every PR, including Dependabot updates.
+    # A Dependabot pull request does not run the matrix: the job takes 3 to 10
+    # minutes and finishes by posting its report as a comment on the pull request.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,65 +50,61 @@ jobs:
         path: ${{ env.POWERIO_CONVERSION_MATRIX_DETAILS }}
         if-no-files-found: ignore
     - name: Comment on PR
-      if: always()
+      if: always() && github.event.pull_request.head.repo.full_name == github.repository
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       with:
         script: |
-          if (context.payload.pull_request.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
-            core.info("PR originates from a fork; the report remains available in the workflow artifacts.");
+          const fs = require("fs");
+          const marker = "<!-- powerio-conversion-matrix-report -->";
+          const reportPath = process.env.POWERIO_CONVERSION_MATRIX_REPORT;
+          const detailsPath = process.env.POWERIO_CONVERSION_MATRIX_DETAILS;
+          let body;
+          if (fs.existsSync(reportPath)) {
+            body = fs.readFileSync(reportPath, "utf8");
           } else {
-            const fs = require("fs");
-            const marker = "<!-- powerio-conversion-matrix-report -->";
-            const reportPath = process.env.POWERIO_CONVERSION_MATRIX_REPORT;
-            const detailsPath = process.env.POWERIO_CONVERSION_MATRIX_DETAILS;
-            let body;
-            if (fs.existsSync(reportPath)) {
-              body = fs.readFileSync(reportPath, "utf8");
-            } else {
-              body = `${marker}\n\n## Conversion Matrix\n\nMatrix generation failed before writing the report. See the workflow logs.`;
+            body = `${marker}\n\n## Conversion Matrix\n\nMatrix generation failed before writing the report. See the workflow logs.`;
+          }
+
+          const issue_number = context.payload.pull_request.number;
+          const { owner, repo } = context.repo;
+          const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+          if (fs.existsSync(detailsPath)) {
+            let detailsUrl = runUrl;
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              owner,
+              repo,
+              run_id: context.runId,
+              per_page: 100,
+            });
+            const detailsArtifact = artifacts.find((artifact) =>
+              artifact.name === "conversion-matrix-warning-details"
+            );
+            if (detailsArtifact) {
+              detailsUrl = `${runUrl}/artifacts/${detailsArtifact.id}`;
             }
-  
-            const issue_number = context.payload.pull_request.number;
-            const { owner, repo } = context.repo;
-            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
-            if (fs.existsSync(detailsPath)) {
-              let detailsUrl = runUrl;
-              const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
-                owner,
-                repo,
-                run_id: context.runId,
-                per_page: 100,
-              });
-              const detailsArtifact = artifacts.find((artifact) =>
-                artifact.name === "conversion-matrix-warning-details"
-              );
-              if (detailsArtifact) {
-                detailsUrl = `${runUrl}/artifacts/${detailsArtifact.id}`;
-              }
-              body += `\n\nFull warning details: [download \`conversion-matrix-warning-details\`](${detailsUrl}) for this workflow run.`;
-            }
-            const comments = await github.paginate(github.rest.issues.listComments, {
+            body += `\n\nFull warning details: [download \`conversion-matrix-warning-details\`](${detailsUrl}) for this workflow run.`;
+          }
+          const comments = await github.paginate(github.rest.issues.listComments, {
+            owner,
+            repo,
+            issue_number,
+            per_page: 100,
+          });
+          const existing = comments.find((comment) =>
+            comment.user?.type === "Bot" && comment.body?.includes(marker)
+          );
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner,
+              repo,
+              comment_id: existing.id,
+              body,
+            });
+          } else {
+            await github.rest.issues.createComment({
               owner,
               repo,
               issue_number,
-              per_page: 100,
+              body,
             });
-            const existing = comments.find((comment) =>
-              comment.user?.type === "Bot" && comment.body?.includes(marker)
-            );
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner,
-                repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number,
-                body,
-              });
-            }
           }
