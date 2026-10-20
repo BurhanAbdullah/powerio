@@ -8,7 +8,7 @@ network crates do not depend on each other.
 powerio-core          Source, FormatId, Diagnostic, Error, PioModule<T>,
                       TimePoint, TimeSeries<T>, ScenarioSet<T>, Destination
 ├── powerio-tx        BalancedNetwork and the balanced readers and writers
-└── powerio-dist      MulticonductorNetwork and the OpenDSS, PMD, and BMOPF converters
+└── powerio-dist      MulticonductorNetwork and the OpenDSS, PMD, BMOPF, and CIM converters
 
 powerio-prob          operating points, updates, the seven instances, the eight
                       solutions, and GO Challenge 3, OPFData, and BMOPF assembly;
