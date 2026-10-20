@@ -220,7 +220,7 @@ jobs:
   deploy:
     needs: build
     if: always()
-    # Keep the check visible on PRs, but never create a production deployment
+    # Keep this check visible on PRs, but never create a production deployment
     # or request the protected github-pages environment from an unmerged branch.
     runs-on: ubuntu-latest
     environment:

@@ -21,7 +21,10 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 use sprs::CsMat;
 
-// Keep the many short-lived parser allocations in the extension's own heap.
+// Keep the many short-lived parser allocations in the extension's own heap
+// when the native-build mimalloc feature is enabled. Linux/aarch64 wheels omit
+// this allocator until libmimalloc-sys supports the manylinux toolchain.
+#[cfg(feature = "mimalloc-allocator")]
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -1428,7 +1431,8 @@ impl PyMulticonductorNetwork {
         self.inner().name().as_deref()
     }
 
-    /// Format the case was parsed from (`dss`, `pmd-json`, `bmopf-json`).
+    /// Format the case was parsed from (`dss`, `pmd-json`, `bmopf-json`,
+    /// `cim-dist`); `None` for a network built in code.
     fn source_format(&self) -> Option<&'static str> {
         self.inner().source_format().map(|f| f.name())
     }

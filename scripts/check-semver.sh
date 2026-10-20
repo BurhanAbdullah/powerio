@@ -3,13 +3,13 @@
 # newest stable release tag at or below the workspace version with
 # cargo-semver-checks.
 #
-# zip 8.6.0, used by the v0.11.x release line, has been yanked. The SemVer
-# tool builds temporary consumer manifests and runs cargo update, which cannot
-# resolve that yanked version. For the isolated comparison snapshots only,
-# use zip 9.0.3 and adapt the three private archive-name calls whose return
-# types changed in zip 9. This keeps the public API comparison enabled while
-# avoiding a dependency-resolution failure unrelated to the public API.
-# The repository manifests, source files, and lockfile are not rewritten.
+# A release line takes compatible fixes, performance work, and additive change;
+# a break in the public Rust API goes into the next minor release
+# (docs/src/scope-0.11.md). cargo-semver-checks reads the release type off the
+# version difference, so a branch that keeps the workspace version must keep
+# the API, and a branch that bumps it to the next minor may break it. Taking
+# the newest tag at or below the workspace version keeps a maintenance branch
+# on its own line after a later minor is tagged.
 #
 # The tags must be present: a shallow clone fails here rather than comparing
 # against nothing. Extra arguments go to cargo-semver-checks.
@@ -33,54 +33,25 @@ if [ -z "$baseline" ]; then
     exit 1
 fi
 
-baseline_root=$(mktemp -d "${TMPDIR:-/tmp}/powerio-semver-baseline.XXXXXX")
-current_root=$(mktemp -d "${TMPDIR:-/tmp}/powerio-semver-current.XXXXXX")
+echo "comparing the publishable crates at $version against $baseline"
+# cargo-semver-checks runs cargo update in synthetic consumers generated from
+# the current checkout as well as the baseline. Since ZIP 8.6.0 was yanked,
+# those consumers cannot resolve the current workspace's ^8.6 dependency.
+# Apply the same narrow compatibility adjustment to temporary source archives
+# on both sides of the comparison; neither the real checkout nor the published
+# API is changed by this workaround.
+baseline_root=$(mktemp -d)
+current_root=$(mktemp -d)
 trap 'rm -rf "$baseline_root" "$current_root"' EXIT
 git archive "$baseline" | tar -x -C "$baseline_root"
 git archive HEAD | tar -x -C "$current_root"
-
-python3 - "$baseline_root" "$current_root" <<'PY'
-from pathlib import Path
-import sys
-
-for root_name in sys.argv[1:]:
-    root = Path(root_name)
-    manifest_path = root / "Cargo.toml"
-    manifest = manifest_path.read_text()
-    old_dependency = 'zip = { version = "8.6",'
-    new_dependency = 'zip = { version = "9.0.3",'
-    if old_dependency not in manifest:
-        raise SystemExit(f"expected zip 8.6 workspace dependency in {manifest_path}")
-    manifest_path.write_text(manifest.replace(old_dependency, new_dependency, 1))
-
-    source_path = root / "powerio-tx/src/format/cgmes/mod.rs"
-    source = source_path.read_text()
-    replacements = (
-        (
-            'let raw_name = file.name().to_string();',
-            'let raw_name = file.name().map_err(|error| format_error(format!("cannot read entry name from {archive_name}: {error}")))?.into_owned();',
-        ),
-        (
-            '                    entry.name()',
-            '                    entry.name().map(|name| name.into_owned()).unwrap_or_else(|_| format!("<entry {index}>"))',
-        ),
-        (
-            '        let name = |index| archive.name_for_index(index).unwrap_or_default();',
-            '        let name = |index| archive.name_for_index(index).and_then(|result| result.ok()).map(|name| name.into_owned()).unwrap_or_default();',
-        ),
-    )
-    for old, new in replacements:
-        count = source.count(old)
-        if count != 1:
-            raise SystemExit(f"expected exactly one occurrence of {old!r} in {source_path}; found {count}")
-        source = source.replace(old, new, 1)
-    source_path.write_text(source)
-
-print("prepared isolated zip-9 snapshots with private API compatibility adjustments")
-PY
-
-echo "comparing publishable crates at $version against $baseline using isolated snapshots"
-# powerio-py and powerio-capi are publish = false; exclude only those crates.
+# Exercise the old-baseline/new-current dependency combination explicitly, then
+# apply the same preparation to the isolated source archives.
+python3 scripts/semver_zip_compat.py --self-test
+python3 scripts/semver_zip_compat.py "$baseline_root" "$current_root"
+# Run SemVer against the isolated current checkout. cargo-semver-checks creates
+# synthetic consumer packages from this workspace, so running it against the
+# original checkout would still attempt to resolve the yanked ^8.6 dependency.
 cd "$current_root"
 cargo semver-checks check-release --workspace \
     --exclude powerio-py --exclude powerio-capi \
