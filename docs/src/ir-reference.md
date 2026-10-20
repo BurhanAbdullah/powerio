@@ -3,7 +3,7 @@
 This page lists every structural value type in the PowerIO IR, field by
 field: each field's type, unit, and sign convention, the invariant the
 deserializer or the constructors enforce, and what a reader uses when the
-field is absent. The generated schema at `docs/schema/pio-ir/2/0.11.5/schema.json`
+field is absent. The generated schema at `docs/schema/pio-ir/2/0.11.6/schema.json`
 is the machine form of the same definitions. To keep the two from drifting
 apart, `powerio/tests/ir_reference.rs` reads this page and checks in both
 directions that each table lists the same fields the schema defines for its
@@ -440,6 +440,14 @@ Schema definition: `Transformer3W`.
 | `uid` | string or null | | | unique within `transformers_3w` | assigned at serialization |
 | `extras` | object | | | | required |
 
+Two `extras` entries carry per winding data, in winding order. Each is present
+only when it differs from its default. `winding_in_service` holds three
+booleans; a winding that is out leaves the other two coupled through the star
+point, and an absent entry means every winding is in service.
+`winding_rating_sets` holds three arrays of `{name, rate_mva}` objects with the
+MVA ratings beyond `rate_a`, `rate_b`, and `rate_c`, named as in
+`Branch.rating_sets`.
+
 Schema definition: `Winding`.
 
 | field | type | unit | sign | invariant | if absent |
@@ -612,7 +620,7 @@ Schema definition: `MulticonductorNetwork`.
 |---|---|---|---|---|---|
 | `name` | string or null | | | | null |
 | `base_frequency` | float | Hz | | positive | required |
-| `source_format` | token `dss`, `bmopf-json`, `pmd-json`, or null | | | | null |
+| `source_format` | token `dss`, `bmopf-json`, `pmd-json`, `cim-dist`, or null | | | | null |
 | `buses` | array of `DistBus` | | | `id` unique | required |
 | `linecodes` | array of `DistLineCode` | | | `name` unique | required |
 | `lines` | array of `DistLine` | | | `bus_from`, `bus_to` name buses; `linecode` names a line code | required |
