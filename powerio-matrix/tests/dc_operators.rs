@@ -759,3 +759,50 @@ fn update_rejects_changed_three_winding_impedance() {
     let error = operators.update(&changed_instance).unwrap_err();
     assert!(error.to_string().contains("branch parameters"), "{error}");
 }
+
+
+#[test]
+fn update_rejects_changed_three_winding_source_row_mapping_without_mutation() {
+    let buses = vec![
+        Bus::new(BusId(1), BusType::Ref, 230.0),
+        Bus::new(BusId(2), BusType::Pq, 230.0),
+        Bus::new(BusId(3), BusType::Pq, 230.0),
+    ];
+    let make_transformer = |uid: &str| {
+        let mut transformer = Transformer3W::new(
+            [
+                Winding::new(BusId(1)),
+                Winding::new(BusId(2)),
+                Winding::new(BusId(3)),
+            ],
+            [
+                Impedance::new(0.0, 0.2, 100.0),
+                Impedance::new(0.0, 0.3, 100.0),
+                Impedance::new(0.0, 0.4, 100.0),
+            ],
+        );
+        transformer.uid = Some(uid.into());
+        transformer
+    };
+
+    let mut original_net =
+        BalancedNetwork::in_memory("source-row-mapping", 100.0, buses.clone(), Vec::new());
+    original_net.transformers_3w_mut().push(make_transformer("active"));
+    let original = DcPfInstance::from_network(original_net).unwrap();
+    let mut operators = DcOperators::build(&original).unwrap();
+    let sources_before = operators.analysis_sources().to_vec();
+    let susceptances_before = operators.calc_branch_susceptances().to_vec();
+
+    let mut changed_net =
+        BalancedNetwork::in_memory("source-row-mapping", 100.0, buses, Vec::new());
+    let mut offline = make_transformer("offline");
+    offline.in_service = false;
+    changed_net.transformers_3w_mut().push(offline);
+    changed_net.transformers_3w_mut().push(make_transformer("active"));
+    let changed = DcPfInstance::from_network(changed_net).unwrap();
+
+    let error = operators.update(&changed).unwrap_err();
+    assert!(error.to_string().contains("source mappings"), "{error}");
+    assert_eq!(operators.analysis_sources(), sources_before);
+    assert_eq!(operators.calc_branch_susceptances(), susceptances_before);
+}
