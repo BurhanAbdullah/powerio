@@ -24,6 +24,11 @@
   Invalid winding maps and voltage ratios fail instead of silently omitting
   equipment. Leakage, non-WYE connections, implicit neutral impedances, core
   losses and tap controls remain outside this matrix builder's supported profile.
+- Preserve BMOPF per-coil capacitor ratings as exact terminal shunts shared by
+  matrix and distribution preparation consumers. Retain custom open-delta
+  terminal maps and n-winding apparent-power bounds; edited winding maps cannot
+  be overwritten by retained source metadata during emission. Scalar single-coil
+  IBR bounds are retained, including zero available PV power.
 
 - Remove the paired release workflows and scripts, which were never
   activated. A release stays a tag and a published draft, and PowerIO.jl
