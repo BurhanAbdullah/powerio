@@ -163,3 +163,16 @@ fn filtered_merges_keep_source_identities_in_diagnostics_and_results() {
     );
     assert_eq!(merge.source.switches(), net.switches());
 }
+
+#[test]
+fn per_island_normalization_also_rejects_an_incomplete_switch_merge() {
+    let mut net = network();
+    net.switches_mut()
+        .push(Switch::new(BusId(1), BusId(2), true));
+    let settings = NormalizeSettings::default()
+        .with_island_references(powerio_tx::IslandReferencePolicy::PerIsland);
+    assert_closed(
+        net.to_normalized_with(&settings).unwrap_err(),
+        (0, BusId(1), BusId(2), 1),
+    );
+}
