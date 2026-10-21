@@ -1038,7 +1038,9 @@ impl BalancedNetwork {
         for (&source, &merged) in source_rows.iter().zip(&merge.switch_rows) {
             switch_rows[source] = merged;
             if let Some(row) = merged {
-                merge.network.switches_mut()[row].uid = self.switches()[source].uid.clone();
+                merge.network.switches_mut()[row]
+                    .uid
+                    .clone_from(&self.switches()[source].uid);
             }
         }
         for removed in &mut merge.removed_switches {
