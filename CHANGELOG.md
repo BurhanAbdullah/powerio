@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- PSS/E transformer impedance correction tables are read, retained and freshly
+  written. `apply_impedance_correction` interpolates their complex factors
+  from a cached nominal impedance, so repeated application is idempotent.
+  Original table ranges select angle versus ratio; ratio points always use
+  bus-base per-unit winding ratios, independently of CW=1/2/3. Two-winding
+  tables follow winding 1 while accounting for the branch's t1/t2 tap.
+  Fresh output preserves that function and table classification, choosing an
+  equivalent nonunit winding 2 when needed. Three-winding ZCOD=0 corrects
+  star impedances; ZCOD=1 corrects Z12/Z23/Z31 at the sole adjustable winding.
+  Ambiguous ZCOD=1 controls are refused. RAW33/34 output freezes ZCOD=1 at
+  its current setting with a diagnostic. Partial-winding statuses and all
+  twelve ratings remain intact. Apply correction before bus merging or
+  switch normalization so folded admittance uses the corrected impedance.
+  RAWX table support remains deferred and reports dropped corrections.
+  Tables and nominal caches live in extras; the IR schema is unchanged.
 - Island cuts preserve normalized power and angle units. Normalization projects
   detailed connectivity alongside removed buses and equipment, including
   unsupplied islands and dead-winding stubs, while retaining row provenance.
