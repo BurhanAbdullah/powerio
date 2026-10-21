@@ -99,7 +99,8 @@ pub enum Error {
     /// switches would leave apart: raised by
     /// [`IndexedNetwork::check_closed_switches`](crate::IndexedNetwork::check_closed_switches)
     /// and by normalization under
-    /// [`ClosedSwitchPolicy::Refuse`](crate::ClosedSwitchPolicy::Refuse).
+    /// [`ClosedSwitchPolicy::Refuse`](crate::ClosedSwitchPolicy::Refuse) or
+    /// when its requested merge leaves an eligible closed switch in place.
     #[error(
         "{closed} closed switch(es) join distinct buses (the first, switch row {row}, joins buses {from} and {to}), and this calculation does not model switches; merge their buses first: to_normalized under the default ClosedSwitchPolicy::Merge or BusMergeRule::closed_switches() with merge_buses in Rust, to_normalized(closed_switches=\"merge\") or merge_buses(closed_switches=True) in Python, or --merge-buses switches on the command line"
     )]

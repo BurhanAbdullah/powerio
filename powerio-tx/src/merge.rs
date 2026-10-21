@@ -97,18 +97,18 @@ impl std::fmt::Display for ZeroImpedanceRule {
 }
 
 /// What happens to the line charging and line shunts of a branch the merge
-/// removes.
+/// removes. A bypassed transformer's series equivalent is always retained.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MergedCharging {
     /// Fold each removed in-service branch's terminal admittances (`B/2` per
-    /// end and any line shunts) onto the survivor as one fixed shunt. Both
-    /// ends sit at the survivor, so the merged network draws what the
-    /// unmerged one did; on a large PSS/E case this reproduces the stated
-    /// solution's reactive balance at every merged group.
+    /// end and any line shunts), with the from end divided by the tap squared,
+    /// onto the survivor as one fixed shunt together with the series equivalent.
+    /// This preserves `Yff + Yft + Ytf + Ytt` at equal terminal voltages.
     #[default]
     FoldToShunt,
-    /// Drop the terminal admittances with the branch.
+    /// Drop the terminal charging admittances with the branch, while retaining
+    /// any series equivalent caused by a nonunity tap or phase shift.
     Drop,
 }
 
@@ -329,10 +329,11 @@ pub struct BusMerge {
     /// For each source switch row, its row in the merged network, or `None`
     /// when the merge removed it.
     pub switch_rows: Vec<Option<usize>>,
-    /// Rows of the merged network's shunt table holding the charging of a
-    /// removed branch under [`MergedCharging::FoldToShunt`], one per
-    /// in-service removed branch with nonzero terminal admittance, after the
-    /// source's own shunts. Each carries the `uid` `merged-charging:<branch>`.
+    /// Rows of the merged network's shunt table holding removed branches'
+    /// equivalent admittances, one per in-service removed branch with a
+    /// nonzero equivalent, after the source's own shunts. This includes series
+    /// equivalents even under [`MergedCharging::Drop`]. Each carries the
+    /// `uid` `merged-charging:<branch>`.
     pub charging_shunts: Vec<usize>,
     /// What the merge changed or could not do.
     pub diagnostics: Vec<Diagnostic>,
@@ -593,39 +594,61 @@ fn remap_detailed_connectivity(
     ))
 }
 
-/// Append one fixed shunt per in-service removed branch that carries terminal
-/// admittance, at its survivor, and return their rows. The shunt holds the
-/// branch's total terminal conductance and susceptance in MW and MVAr at
-/// 1 per unit, the units [`Shunt`](crate::Shunt) states.
-fn fold_charging(
+/// Append the one-port equivalent of each removed in-service branch. For
+/// equal terminal voltages its series term is y * |1/a - 1|², where a is the
+/// complex tap. Terminal charging adds y_fr / tap² + y_to when requested.
+#[allow(clippy::float_cmp)] // only an exactly nominal ideal connection has a finite equivalent
+fn fold_admittance(
     network: &mut BalancedNetwork,
     source: &BalancedNetwork,
     removed: &[RemovedBranch],
-) -> Vec<usize> {
+    charging: MergedCharging,
+) -> Result<Vec<usize>> {
     let scale = if source.is_normalized() {
         1.0
     } else {
         source.base_mva()
     };
-    let shunts: Vec<crate::network::Shunt> = removed
-        .iter()
-        .filter(|removed| removed.in_service)
-        .filter_map(|removed| {
-            let charging = source.branches()[removed.row].calc_terminal_charging();
-            let (g, b) = (charging.g_fr + charging.g_to, charging.b_fr + charging.b_to);
-            (g != 0.0 || b != 0.0).then(|| {
-                let mut shunt = crate::network::Shunt::new(removed.survivor, g * scale, b * scale);
-                shunt.uid = Some(format!("merged-charging:{}", removed.identity));
-                shunt
-            })
-        })
-        .collect();
+    let mut shunts = Vec::new();
+    for removed in removed.iter().filter(|removed| removed.in_service) {
+        let branch = &source.branches()[removed.row];
+        let tap = branch.calc_divisible_tap(removed.row)?;
+        let shift = if source.is_normalized() {
+            branch.shift
+        } else {
+            branch.shift.to_radians()
+        };
+        let (sin, cos) = shift.sin_cos();
+        // The squared norm avoids cancellation between the four Y entries
+        // for a near-unity tap. It is exactly zero for a nominal jumper.
+        let factor = (tap.recip() - cos).powi(2) + sin.powi(2);
+        let (mut g, mut b) = match branch.calc_series_admittance(removed.row)? {
+            Some((g, b)) => (g * factor, b * factor),
+            None if tap == 1.0 && shift == 0.0 => (0.0, 0.0),
+            None => return Err(Error::ZeroImpedance { row: removed.row }),
+        };
+        if charging == MergedCharging::FoldToShunt {
+            let terminal = branch.calc_terminal_charging();
+            let inverse_tap_squared = tap.recip().powi(2);
+            g += terminal.g_fr * inverse_tap_squared + terminal.g_to;
+            b += terminal.b_fr * inverse_tap_squared + terminal.b_to;
+        }
+        let (g, b) = (g * scale, b * scale);
+        if !g.is_finite() || !b.is_finite() {
+            return Err(Error::NonFiniteSusceptance { row: removed.row });
+        }
+        if g != 0.0 || b != 0.0 {
+            let mut shunt = crate::network::Shunt::new(removed.survivor, g, b);
+            shunt.uid = Some(format!("merged-charging:{}", removed.identity));
+            shunts.push(shunt);
+        }
+    }
     let first = network.shunts().len();
     let rows = (first..first + shunts.len()).collect();
     if !shunts.is_empty() {
         network.shunts_mut().extend(shunts);
     }
-    rows
+    Ok(rows)
 }
 
 /// Bus kind importance: the survivor of a group takes the strongest kind of
@@ -675,8 +698,9 @@ impl BalancedNetwork {
     /// The merge removes the selected elements and any other branch or
     /// switch whose two buses it joined; [`BusMerge::removed_branches`] and
     /// [`BusMerge::removed_switches`] list each with its source row and
-    /// ratings. A removed in-service branch's line charging and line shunts
-    /// become a fixed shunt at the survivor ([`MergedCharging`]). An HVDC line whose two ends merged stays, with a diagnostic.
+    /// ratings. A removed in-service branch's complete equivalent admittance
+    /// becomes a fixed shunt at the survivor; [`MergedCharging`] controls only
+    /// its terminal charging. An HVDC line whose two ends merged stays, with a diagnostic.
     /// An element whose merge would join two windings of one three winding
     /// transformer stays in place and is reported. Detailed connectivity
     /// follows the survivors; when the merge joins buses its hierarchy keeps
@@ -691,6 +715,10 @@ impl BalancedNetwork {
     /// [`Error::BusMergeRule`] for a threshold that is negative or not
     /// finite. [`Error::UnknownBus`] when a selected element names a bus the
     /// network does not declare.
+    /// [`Error::ZeroImpedance`] when bypassing an ideal transformer with a
+    /// nonunity tap or phase shift, which has no finite shunt equivalent.
+    /// [`Error::DegenerateTap`] or [`Error::NonFiniteSusceptance`] when a
+    /// removed branch's equivalent cannot be represented finitely.
     #[allow(clippy::too_many_lines)] // one stanza per stage, in order
     pub fn merge_buses(&self, rule: &BusMergeRule) -> Result<BusMerge> {
         rule.check()?;
@@ -1049,11 +1077,8 @@ impl BalancedNetwork {
             }
         }
         network.remap_buses(resolve);
-        let charging_shunts = if rule.charging == MergedCharging::FoldToShunt {
-            fold_charging(&mut network, self, &removed_branches)
-        } else {
-            Vec::new()
-        };
+        let charging_shunts =
+            fold_admittance(&mut network, self, &removed_branches, rule.charging)?;
         network.buses_mut().retain_mut(|bus| {
             if merged_buses.contains_key(&bus.id) {
                 return false;
