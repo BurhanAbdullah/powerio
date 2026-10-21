@@ -112,11 +112,9 @@ pub const IR_SCHEMA_ID: &str = "https://powerio.dev/schema/pio-ir/2/0.11.6/schem
 
 /// Loss-preserving PSS/E transient-stability parsing and explicit study pairing.
 pub use powerio_tx::dynamic::{
-    DynamicCase, DynamicRecord, DynamicStudy, DyrError, UnresolvedBusReference,
-    parse_dyr, parse_dyr_bytes,
+    DynamicCase, DynamicRecord, DynamicStudy, DyrError, UnresolvedBusReference, parse_dyr,
+    parse_dyr_bytes,
 };
-
-
 
 use powerio_tx::format;
 pub use powerio_tx::{
