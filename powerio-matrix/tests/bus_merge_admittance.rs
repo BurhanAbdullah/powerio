@@ -194,3 +194,35 @@ fn impedance_correction_before_merging_folds_the_corrected_admittance() {
         "the transformer is already folded into the shunt"
     );
 }
+
+#[test]
+fn automatic_switch_normalization_keeps_the_equivalent_and_source_rows() {
+    let net = network(1.1, 20.0, true);
+    let explicit = net
+        .merge_buses(&BusMergeRule::closed_switches())
+        .unwrap()
+        .network
+        .to_normalized()
+        .unwrap();
+    let (automatic, rows) = net
+        .to_normalized_with_source_rows(&powerio_tx::NormalizeOptions::default())
+        .unwrap();
+    assert_eq!(rows.shunts, [Some(0), None]);
+    assert_eq!(rows.branches, [Some(1)]);
+    let expected =
+        calc_admittance_matrix(&IndexedNetwork::new(&explicit), &BuildOptions::default()).unwrap();
+    let actual = calc_admittance_matrix(
+        &IndexedNetwork::new(&automatic.network),
+        &BuildOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(expected.g, actual.g);
+    assert_eq!(expected.b, actual.b);
+    let mut ideal = net.clone();
+    ideal.branches_mut()[0].r = 0.0;
+    ideal.branches_mut()[0].x = 0.0;
+    assert!(matches!(
+        ideal.to_normalized(),
+        Err(powerio_tx::Error::ZeroImpedance { row: 0 })
+    ));
+}
