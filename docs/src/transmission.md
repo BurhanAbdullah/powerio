@@ -69,11 +69,16 @@ Loads, shunts, generators and their regulated buses, storage, branch, switch,
 and HVDC ends, three winding transformer windings, control buses, and area
 swing buses all follow the survivor. The result lists every removed element
 with its source row, identity, and ratings, and maps each source branch and
-switch row to its merged row. A removed branch's line charging and line shunts
-become a fixed shunt at the survivor, so the merged network draws the reactive
-power the unmerged one did; `charging="drop"` discards them instead. A branch
-the merge shorts, such as a line in parallel with a jumper, is removed and
-reported. A jumper whose merge would join two windings of one three winding
+switch row to its merged row. A removed in-service branch becomes a fixed shunt
+with its full equivalent admittance `Yff + Yft + Ytf + Ytt` at the survivor.
+This includes the series contribution of a bypassed transformer with an
+off-nominal tap or phase shift, and terminal charging with the from side
+divided by the tap squared. `charging="drop"` discards only terminal charging;
+the series equivalent remains. `charging_shunts` lists all these generated
+shunt rows. A branch the merge shorts, such as a line in parallel with a
+jumper, is removed and reported. Bypassing an ideal transformer with a
+nonunity tap or phase shift returns an error: no finite shunt can preserve
+that voltage constraint. A jumper whose merge would join two windings of one three winding
 transformer stays, also reported. Merging the result again changes nothing.
 
 The removed elements' flows are not variables of the merged network.

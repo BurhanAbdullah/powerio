@@ -102,7 +102,7 @@ impl std::fmt::Display for ZeroImpedanceRule {
 #[non_exhaustive]
 pub enum MergedCharging {
     /// Fold each removed in-service branch's terminal admittances (`B/2` per
-    /// end and any line shunts), with the from end scaled by the tap squared,
+    /// end and any line shunts), with the from end divided by the tap squared,
     /// onto the survivor as one fixed shunt together with the series equivalent.
     /// This preserves `Yff + Yft + Ytf + Ytt` at equal terminal voltages.
     #[default]
