@@ -117,7 +117,7 @@ fn out_of_service_transformers_add_no_equivalent_shunt() {
     net.branches_mut()[0].in_service = false;
     assert_projection(&net, BusMergeRule::closed_switches());
     let merge = net.merge_buses(&BusMergeRule::closed_switches()).unwrap();
-    assert!(merge.charging_shunts.is_empty());
+    assert_eq!(merge.charging_shunts, Vec::<usize>::new());
 }
 
 #[test]
