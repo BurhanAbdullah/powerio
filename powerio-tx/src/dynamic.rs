@@ -82,7 +82,7 @@ impl DynamicCase {
 
 /// A steady-state case explicitly paired with its transient-stability data.
 ///
-/// This is a study-level association, not a mutation of [`BalancedNetwork`].
+/// This is a study-level association, not a mutation of [`crate::BalancedNetwork`].
 /// The current linking guarantee validates generic bus references only; it does
 /// not resolve model-specific device keys or claim that the named device exists.
 #[derive(Clone, Debug)]
