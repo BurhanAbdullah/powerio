@@ -83,7 +83,9 @@ pub enum ClosedSwitchPolicy {
     /// `CANONICALIZE.MERGE`. The matrix builders and solver preparations
     /// stamp branches only, so a normalized network carries no closed switch
     /// for them to leave apart. A closed switch on an isolated or undeclared
-    /// bus is left to the filters that drop that bus.
+    /// bus is left to the filters that drop that bus. Returns
+    /// [`Error::ClosedSwitch`] if a requested merge is refused, for example
+    /// when it would join two windings of one three winding transformer.
     #[default]
     Merge,
     /// Refuse a network with such a switch with [`Error::ClosedSwitch`]
@@ -883,6 +885,8 @@ impl BalancedNetwork {
     /// whole network with `NaN`/`Inf` or sign-flipped values.
     /// [`Error::NoReferenceBus`] if no reference bus can be established — no `REF`
     /// survives and there is no in-service generator to anchor one.
+    /// [`Error::ClosedSwitch`] if a requested switch merge cannot complete,
+    /// such as a connection between windings of one three winding transformer.
     pub fn to_normalized(&self) -> Result<BalancedNetwork> {
         Ok(self
             .to_normalized_with_options(&NormalizeOptions::default())?
@@ -905,7 +909,8 @@ impl BalancedNetwork {
     ///
     /// # Errors
     /// As [`BalancedNetwork::to_normalized`], and [`Error::ClosedSwitch`]
-    /// under [`ClosedSwitchPolicy::Refuse`].
+    /// under [`ClosedSwitchPolicy::Refuse`] or an incomplete
+    /// [`ClosedSwitchPolicy::Merge`].
     pub fn to_normalized_with(
         &self,
         settings: &NormalizeSettings,
@@ -972,16 +977,22 @@ impl BalancedNetwork {
                 closed: kept.len(),
             });
         }
-        let merge = if left.is_empty() {
-            self.merge_buses(&BusMergeRule::closed_switches())?
-        } else {
-            // A closed switch on a bus the pass drops stays out of the merge.
-            let mut eligible = self.clone();
-            for row in left {
-                eligible.switches_mut()[row].closed = false;
-            }
-            eligible.merge_buses(&BusMergeRule::closed_switches())?
-        };
+        let merge = self.merge_normalization_switches(&left)?;
+        // A winding-pair refusal leaves the selected switch in the result.
+        // Report the source row, even when earlier switches were removed or
+        // their endpoints were remapped by a successful partial merge.
+        let mut remaining = kept
+            .into_iter()
+            .filter(|&row| merge.switch_rows[row].is_some());
+        if let Some(row) = remaining.next() {
+            let switch = &self.switches()[row];
+            return Err(Error::ClosedSwitch {
+                row,
+                from: switch.from,
+                to: switch.to,
+                closed: 1 + remaining.count(),
+            });
+        }
         let (mut normalized, rows) = merge.network.normalize_pass(options)?;
         let rows = rows.through_merge(&merge);
         let mut diagnostics = merge.diagnostics.clone();
@@ -997,9 +1008,49 @@ impl BalancedNetwork {
         ))
     }
 
-    /// The rows of the closed switches that join two distinct buses: those
-    /// whose buses the pass keeps, and those on an isolated or undeclared
-    /// bus, which the pass drops with that bus.
+    /// Merge only switches whose endpoints survive bus filtering, then
+    /// compose the merge's switch provenance back to the original table.
+    fn merge_normalization_switches(&self, left: &[usize]) -> Result<BusMerge> {
+        if left.is_empty() {
+            return self.merge_buses(&BusMergeRule::closed_switches());
+        }
+        let mut eligible = self.clone();
+        let excluded: HashSet<_> = left.iter().copied().collect();
+        let mut source_rows = Vec::new();
+        let mut row = 0;
+        eligible.switches_mut().retain_mut(|switch| {
+            let keep = !excluded.contains(&row);
+            if keep {
+                source_rows.push(row);
+                // Keep anonymous source identities in merge diagnostics even
+                // though filtering changes this temporary table's row numbers.
+                if switch.uid.is_none() {
+                    switch.uid = Some(format!("switches:{row}"));
+                }
+            }
+            row += 1;
+            keep
+        });
+        // Opening an ineligible switch is insufficient: an undeclared bus
+        // still leaves a dangling reference for merge_buses to validate.
+        let mut merge = eligible.merge_buses(&BusMergeRule::closed_switches())?;
+        let mut switch_rows = vec![None; self.switches().len()];
+        for (&source, &merged) in source_rows.iter().zip(&merge.switch_rows) {
+            switch_rows[source] = merged;
+            if let Some(row) = merged {
+                merge.network.switches_mut()[row].uid = self.switches()[source].uid.clone();
+            }
+        }
+        for removed in &mut merge.removed_switches {
+            removed.row = source_rows[removed.row];
+        }
+        merge.switch_rows = switch_rows;
+        merge.source = self.clone();
+        Ok(merge)
+    }
+
+    /// Closed switches joining distinct buses the pass keeps, and all
+    /// switches on isolated or undeclared buses, which the pass drops.
     fn closed_switch_rows(&self) -> (Vec<usize>, Vec<usize>) {
         let kept_bus: HashMap<BusId, bool> = self
             .buses()
@@ -1007,22 +1058,17 @@ impl BalancedNetwork {
             .map(|bus| (bus.id, bus.kind != BusType::Isolated))
             .collect();
         let kept = |bus: BusId| kept_bus.get(&bus).copied().unwrap_or(false);
-        self.switches()
-            .iter()
-            .enumerate()
-            .filter(|(_, switch)| switch.closed && switch.from != switch.to)
-            .map(|(row, switch)| (row, kept(switch.from) && kept(switch.to)))
-            .fold(
-                (Vec::new(), Vec::new()),
-                |(mut kept, mut left), (row, joined)| {
-                    if joined {
-                        kept.push(row);
-                    } else {
-                        left.push(row);
-                    }
-                    (kept, left)
-                },
-            )
+        self.switches().iter().enumerate().fold(
+            (Vec::new(), Vec::new()),
+            |(mut eligible, mut left), (row, switch)| {
+                if !kept(switch.from) || !kept(switch.to) {
+                    left.push(row);
+                } else if switch.closed && switch.from != switch.to {
+                    eligible.push(row);
+                }
+                (eligible, left)
+            },
+        )
     }
 
     /// One normalization pass over this network as it stands.

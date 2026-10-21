@@ -838,6 +838,10 @@ class BalancedNetwork:
         ``closed_switches=True``, since the matrix and DC calculations model
         no switches. ``"keep"`` leaves the switches as data, and ``"refuse"``
         raises :class:`PowerIODataError` with code ``BUILD.SWITCH.CLOSED``.
+        ``"merge"`` also raises that error when the merge cannot complete,
+        for example across two windings of one three winding transformer.
+        The error names the original switch row and endpoints; no partial
+        normalized network is returned.
         """
         if (
             not clamp_angle_bounds

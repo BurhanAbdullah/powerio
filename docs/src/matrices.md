@@ -146,6 +146,10 @@ between produces none of these findings.
   them on request (see [Merging buses](transmission.md#merging-buses)).
   `IndexedNetwork::check_closed_switches` refuses a network that skipped both
   with `BUILD.SWITCH.CLOSED`, counting the closed switches.
+  Default merging also fails with that code if it cannot eliminate an eligible
+  closed switch, such as a connection between two windings of one three winding
+  transformer. It reports original source rows and returns no partial normalized
+  network. Explicit `Keep` remains for consumers that model switches themselves.
 - **Branch susceptance formulas.** `BranchSusceptanceFormula` selects the
   branch susceptance vector \\(b\\) and, for formulas that include phase shifts,
   the phase shift injection. In the PowerModels form,

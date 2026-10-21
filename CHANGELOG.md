@@ -198,6 +198,14 @@
 
 ### Changed results
 
+- Default switch normalization returns `BUILD.SWITCH.CLOSED` if a selected
+  merge is refused, including direct or chained connections between windings
+  of one three winding transformer. It reports the original switch row and
+  endpoints and the count of remaining eligible switches. Explicit `Keep`
+  behavior is unchanged. Switches on isolated or undeclared buses are filtered
+  before merging, with row maps and removed-switch identities composed back
+  to the original input; they no longer cause a dangling-reference panic.
+
 - Closed switches count as connections. `IndexedNetwork::calc_island_labels`,
   `calc_island_count`, `check_reference_coverage`, `is_radial`, and
   `calc_connectivity_report`, and `BalancedNetwork::retype_isolated_buses`,
