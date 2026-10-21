@@ -354,7 +354,7 @@ case. It intentionally does not infer that a record's second key is a
 generator ID, and does not claim model-specific device references are
 resolved. Typed model schemas, dynamic-device linking, DYR-to-AUX/DYD/SWI
 conversion, and transient simulation are not provided yet. See
-[Dynamics and DYR](dynamics.md) for the API contract.
+[Dynamics and DYR](dynamics.md) for the API definition.
 
 ### UCTE-DEF
 
