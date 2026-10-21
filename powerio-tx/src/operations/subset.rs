@@ -55,7 +55,7 @@ pub(super) fn filter_rows<T: Clone>(
 /// topology and its containers remain: absence of a calculated bus is valid
 /// source data, not evidence that the record belongs to an excluded bus.
 #[expect(clippy::too_many_lines)]
-pub(super) fn filter_connectivity(source: &BalancedNetwork, cut: &mut BalancedNetwork) {
+pub(crate) fn filter_connectivity(source: &BalancedNetwork, cut: &mut BalancedNetwork) {
     let Some(original) = source.detailed_connectivity().as_deref() else {
         return;
     };
@@ -336,7 +336,7 @@ pub(super) fn filter_connectivity(source: &BalancedNetwork, cut: &mut BalancedNe
         subnetwork.components.retain(|id| !removed.contains(id));
     }
     if !removed.is_empty() || cut.buses().len() != source.buses().len() {
-        preserve_orphaned_buses(source, cut, &mut detail);
+        preserve_orphaned_buses(cut, &mut detail);
     }
     *cut.detailed_connectivity_mut() = Some(Arc::new(detail));
 }
@@ -344,11 +344,7 @@ pub(super) fn filter_connectivity(source: &BalancedNetwork, cut: &mut BalancedNe
 // Cutting the last switch/terminal off a node must not erase its calculation
 // bus on fresh XIIDM emission. An explicit calculated-bus record can carry
 // that otherwise unanchored node without inventing electrical equipment.
-fn preserve_orphaned_buses(
-    source: &BalancedNetwork,
-    cut: &BalancedNetwork,
-    detail: &mut DetailedConnectivity,
-) {
+fn preserve_orphaned_buses(cut: &BalancedNetwork, detail: &mut DetailedConnectivity) {
     let mut anchored: HashSet<_> = detail
         .calculated_buses
         .iter()
@@ -391,7 +387,7 @@ fn preserve_orphaned_buses(
             calculated_bus: bus.id,
             nodes: nodes.iter().map(|node| node.component.clone()).collect(),
             voltage_kv: Some(bus.vm * bus.base_kv),
-            angle_degrees: Some(if source.is_normalized() {
+            angle_degrees: Some(if cut.is_normalized() {
                 bus.va.to_degrees()
             } else {
                 bus.va

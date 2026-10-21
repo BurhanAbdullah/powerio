@@ -13,6 +13,7 @@ use std::collections::HashSet;
 
 mod subset;
 pub use subset::BusSubset;
+pub(crate) use subset::filter_connectivity;
 use subset::filter_rows;
 
 use serde_json::Value;
@@ -84,8 +85,9 @@ impl BalancedNetwork {
     /// tables; unassigned source topology remains, and an emptied voltage level
     /// is removed when no retained topology uses it.
     ///
-    /// The result is a fresh [`SourceFormat::InMemory`] network (no retained
-    /// source); an empty `Selector` returns a clone-equivalent of the whole case,
+    /// The result preserves normalized units for normalized input; otherwise it
+    /// is a fresh [`SourceFormat::InMemory`] network. An empty `Selector` returns
+    /// a clone-equivalent of the whole case,
     /// and a selector matching no bus returns an empty network.
     #[must_use]
     pub fn subset(&self, sel: &Selector, keep_boundary: bool) -> BalancedNetwork {
@@ -273,7 +275,11 @@ impl BalancedNetwork {
             transformers_3w: transformers_3w.into(),
             areas: areas.into(),
             solver: self.solver().clone(),
-            source_format: SourceFormat::InMemory,
+            source_format: if self.is_normalized() {
+                SourceFormat::Normalized
+            } else {
+                SourceFormat::InMemory
+            },
         });
         subset::filter_connectivity(self, &mut net);
         debug_assert!(

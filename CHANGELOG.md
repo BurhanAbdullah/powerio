@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Island cuts preserve normalized power and angle units. Normalization projects
+  detailed connectivity alongside removed buses and equipment, including
+  unsupplied islands and dead-winding stubs, while retaining row provenance.
+
 - Island cuts return `BusSubset` with source-to-result row maps for all eleven
   electrical tables, including retained dead-winding stub buses. Cuts filter
   detailed connectivity and equipment references consistently and preserve

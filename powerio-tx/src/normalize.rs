@@ -1325,7 +1325,7 @@ impl BalancedNetwork {
             );
         }
 
-        let net = BalancedNetwork::from_tables(BalancedNetworkTables {
+        let mut net = BalancedNetwork::from_tables(BalancedNetworkTables {
             name: self.name().clone(),
             base_mva: base,
             base_frequency: self.base_frequency(),
@@ -1349,6 +1349,9 @@ impl BalancedNetwork {
             solver: None,
             source_format: SourceFormat::Normalized,
         });
+        // Project source topology after all electrical filters have run, including
+        // unsupplied islands, isolated buses, and out-of-service equipment.
+        crate::operations::filter_connectivity(self, &mut net);
         // The filter drops every reference to a dropped bus by
         // construction, so the result is reference-consistent. Assert it in
         // debug builds to catch a future regression in the filtering logic.

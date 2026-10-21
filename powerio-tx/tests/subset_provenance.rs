@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use powerio_tx::{
     Area, BalancedNetwork, Branch, Bus, BusId, BusType, DetailedConnectivity, Generator, Hvdc,
-    Impedance, Load, Selector, Shunt, StaticVarCompensator, Storage, Switch, Transformer3W,
-    Winding,
+    Impedance, IslandReferencePolicy, Load, NormalizeSettings, Selector, Shunt,
+    StaticVarCompensator, Storage, Switch, Transformer3W, Winding,
 };
 use serde_json::{Value, json};
 
@@ -105,30 +105,40 @@ fn row_maps_follow_filters_and_dead_winding_stubs() {
 
 #[test]
 fn empty_and_whole_cuts_have_total_maps() {
-    let net = case();
-    let empty = net.subset_buses(&BTreeSet::new());
-    let whole = net.subset_buses(&net.buses().iter().map(|b| b.id).collect());
-    macro_rules! check {
-        ($map:ident, $table:ident) => {
-            assert_eq!(empty.$map, vec![None; net.$table().len()]);
-            assert_eq!(
-                whole.$map,
-                (0..net.$table().len()).map(Some).collect::<Vec<_>>()
-            );
-        };
+    for net in [case(), case().to_normalized().unwrap()] {
+        let empty = net.subset_buses(&BTreeSet::new());
+        let whole = net.subset_buses(&net.buses().iter().map(|b| b.id).collect());
+        macro_rules! check {
+            ($map:ident, $table:ident) => {
+                assert_eq!(empty.$map, vec![None; net.$table().len()]);
+                assert_eq!(
+                    whole.$map,
+                    (0..net.$table().len()).map(Some).collect::<Vec<_>>()
+                );
+            };
+        }
+        check!(bus_rows, buses);
+        check!(branch_rows, branches);
+        check!(switch_rows, switches);
+        check!(transformer_3w_rows, transformers_3w);
+        check!(generator_rows, generators);
+        check!(load_rows, loads);
+        check!(shunt_rows, shunts);
+        check!(storage_rows, storage);
+        check!(hvdc_rows, hvdc);
+        check!(static_var_compensator_rows, static_var_compensators);
+        assert_eq!(empty.area_rows, vec![None; net.areas().len()]);
+        assert_eq!(
+            whole.area_rows,
+            if net.is_normalized() {
+                vec![]
+            } else {
+                vec![None, Some(0)]
+            }
+        );
+        empty.network.validate().unwrap();
+        whole.network.validate().unwrap();
     }
-    check!(bus_rows, buses);
-    check!(branch_rows, branches);
-    check!(switch_rows, switches);
-    check!(transformer_3w_rows, transformers_3w);
-    check!(generator_rows, generators);
-    check!(load_rows, loads);
-    check!(shunt_rows, shunts);
-    check!(storage_rows, storage);
-    check!(hvdc_rows, hvdc);
-    check!(static_var_compensator_rows, static_var_compensators);
-    empty.network.validate().unwrap();
-    whole.network.validate().unwrap();
 }
 
 fn topology_case() -> BalancedNetwork {
@@ -318,6 +328,11 @@ fn island_cut_and_normalization_keep_all_twelve_winding_ratings() {
                 .collect(),
         );
     }
+    *net.detailed_connectivity_mut() = Some(Arc::new(serde_json::from_value(json!({
+        "voltage_levels":[{"component":id("voltage_level","VL"),"nominal_kv":230.0,"topology_kind":"bus_breaker","buses":[90,10,20,30]}],
+        "bus_breaker_buses":([90,10,20,30].map(|bus|json!({"component":id("bus",&format!("BB{bus}")),"voltage_level":id("voltage_level","VL"),"calculated_bus":bus})))
+    })).unwrap()));
+    net.validate().unwrap();
     let cut = net.subset_buses(&[BusId(10), BusId(20)].into_iter().collect());
     assert_eq!(cut.transformer_3w_rows, [None, Some(0)]);
     let transformer = &cut.network.transformers_3w()[0];
@@ -346,4 +361,74 @@ fn island_cut_and_normalization_keep_all_twelve_winding_ratings() {
         );
     }
     normalized.network.validate().unwrap();
+    let detail = normalized.network.detailed_connectivity().as_ref().unwrap();
+    assert_eq!(detail.voltage_levels[0].buses, [BusId(10), BusId(20)]);
+    assert_eq!(detail.bus_breaker_buses.len(), 2);
+}
+
+#[test]
+fn per_island_normalization_projects_node_breaker_connectivity() {
+    let mut net = topology_case();
+    net.branches_mut()
+        .retain(|b| b.from == BusId(10) && b.to == BusId(20));
+    net.generators_mut().retain(|g| g.bus == BusId(10));
+    net.validate().unwrap();
+    let before = net.detailed_connectivity().clone();
+    let settings =
+        NormalizeSettings::default().with_island_references(IslandReferencePolicy::PerIsland);
+    let (normalized, _) = net.to_normalized_with(&settings).unwrap();
+    normalized.network.validate().unwrap();
+    let detail = normalized.network.detailed_connectivity().as_ref().unwrap();
+    assert_eq!(detail.voltage_levels[0].buses, [BusId(10), BusId(20)]);
+    assert_eq!(detail.calculated_buses.len(), 2);
+    assert_eq!(detail.connectivity_nodes.len(), 3); // unassigned source node survives
+    assert_eq!(detail.terminals.len(), 1);
+    assert_eq!(detail.internal_connections.as_slice(), []);
+    assert_eq!(detail.switches.as_slice(), []);
+    assert_eq!(detail.busbar_sections.as_slice(), []);
+    assert_eq!(detail.junctions.as_slice(), []);
+    assert_eq!(detail.component_metadata.len(), 1);
+    assert!(detail.tap_changers[0].regulation_terminal.is_none());
+    assert_eq!(net.detailed_connectivity(), &before);
+}
+
+#[test]
+fn per_island_normalization_projects_bus_breaker_connectivity() {
+    let mut net = case();
+    net.branches_mut().clear();
+    net.transformers_3w_mut().clear();
+    net.generators_mut().retain(|g| g.bus == BusId(10));
+    *net.detailed_connectivity_mut() = Some(Arc::new(serde_json::from_value(json!({
+        "voltage_levels":[{"component":id("voltage_level","VL"),"nominal_kv":230.0,"topology_kind":"bus_breaker","buses":[10,20]}],
+        "bus_breaker_buses":([10,20].map(|bus|json!({"component":id("bus",&format!("BB{bus}")),"voltage_level":id("voltage_level","VL"),"calculated_bus":bus})))
+    })).unwrap()));
+    net.validate().unwrap();
+    let settings =
+        NormalizeSettings::default().with_island_references(IslandReferencePolicy::PerIsland);
+    let (normalized, _) = net.to_normalized_with(&settings).unwrap();
+    normalized.network.validate().unwrap();
+    let detail = normalized.network.detailed_connectivity().as_ref().unwrap();
+    assert_eq!(detail.voltage_levels[0].buses, [BusId(10)]);
+    assert_eq!(detail.bus_breaker_buses.len(), 1);
+}
+
+#[test]
+fn normalization_keeps_orphaned_node_angles_in_degrees() {
+    let mut net = topology_case();
+    net.buses_mut()[2].va = 30.0; // bus 20 has no terminal or busbar anchor
+    let detail = Arc::make_mut(net.detailed_connectivity_mut().as_mut().unwrap());
+    detail
+        .calculated_buses
+        .retain(|b| b.calculated_bus != BusId(20));
+    // Removing inactive equipment invokes the orphan-preservation path even
+    // though every bus remains. The synthesized record must use the result units.
+    let normalized = net.to_normalized().unwrap();
+    normalized.validate().unwrap();
+    let detail = normalized.detailed_connectivity().as_ref().unwrap();
+    let bus = detail
+        .calculated_buses
+        .iter()
+        .find(|b| b.calculated_bus == BusId(20))
+        .unwrap();
+    assert!((bus.angle_degrees.unwrap() - 30.0).abs() < 1e-12);
 }
