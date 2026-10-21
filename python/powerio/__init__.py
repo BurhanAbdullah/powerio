@@ -311,10 +311,12 @@ _BALANCED_DELEGATED_NAMES = frozenset(
         "n_generators",
         "n_hvdc",
         "n_islands",
+        "n_lines",
         "n_loads",
         "n_shunts",
         "n_static_var_compensators",
         "n_storage",
+        "n_substations",
         "n_switches",
         "n_transformers_3w",
         "name",
@@ -342,7 +344,7 @@ class BusMerge:
     (``"zero_impedance"``, ``"closed_switch"``, or ``"shorted"``), status, and
     ratings. ``branch_rows`` and ``switch_rows`` map each source row to its
     merged row, or ``None`` when removed, and ``charging_shunts`` lists the
-    merged shunt rows that hold removed branches' charging. ``diagnostics`` holds the merge's
+    merged shunt rows that hold removed branches' equivalent admittances. ``diagnostics`` holds the merge's
     findings, which the merged network's module carries as well.
     """
 
@@ -463,12 +465,28 @@ class BalancedNetwork:
             raise AttributeError(
                 f"{type(self).__name__!r} object has no attribute {name!r}"
             )
-        return getattr(self._inner, name)
+        value = getattr(self._inner, name)
+        # A native handle is immutable; scalar counts need no repeated FFI
+        # call. A collection entry update replaces the handle and clears them.
+        if name.startswith("n_"):
+            self.__dict__[name] = value
+        return value
 
     def __repr__(self) -> str:
         # The inner handle's __repr__ already renders the public ``BalancedNetwork(...)``
         # form, so this is a straight delegate.
         return repr(self._inner)
+
+    def component_counts(self) -> dict[str, int]:
+        """Count native lines, generators, loads, and substations.
+
+        Lines exclude transformer branches. Loads include equivalent injections
+        represented as loads. Substations count the source hierarchy, or zero
+        when the format supplies no hierarchy. No Python table rows are built.
+        Raises ValueError for normalized networks, whose unity taps no longer
+        distinguish lines from transformers. Count the source network instead.
+        """
+        return self._inner.component_counts()
 
     def calc_connectivity_report(self) -> dict[str, Any]:
         """Calculate the in-service topology summary."""
@@ -774,8 +792,11 @@ class BalancedNetwork:
         first. Every element moves onto it. The merged elements and any
         branch the merge shorts are removed and listed with their source rows
         and ratings. ``charging="fold"`` turns each removed branch's line
-        charging and line shunts into a fixed shunt at the survivor;
-        ``"drop"`` discards them. This network is unchanged.
+        charging and line shunts, including tap scaling, into a fixed shunt
+        at the survivor. ``"drop"`` discards only terminal charging. Both
+        choices preserve the series equivalent of a bypassed transformer.
+        An ideal transformer with a nonunity tap or phase shift cannot be
+        bypassed and raises an error. This network is unchanged.
 
         Raises :class:`PowerIODataError` for a threshold that is negative or
         not finite, or for ``"psse"`` with no threshold when the case states
@@ -1619,6 +1640,15 @@ class PioModule:
     def __init__(self, inner: "_powerio._PioModule"):
         self._inner = inner
 
+    def sever_source(self) -> "PioModule":
+        """Copy this module without retained input bytes, forcing fresh emission.
+
+        The original module is unchanged. Values, diagnostics, source
+        descriptors, and history are preserved; preparing the copy has a cost
+        separate from emission.
+        """
+        return PioModule(self._inner.sever_source())
+
     @classmethod
     def from_value(cls, value: Any) -> "PioModule":
         """Wrap an existing typed value without serializing it."""
@@ -1736,6 +1766,10 @@ def _refresh_collection_entry(target: Any, location: _CollectionEntry) -> None:
         raise RuntimeError("a collection update changed the entry type")
     if isinstance(target, BalancedNetwork):
         target._inner = refreshed._inner
+        # Counts cached from the replaced handle may no longer hold, for
+        # example the island count after a branch status update.
+        for name in [name for name in vars(target) if name.startswith("n_")]:
+            del target.__dict__[name]
     elif isinstance(target, dist.MulticonductorNetwork):
         target._inner = refreshed._inner
     elif isinstance(target, _TypedValue):
