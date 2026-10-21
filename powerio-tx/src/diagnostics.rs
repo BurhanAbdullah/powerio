@@ -383,6 +383,10 @@ pub mod codes {
         CANONICALIZE_NORMALIZE_INVALID_BASE_MVA = "CANONICALIZE.NORMALIZE.INVALID_BASE_MVA", Error,
             "the case base MVA is not a positive finite number", category = Data;
 
+        CANONICALIZE_NORMALIZE_WINDING_TAKEN_OUT =
+            "CANONICALIZE.NORMALIZE.WINDING_TAKEN_OUT", Warning,
+            "a three winding transformer winding on a bus normalization drops was taken out of service";
+
         // BUILD: assembling a derived object from a network that already parsed.
         BUILD_INDEX_UNKNOWN_BUS = "BUILD.INDEX.UNKNOWN_BUS", Error,
             "an element references a bus id the case does not declare", category = Data;
