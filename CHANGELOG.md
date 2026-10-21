@@ -198,6 +198,36 @@
 
 ### Changed results
 
+- Default switch normalization returns `BUILD.SWITCH.CLOSED` if a selected
+  merge is refused, including direct or chained connections between windings
+  of one three winding transformer. It reports the original switch row and
+  endpoints and the count of remaining eligible switches. Explicit `Keep`
+  behavior is unchanged. Switches on isolated or undeclared buses are filtered
+  before merging, with row maps and removed-switch identities composed back
+  to the original input; they no longer cause a dangling-reference panic.
+
+- Closed switches count as connections. `IndexedNetwork::calc_island_labels`,
+  `calc_island_count`, `check_reference_coverage`, `is_radial`, and
+  `calc_connectivity_report`, and `BalancedNetwork::retype_isolated_buses`,
+  join the two buses of a closed switch, so a bus reached only through one is
+  no longer its own island or retyped isolated. Open switches change nothing.
+
+- `to_normalized` and `to_normalized_with_options` merge the buses closed
+  switches join before normalizing, with `BusMergeRule::closed_switches`, and
+  report the merge under `CANONICALIZE.MERGE`. The matrix builders, the DC
+  operators, the DC and AC OPF preparations, and the GridFM export stamp
+  branches only, so on a normalized network they used to leave a closed
+  switch's buses apart without a word, and a bus reached only through one
+  became its own island. A network with no closed switch normalizes exactly
+  as before, and a closed switch on an isolated bus is still dropped with that
+  bus. `ClosedSwitchPolicy::Keep` keeps the switches as data, as before.
+
+- The contingency resolver binds a branch statement that names no line or two
+  winding transformer to a system switching device on the same buses and
+  circuit id, so `OPEN BRANCH FROM BUS i TO BUS j CIRCUIT '@1'` resolves to
+  component type `switch`. `PsseEquipmentIndex` gains `switch_ids` and
+  `switch_rows`, using the RAW writer's switching device id allocation.
+
 - Bus merging preserves the complete equivalent admittance of a finite
   transformer bypassed by a closed switch or jumper, including off-nominal
   taps, phase shifts, and tap-scaled terminal charging. `MergedCharging::Drop`
@@ -330,6 +360,17 @@
   code outside 0 to 4 reads as 1, as before, and is now reported.
 
 ### Added
+
+- `BalancedNetwork::to_normalized_with` takes `NormalizeSettings`, the
+  `NormalizeOptions` repairs plus `with_closed_switches`: `ClosedSwitchPolicy`
+  `Merge` (the default), `Refuse`, which fails with `BUILD.SWITCH.CLOSED`, or
+  `Keep`. It returns a `NormalizeReport` beside the normalized network, whose
+  `bus_merge` holds the closed switch merge's bus map, removed switches, and
+  row maps. Python takes
+  `to_normalized(closed_switches="merge"|"refuse"|"keep")`.
+  `IndexedNetwork::closed_switches` lists the closed switches that join two
+  buses, and `check_closed_switches` refuses them with `BUILD.SWITCH.CLOSED`,
+  for a caller that builds matrices from a network it did not normalize.
 
 - `BalancedNetwork::merge_buses` merges the buses that closed switches and
   zero impedance branches join, under an explicit `BusMergeRule`: closed
