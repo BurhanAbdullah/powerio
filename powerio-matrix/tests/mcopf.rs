@@ -699,3 +699,253 @@ fn terminal_referenced_source_is_not_silently_anchored_to_earth() {
         "{error}"
     );
 }
+
+fn three_phase_source() -> MulticonductorNetwork {
+    let mut net = MulticonductorNetwork::new();
+    let mut bus = DistBus::new("b", names(&["a", "b", "c", "n"]));
+    bus.grounded = names(&["n"]);
+    net.buses_mut().push(bus);
+    let angle = 2.0 * std::f64::consts::PI / 3.0;
+    net.sources_mut().push(VoltageSource::new(
+        "grid",
+        "b",
+        names(&["a", "b", "c", "n"]),
+        vec![230., 230., 230., 0.],
+        vec![0., -angle, angle, 0.],
+    ));
+    net
+}
+
+#[test]
+fn star_current_caps_follow_terminal_identity_for_generators_and_inverters() {
+    use powerio_dist::{DistIbr, IbrPrimeMover, IbrTopology};
+    for map in [
+        ["n", "a", "b", "c"],
+        ["c", "n", "a", "b"],
+        ["b", "c", "n", "a"],
+        ["a", "b", "c", "n"],
+    ] {
+        // Independent physical ratings: a=11 A, b=unlimited, c=17 A, n=0 A.
+        let ratings: Vec<_> = map
+            .iter()
+            .map(|t| match *t {
+                "a" => 11.,
+                "b" => f64::INFINITY,
+                "c" => 17.,
+                _ => 0.,
+            })
+            .collect();
+        for present in [true, false] {
+            let mut net = three_phase_source();
+            let mut generator = DistGenerator::new(
+                "g",
+                "b",
+                names(&map),
+                Configuration::Wye,
+                vec![0.; 3],
+                vec![0.; 3],
+            );
+            generator.i_max = present.then(|| ratings.clone());
+            net.generators_mut().push(generator);
+            let mut inv = DistIbr::new(
+                "inv",
+                "b",
+                names(&map),
+                IbrTopology::FourLeg,
+                IbrPrimeMover::Battery,
+                vec![1000.; 3],
+            );
+            inv.i_max = present.then(|| ratings.clone());
+            net.ibrs_mut().push(inv);
+            let instance = McAcOpfInstance::from_network(net).unwrap();
+            for selected in [true, false] {
+                let mut constraints = instance.constraints().clone();
+                constraints.generator_capability = if selected {
+                    ConstraintSelection::All
+                } else {
+                    ConstraintSelection::None
+                };
+                let prep = build_mc_ac_opf_preparation(
+                    &instance.clone().with_constraints(constraints),
+                    &McAcOpfAssemblyOptions::default(),
+                )
+                .unwrap();
+                for device in prep
+                    .devices
+                    .iter()
+                    .filter(|d| matches!(d.kind, McOpfDeviceKind::Generator | McOpfDeviceKind::Ibr))
+                {
+                    assert_eq!(device.coils.len(), 3);
+                    for coil in &device.coils {
+                        assert_eq!(coil.negative, Some(3));
+                        let expected = match coil.positive {
+                            0 if present && selected => Some(11. * 230. / 1000.),
+                            2 if present && selected => Some(17. * 230. / 1000.),
+                            0..=2 => None,
+                            _ => panic!("neutral must not become a phase coil"),
+                        };
+                        match (coil.current_max, expected) {
+                            (Some(a), Some(b)) => assert!((a - b).abs() < 1e-12),
+                            (a, b) => assert_eq!(a, b),
+                        }
+                    }
+                    assert_eq!(
+                        device.neutral_current_max,
+                        (present && selected).then_some(0.)
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn implicit_ground_and_delta_current_caps_keep_their_axes() {
+    use powerio_dist::{DistIbr, IbrPrimeMover, IbrTopology};
+    for config in [Configuration::Wye, Configuration::Delta] {
+        let mut net = three_phase_source();
+        let mut generator = DistGenerator::new(
+            "g",
+            "b",
+            names(&["c", "a", "b"]),
+            config,
+            vec![0.; 3],
+            vec![0.; 3],
+        );
+        generator.i_max = Some(vec![7., 11., 13.]);
+        net.generators_mut().push(generator);
+        if config == Configuration::Delta {
+            let mut inv = DistIbr::new(
+                "inv",
+                "b",
+                names(&["c", "a", "b"]),
+                IbrTopology::ThreeLeg,
+                IbrPrimeMover::Battery,
+                vec![1000.; 3],
+            );
+            inv.i_max = Some(vec![7., 11., 13.]);
+            net.ibrs_mut().push(inv);
+        }
+        let prep = prepare(net);
+        for d in prep
+            .devices
+            .iter()
+            .filter(|d| matches!(d.kind, McOpfDeviceKind::Generator | McOpfDeviceKind::Ibr))
+        {
+            assert_eq!(d.neutral_current_max, None);
+            for ((coil, positive), amps) in d.coils.iter().zip([2, 0, 1]).zip([7., 11., 13.]) {
+                assert_eq!(coil.positive, positive);
+                assert!((coil.current_max.unwrap() * 1000. / 230. - amps).abs() < 1e-12);
+                if config == Configuration::Wye {
+                    assert_eq!(coil.negative, None);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn two_wire_caps_take_the_tighter_endpoint_in_either_orientation() {
+    use powerio_dist::{DistIbr, IbrPrimeMover, IbrTopology};
+    for map in [["n", "a"], ["a", "n"]] {
+        for (ratings, expected) in [
+            (vec![7., 11.], Some(7.)),
+            (vec![f64::INFINITY, 0.], Some(0.)),
+            (vec![f64::INFINITY, 11.], Some(11.)),
+            (vec![f64::INFINITY; 2], None),
+        ] {
+            for config in [Configuration::Wye, Configuration::SinglePhase] {
+                let mut net = network();
+                let mut generator =
+                    DistGenerator::new("g", "load", names(&map), config, vec![0.], vec![0.]);
+                generator.i_max = Some(ratings.clone());
+                net.generators_mut().push(generator);
+                let mut inv = DistIbr::new(
+                    "inv",
+                    "load",
+                    names(&map),
+                    IbrTopology::SinglePhase,
+                    IbrPrimeMover::Battery,
+                    vec![1000.],
+                );
+                inv.i_max = Some(ratings.clone());
+                net.ibrs_mut().push(inv);
+                for d in prepare(net)
+                    .devices
+                    .iter()
+                    .filter(|d| matches!(d.kind, McOpfDeviceKind::Generator | McOpfDeviceKind::Ibr))
+                {
+                    assert_eq!(d.neutral_current_max, None);
+                    match (d.coils[0].current_max, expected) {
+                        (Some(a), Some(b)) => assert!((a * 1000. / 230. - b).abs() < 1e-12),
+                        (a, b) => assert_eq!(a, b),
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn inverter_control_laws_intersect_selected_reactive_capability() {
+    use powerio_dist::{DistControlProfile, DistIbr, IbrPrimeMover, IbrTopology};
+    for fixed_pf in [true, false] {
+        for bound in [10., 0.] {
+            let mut net = network();
+            let mut inv = DistIbr::new(
+                "inv",
+                "load",
+                names(&["a", "n"]),
+                IbrTopology::SinglePhase,
+                IbrPrimeMover::Battery,
+                vec![1000.],
+            );
+            inv.p_min = Some(vec![100.]);
+            inv.p_max = Some(vec![100.]);
+            inv.q_min = Some(vec![-bound]);
+            inv.q_max = Some(vec![bound]);
+            inv.control_profile = Some("control".into());
+            net.ibrs_mut().push(inv);
+            let mut profile = DistControlProfile::new("control");
+            if fixed_pf {
+                profile.power_factor =
+                    Some(serde_json::from_value(serde_json::json!({"pf":0.8})).unwrap());
+            } else {
+                profile.volt_var = Some(serde_json::from_value(serde_json::json!({"breakpoints":[200.,220.,240.,260.],"q_limits":[-0.5,0.5]})).unwrap());
+            }
+            net.control_profiles_mut().push(profile);
+            let instance = McAcOpfInstance::from_network(net).unwrap();
+            for selected in [true, false] {
+                let mut constraints = instance.constraints().clone();
+                constraints.generator_capability = if selected {
+                    ConstraintSelection::All
+                } else {
+                    ConstraintSelection::None
+                };
+                let prep = build_mc_ac_opf_preparation(
+                    &instance.clone().with_constraints(constraints),
+                    &McAcOpfAssemblyOptions::default(),
+                )
+                .unwrap();
+                let coil = &prep
+                    .devices
+                    .iter()
+                    .find(|d| d.kind == McOpfDeviceKind::Ibr)
+                    .unwrap()
+                    .coils[0];
+                assert_eq!(coil.q_min, selected.then_some(-bound / 1000.));
+                assert_eq!(coil.q_max, selected.then_some(bound / 1000.));
+                if fixed_pf {
+                    // At P=100 W this law demands Q=-75 var, outside even the
+                    // nonzero box. Keep both constraints so infeasibility is visible.
+                    assert!((coil.reactive_slope.unwrap() + 0.75).abs() < 1e-12);
+                } else {
+                    assert_eq!(
+                        coil.volt_var.as_ref().unwrap().values,
+                        vec![0.5, 0., 0., -0.5]
+                    );
+                }
+            }
+        }
+    }
+}

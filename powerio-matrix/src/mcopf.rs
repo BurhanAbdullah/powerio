@@ -1110,20 +1110,14 @@ fn prepare_generators(
             n,
             sb,
         )?;
-        // Star current ratings include a neutral entry; delta ratings are coil currents.
-        let star = matches!(
-            generator.configuration,
-            Configuration::Wye | Configuration::SinglePhase
-        ) && ids.len() == n + 1;
-        let mut imax = caps(
+        let (imax, neutral_current_max) = device_current_caps(
             &generator.name,
+            generator.configuration,
+            &ids,
+            &pairs,
             generator.i_max.as_ref().filter(|_| active),
-            n + usize::from(star),
             ib,
         )?;
-        if star && n == 1 {
-            collapse_return_rating(&mut imax);
-        }
         for nominal in [&generator.p_nom, &generator.q_nom] {
             if !nominal.is_empty() {
                 vector(&generator.name, nominal, n)?;
@@ -1160,7 +1154,7 @@ fn prepare_generators(
             source_row: row,
             terminals: ids,
             coils,
-            neutral_current_max: if star { imax[n] } else { None },
+            neutral_current_max,
             net_active_bounds: None,
         });
     }
@@ -1529,11 +1523,43 @@ fn prepare_sequences(
     Ok(())
 }
 
-// A two-wire device has equal outgoing and return current magnitudes.
-fn collapse_return_rating(ratings: &mut [Option<f64>]) {
-    ratings[0] = match (ratings[0], ratings[1]) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (a, b) => a.or(b),
+// Star ratings follow terminal_map; delta ratings follow coil order. Resolve
+// endpoints before removing the neutral from the coil axis.
+fn device_current_caps(
+    owner: &str,
+    configuration: Configuration,
+    ids: &[usize],
+    pairs: &CoilPairs,
+    values: Option<&Vec<f64>>,
+    base: f64,
+) -> Result<(Vec<Option<f64>>, Option<f64>)> {
+    if configuration == Configuration::Delta {
+        return Ok((caps(owner, values, pairs.len(), base)?, None));
+    }
+    let ratings = caps(owner, values, ids.len(), base)?;
+    let rating = |id| {
+        ids.iter()
+            .position(|&terminal| terminal == id)
+            .map(|row| ratings[row])
+            .ok_or_else(|| invalid(owner, "coil endpoint missing from terminal map"))
     };
-    ratings[1] = None;
+    let mut coils = pairs
+        .iter()
+        .map(|&(positive, _)| rating(positive))
+        .collect::<Result<Vec<_>>>()?;
+    let neutral = pairs
+        .first()
+        .and_then(|&(_, negative)| negative)
+        .map(rating)
+        .transpose()?
+        .flatten();
+    if coils.len() == 1 {
+        // A two-wire device has equal outgoing and return current magnitudes.
+        coils[0] = match (coils[0], neutral) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        return Ok((coils, None));
+    }
+    Ok((coils, neutral))
 }

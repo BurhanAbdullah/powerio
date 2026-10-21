@@ -1,7 +1,7 @@
 //! Inverter capability and normalized smooth-control data. No solver expressions.
 use super::{
     Configuration, Context, McOpfCoil, McOpfDevice, McOpfDeviceKind, McOpfDroop, Result, bounds,
-    caps, costs, extras, finite, invalid, unsupported,
+    caps, costs, device_current_caps, extras, finite, invalid, unsupported,
 };
 use powerio_dist::{
     ActivePowerReference, ActivePowerUnit, ControlVoltageReference as Ref, DistIbr, IbrTopology,
@@ -41,15 +41,8 @@ pub(super) fn prepare(
             return Err(invalid(&inv.name, "FOUR_LEG requires explicit neutral"));
         }
         let smax = caps(&inv.name, Some(&inv.s_max), n, sb)?;
-        let star = config != Configuration::Delta;
-        let mut imax = caps(&inv.name, inv.i_max.as_ref(), n + usize::from(star), ib)?;
-        if n == 1 && star {
-            imax[0] = match (imax[0], imax[1]) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (a, b) => a.or(b),
-            };
-            imax[1] = None;
-        }
+        let (imax, neutral_current_max) =
+            device_current_caps(&inv.name, config, &ids, &pairs, inv.i_max.as_ref(), ib)?;
         let pmin = bounds(&inv.name, inv.p_min.as_ref(), n, sb)?;
         let pmax = bounds(&inv.name, inv.p_max.as_ref(), n, sb)?;
         let qmin = bounds(&inv.name, inv.q_min.as_ref(), n, sb)?;
@@ -72,7 +65,6 @@ pub(super) fn prepare(
                 return Err(invalid(&inv.name, "reversed inverter capability bounds"));
             }
             let (volt_var, volt_watt) = control_curves(&context, vv, vw, smax[k], pmax[k], k)?;
-            let qbox = slope.is_none() && volt_var.is_none();
             coils.push(McOpfCoil {
                 positive,
                 negative,
@@ -83,8 +75,8 @@ pub(super) fn prepare(
                 volt_watt,
                 p_min: pmin[k],
                 p_max: pmax[k],
-                q_min: if qbox { qmin[k] } else { None },
-                q_max: if qbox { qmax[k] } else { None },
+                q_min: qmin[k],
+                q_max: qmax[k],
                 current_max: imax[k],
                 apparent_max: smax[k],
                 cost: cost[k].unwrap_or(0.0) * weight,
@@ -111,7 +103,7 @@ pub(super) fn prepare(
             source_row: row,
             terminals: ids,
             coils,
-            neutral_current_max: if star && active { imax[n] } else { None },
+            neutral_current_max: if active { neutral_current_max } else { None },
             net_active_bounds,
         });
     }

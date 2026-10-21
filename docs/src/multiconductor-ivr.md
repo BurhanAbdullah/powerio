@@ -32,6 +32,12 @@ canonical table identified by the device kind. Transformer current indices are
 local to `coils`; equation voltage indices are global. Ports reconstruct rated
 physical currents and voltages and need not coincide with internal coil axes.
 
+Star-device current ratings follow `terminal_map`, including a neutral at any
+position. Preparation maps each rating to its physical terminal before forming
+phase coils. A two-wire coil uses the tighter outgoing/return rating; delta
+ratings remain coil ordered. Missing or infinite caps remain unbounded, and zero
+remains an exact zero-current bound.
+
 Load power is positive consumption; generator, IBR and source power is positive
 injection. All limits distinguish absent from exact zero. Deselecting a bound
 does not remove a physical device law or infer an unprovided bound. Voltage
@@ -60,6 +66,11 @@ Prepared control knots and load power-law terms describe the laws without
 choosing a derivative implementation. Scalar canonical capacitor nameplates
 follow `DistCapacitor`; BMOPF per-coil capacitor arrays arrive as exact terminal
 shunts, shared with other preparation and matrix consumers.
+
+Fixed-PF and volt-var laws intersect the selected reactive-power capability box.
+Preparation retains both even when their intersection is infeasible; it does not
+silently relax the capability or clamp the control law. Deselecting generator
+capability removes the box while preserving the physical control law.
 
 ## Formulation restrictions and downstream responsibility
 
