@@ -134,16 +134,17 @@ configuration the specification supports.
 
 ## shunt and capacitor
 
-`DistShunt` is raw admittance, grounding impedance included; `DistCapacitor`
-is a bank with a nameplate rating.
+`DistShunt` is raw admittance, grounding impedance included. Scalar capacitor
+ratings use the bank model `DistCapacitor`; arrays of per-coil ratings are
+lowered into an exact `DistShunt` terminal matrix.
 
 | BMOPF | PowerIO | Note |
 | --- | --- | --- |
 | `shunt.bus`, `shunt.terminal_map` | the same names | |
 | `shunt.G_i_j`, `shunt.B_i_j` | `g`, `b`, total siemens in conductor order | |
-| `capacitor.bus`, `capacitor.terminal_map`, `capacitor.configuration` | the same names | |
-| `capacitor.q_rated` | `q_rated`, var | The whole bank, not one element. |
-| `capacitor.v_nom` | `v_nom`, V | Line to line for the three-phase configurations; across the element terminals for `SINGLE_PHASE`. |
+| `capacitor.bus`, `capacitor.terminal_map`, `capacitor.configuration` | the same names for a scalar bank; bus, terminal order and matrix incidence for an array | |
+| `capacitor.q_rated` | Scalar: `q_rated`, var; array: terminal shunt `b`, siemens | A scalar rates the whole bank. Array entries rate individual WYE coils or DELTA phase pairs, in var. |
+| `capacitor.v_nom` | Scalar: `v_nom`, V; array: used in `q / v_nom²` | Scalar: line-to-line for three-phase banks, across the pair for `SINGLE_PHASE`. Array: phase-to-neutral for WYE, phase-to-phase for DELTA, and across the stated pair for `SINGLE_PHASE`. |
 
 ## transformer
 
