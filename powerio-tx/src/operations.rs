@@ -11,12 +11,15 @@
 
 use std::collections::HashSet;
 
+mod subset;
+pub use subset::BusSubset;
+use subset::filter_rows;
+
 use serde_json::Value;
 
 use crate::merge::{BusMergeRule, MergeSurvivor, ZeroImpedanceRule, kind_priority};
 use crate::network::{
-    BalancedNetwork, BalancedNetworkTables, Branch, Bus, BusId, BusType, Extras, Generator, Shunt,
-    SourceFormat,
+    BalancedNetwork, BalancedNetworkTables, Branch, Bus, BusId, BusType, Extras, SourceFormat,
 };
 
 /// The endpoint of `b` other than `m` (assumes `m` is an endpoint).
@@ -77,7 +80,9 @@ impl BalancedNetwork {
     /// ends; without it, a straddling branch is dropped. A tie bus is a stub: its
     /// own loads/generators are not pulled in. A control reference (regulated bus)
     /// that falls outside the kept set is cleared so the result is
-    /// reference-consistent.
+    /// reference-consistent. Detailed connectivity is filtered with the electrical
+    /// tables; unassigned source topology remains, and an emptied voltage level
+    /// is removed when no retained topology uses it.
     ///
     /// The result is a fresh [`SourceFormat::InMemory`] network (no retained
     /// source); an empty `Selector` returns a clone-equivalent of the whole case,
@@ -91,9 +96,10 @@ impl BalancedNetwork {
             .map(|b| b.id)
             .collect();
         self.subset_scope(&in_scope, keep_boundary, &HashSet::new())
+            .network
     }
 
-    /// Carve out the sub-network on exactly `buses`, such as one island of
+    /// Carve out the sub-network and source-to-result row maps on `buses`, such as one island of
     /// [`calc_islands`](BalancedNetwork::calc_islands): the
     /// [`subset`](BalancedNetwork::subset) rules with no boundary buses, so a
     /// branch, switch, HVDC line, or 3-winding transformer is kept when every
@@ -102,12 +108,13 @@ impl BalancedNetwork {
     ///
     /// A 3-winding transformer with a winding in the set is also kept when
     /// each of its other windings is dead: its bus is typed isolated, or the
-    /// winding is stated out of service (`extras["winding_in_service"]`).
+    /// winding is out of service ([`crate::Transformer3W::winding_in_service`]).
     /// That winding's bus comes along as an isolated stub (tagged
     /// `extras["tie_bus"]`), so an island that such a transformer joins stays
-    /// one island.
+    /// one island. The returned [`BusSubset`] maps every source table row to
+    /// its result row, including stub buses and excluded injections.
     #[must_use]
-    pub fn subset_buses(&self, buses: &std::collections::BTreeSet<BusId>) -> BalancedNetwork {
+    pub fn subset_buses(&self, buses: &std::collections::BTreeSet<BusId>) -> BusSubset {
         let in_scope: HashSet<BusId> = buses.iter().copied().collect();
         let isolated: HashSet<BusId> = self
             .buses()
@@ -121,7 +128,7 @@ impl BalancedNetwork {
                 transformer
                     .windings
                     .iter()
-                    .zip(crate::islands::winding_connected(transformer))
+                    .zip(transformer.winding_in_service())
             };
             let touches = windings().any(|(w, _)| in_scope.contains(&w.bus));
             let dead_outside = windings().all(|(w, connected)| {
@@ -148,7 +155,7 @@ impl BalancedNetwork {
         in_scope: &HashSet<BusId>,
         keep_boundary: bool,
         stubs: &HashSet<BusId>,
-    ) -> BalancedNetwork {
+    ) -> BusSubset {
         // Boundary: the out-of-scope endpoint of any branch/HVDC with exactly one
         // endpoint in scope, plus the stubs.
         let mut boundary: HashSet<BusId> = stubs.clone();
@@ -172,83 +179,34 @@ impl BalancedNetwork {
         }
         let kept: HashSet<BusId> = in_scope.union(&boundary).copied().collect();
 
-        let buses: Vec<Bus> = self
-            .buses()
-            .iter()
-            .filter(|b| kept.contains(&b.id))
-            .map(|b| {
-                let mut b = b.clone();
-                if boundary.contains(&b.id) {
-                    b.extras.insert("tie_bus".into(), Value::Bool(true));
-                }
-                if stubs.contains(&b.id) {
-                    b.kind = BusType::Isolated;
-                }
-                b
-            })
-            .collect();
+        let (mut buses, bus_rows) = filter_rows(self.buses(), |b| kept.contains(&b.id));
+        for bus in &mut buses {
+            if boundary.contains(&bus.id) {
+                bus.extras.insert("tie_bus".into(), Value::Bool(true));
+            }
+            if stubs.contains(&bus.id) {
+                bus.kind = BusType::Isolated;
+            }
+        }
 
-        // Injection elements live only on in-scope buses; tie buses are stubs.
-        let loads = self
-            .loads()
-            .iter()
-            .filter(|l| in_scope.contains(&l.bus))
-            .cloned()
-            .collect::<Vec<_>>()
-            .into();
-        let mut shunts: Vec<Shunt> = self
-            .shunts()
-            .iter()
-            .filter(|s| in_scope.contains(&s.bus))
-            .cloned()
-            .collect();
-        let static_var_compensators = self
-            .static_var_compensators()
-            .iter()
-            .filter(|svc| in_scope.contains(&svc.bus))
-            .cloned()
-            .collect::<Vec<_>>()
-            .into();
-        let mut generators: Vec<Generator> = self
-            .generators()
-            .iter()
-            .filter(|g| in_scope.contains(&g.bus))
-            .cloned()
-            .collect();
-        let storage = self
-            .storage()
-            .iter()
-            .filter(|s| in_scope.contains(&s.bus))
-            .cloned()
-            .collect::<Vec<_>>()
-            .into();
-
-        let mut branches: Vec<Branch> = self
-            .branches()
-            .iter()
-            .filter(|br| kept.contains(&br.from) && kept.contains(&br.to))
-            .cloned()
-            .collect();
-        let switches = self
-            .switches()
-            .iter()
-            .filter(|sw| kept.contains(&sw.from) && kept.contains(&sw.to))
-            .cloned()
-            .collect::<Vec<_>>()
-            .into();
-        let hvdc = self
-            .hvdc()
-            .iter()
-            .filter(|d| kept.contains(&d.from) && kept.contains(&d.to))
-            .cloned()
-            .collect::<Vec<_>>()
-            .into();
-        let mut transformers_3w = self
-            .transformers_3w()
-            .iter()
-            .filter(|t| t.windings.iter().all(|w| kept.contains(&w.bus)))
-            .cloned()
-            .collect::<Vec<_>>();
+        // Build the source-to-result maps in the same pass that selects rows.
+        // Injections on retained boundary/stub buses are deliberately excluded.
+        let (loads, load_rows) = filter_rows(self.loads(), |v| in_scope.contains(&v.bus));
+        let (mut shunts, shunt_rows) = filter_rows(self.shunts(), |v| in_scope.contains(&v.bus));
+        let (static_var_compensators, static_var_compensator_rows) =
+            filter_rows(self.static_var_compensators(), |v| {
+                in_scope.contains(&v.bus)
+            });
+        let (mut generators, generator_rows) =
+            filter_rows(self.generators(), |v| in_scope.contains(&v.bus));
+        let (storage, storage_rows) = filter_rows(self.storage(), |v| in_scope.contains(&v.bus));
+        let ends_kept = |from: BusId, to: BusId| kept.contains(&from) && kept.contains(&to);
+        let (mut branches, branch_rows) = filter_rows(self.branches(), |v| ends_kept(v.from, v.to));
+        let (switches, switch_rows) = filter_rows(self.switches(), |v| ends_kept(v.from, v.to));
+        let (hvdc, hvdc_rows) = filter_rows(self.hvdc(), |v| ends_kept(v.from, v.to));
+        let (mut transformers_3w, transformer_3w_rows) = filter_rows(self.transformers_3w(), |v| {
+            v.windings.iter().all(|w| kept.contains(&w.bus))
+        });
 
         // Clear control references that point outside the kept set.
         for br in &mut branches {
@@ -287,20 +245,15 @@ impl BalancedNetwork {
         // can't carry the interchange schedule or the solver tolerances, so dropping
         // them would silently lose data a PSS/E/PSLF write of the subset emits.
         let kept_area_numbers: HashSet<usize> = buses.iter().map(|b| b.area).collect();
-        let areas = self
-            .areas()
-            .iter()
-            .filter(|a| kept_area_numbers.contains(&a.number))
-            .cloned()
-            .map(|mut a| {
-                if a.slack_bus.is_some_and(|b| !kept.contains(&b)) {
-                    a.slack_bus = None;
-                }
-                a
-            })
-            .collect::<Vec<_>>();
+        let (mut areas, area_rows) =
+            filter_rows(self.areas(), |a| kept_area_numbers.contains(&a.number));
+        for area in &mut areas {
+            if area.slack_bus.is_some_and(|b| !kept.contains(&b)) {
+                area.slack_bus = None;
+            }
+        }
 
-        let net = BalancedNetwork::from_tables(BalancedNetworkTables {
+        let mut net = BalancedNetwork::from_tables(BalancedNetworkTables {
             name: format!("{} (subset)", self.name()),
             base_mva: self.base_mva(),
             base_frequency: self.base_frequency(),
@@ -309,24 +262,38 @@ impl BalancedNetwork {
             detailed_connectivity: self.detailed_connectivity().clone(),
             generated_uids: self.generated_uids().clone(),
             buses: buses.into(),
-            loads,
+            loads: loads.into(),
             shunts: shunts.into(),
-            static_var_compensators,
+            static_var_compensators: static_var_compensators.into(),
             branches: branches.into(),
-            switches,
+            switches: switches.into(),
             generators: generators.into(),
-            storage,
-            hvdc,
+            storage: storage.into(),
+            hvdc: hvdc.into(),
             transformers_3w: transformers_3w.into(),
             areas: areas.into(),
             solver: self.solver().clone(),
             source_format: SourceFormat::InMemory,
         });
+        subset::filter_connectivity(self, &mut net);
         debug_assert!(
             net.validate().is_ok(),
             "subset produced a dangling reference"
         );
-        net
+        BusSubset {
+            network: net,
+            bus_rows,
+            load_rows,
+            shunt_rows,
+            static_var_compensator_rows,
+            branch_rows,
+            switch_rows,
+            generator_rows,
+            storage_rows,
+            hvdc_rows,
+            transformer_3w_rows,
+            area_rows,
+        }
     }
 
     /// Merge bus `from` into bus `into`: re-home every element on `from` (loads,

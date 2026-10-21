@@ -1252,10 +1252,10 @@ impl BalancedNetwork {
         // Per island references: an island no in-service generator supplies
         // cannot be solved, so its buses stay out like isolated ones and the
         // element filters below drop what sits on them. The partition follows
-        // what this pass keeps: a three winding transformer with a winding on
-        // an isolated bus is dropped whole, so it joins nothing.
+        // what this pass keeps: a three winding transformer keeps its live
+        // windings when another winding sits on an isolated bus.
         let partition = (settings.island_references == IslandReferencePolicy::PerIsland)
-            .then(|| self.calc_islands_where(false));
+            .then(|| self.calc_islands());
         let unsupplied = partition
             .as_ref()
             .map(|partition| unsupplied_island_buses(self, partition, &mut warnings))

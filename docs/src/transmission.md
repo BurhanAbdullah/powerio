@@ -107,7 +107,25 @@ partitions the energized buses into islands joined by in-service branches,
 closed switches, and in-service three winding transformers. Buses typed
 isolated belong to no island, and HVDC lines do not join islands. Each island
 lists its buses, reference buses, in-service generators, and the in-service
-HVDC lines that tie it to another island, largest island first. `subset_buses` carves one island out as a network of its own.
+HVDC lines that tie it to another island, largest island first.
+
+`subset_buses(&buses)` returns a `BusSubset`: the cut `network` and a map for
+all eleven tables (buses, branches, switches, three winding transformers,
+generators, loads, shunts, SVCs, storage, HVDC lines, and areas). Each map has
+one entry per source row: `Some(row)` points into the result table and `None`
+means that row was excluded. IDs are preserved. For example,
+`cut.branch_rows[source_row]` locates a statement's branch in `cut.network`
+without reproducing the cut's filtering rules.
+
+A dead winding can bring its bus along as an isolated stub: its `bus_rows`
+entry is present, while injections excluded from that stub map to `None`.
+Detailed connectivity follows the cut, including calculated buses, topology
+connections, equipment metadata and remote regulation references. Unassigned
+source topology remains when no calculated bus identifies it as excluded.
+Empty voltage levels are pruned and nodes stranded by a cut retain explicit
+calculated-bus records so fresh XIIDM emission preserves the selected buses.
+The older selector-based `subset` shares this filtering but still returns a
+network directly.
 
 A power flow needs one reference bus per island, and an island with no source
 cannot be solved. `assign_island_references` with the per island policy gives
@@ -120,6 +138,8 @@ each island exactly one:
   demotes the others;
 - an island with no in-service generator is de-energized: its buses are typed
   isolated and the equipment on or touching them is taken out of service.
+  Three winding transformers lose only windings on those buses; the whole
+  transformer goes out when fewer than two live windings remain.
   Supply counts in-service generators only, so an island that only an HVDC
   line feeds is de-energized too, and the line with it. It gets its own code,
   `CANONICALIZE.ISLAND.HVDC_FED_DE_ENERGIZED`, which names the lines and the

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Island cuts return `BusSubset` with source-to-result row maps for all eleven
+  electrical tables, including retained dead-winding stub buses. Cuts filter
+  detailed connectivity and equipment references consistently and preserve
+  selected buses through fresh XIIDM and CGMES emission. Per-island reference
+  selection and de-energization use the per-winding behavior already supported
+  by normalization, retaining the other two live windings.
+
 - Preserve BMOPF per-coil capacitor ratings as exact terminal shunts shared by
   matrix and distribution preparation consumers. Retain custom open-delta
   terminal maps and n-winding apparent-power bounds; edited winding maps cannot
