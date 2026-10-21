@@ -61,13 +61,16 @@ impl DynamicCase {
             })
             .collect()
     }
-    
+
     /// Check generic DYR bus references against a parsed balanced network.
     ///
     /// This deliberately does not validate `device_id`: there is no
     /// model-independent rule that the second DYR key names a generator.
     #[must_use]
-    pub fn unresolved_buses_in(&self, network: &crate::BalancedNetwork) -> Vec<UnresolvedBusReference> {
+    pub fn unresolved_buses_in(
+        &self,
+        network: &crate::BalancedNetwork,
+    ) -> Vec<UnresolvedBusReference> {
         let bus_ids: BTreeSet<u32> = network
             .buses()
             .iter()
@@ -97,11 +100,15 @@ impl DynamicStudy {
 
     /// The steady-state network, unchanged by the pairing.
     #[must_use]
-    pub fn network(&self) -> &crate::BalancedNetwork { &self.network }
+    pub fn network(&self) -> &crate::BalancedNetwork {
+        &self.network
+    }
 
     /// The loss-preserving dynamic-model records.
     #[must_use]
-    pub fn dynamics(&self) -> &DynamicCase { &self.dynamics }
+    pub fn dynamics(&self) -> &DynamicCase {
+        &self.dynamics
+    }
 
     /// DYR records whose bus reference is absent from the static case.
     #[must_use]
@@ -607,17 +614,18 @@ mod tests {
         assert_eq!(case.records().len(), 1);
         assert_eq!(case.records()[0].line(), 200_001);
     }
-    
+
     #[test]
     fn paired_dynamic_study_checks_bus_ids_but_keeps_device_keys_opaque() {
         let network = crate::BalancedNetwork::in_memory(
-            "static", 100.0,
+            "static",
+            100.0,
             vec![crate::Bus::new(crate::BusId(1), crate::BusType::Ref, 230.0)],
             Vec::new(),
         );
-        let dynamics = parse_dyr(
-            "1, 'GENCLS', '1', 13.0, 0.0 /\n2, 'USERMODEL', 'CUSTOM-A', 1.0 /\n",
-        ).expect("DYR parses");
+        let dynamics =
+            parse_dyr("1, 'GENCLS', '1', 13.0, 0.0 /\n2, 'USERMODEL', 'CUSTOM-A', 1.0 /\n")
+                .expect("DYR parses");
         let study = DynamicStudy::new(network, dynamics);
         let unresolved = study.unresolved_buses();
         assert_eq!(unresolved.len(), 1);
