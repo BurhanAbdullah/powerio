@@ -83,7 +83,7 @@ impl DynamicCase {
 /// A steady-state case explicitly paired with its transient-stability data.
 ///
 /// This is a study-level association, not a mutation of [`BalancedNetwork`].
-/// The current linking contract validates generic bus references only; it does
+/// The current linking guarantee validates generic bus references only; it does
 /// not resolve model-specific device keys or claim that the named device exists.
 #[derive(Clone, Debug)]
 pub struct DynamicStudy {
