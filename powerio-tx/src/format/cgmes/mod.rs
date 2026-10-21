@@ -302,7 +302,12 @@ fn push_zip(
         if file.is_dir() {
             continue;
         }
-        let raw_name = archive_entry_name(file.name(), archive_name, index)?.into_owned();
+        let raw_name = file
+            .name()
+            .map_err(|error| {
+                format_error(format!("cannot read entry name in {archive_name}: {error}"))
+            })?
+            .into_owned();
         let path = strict_archive_path(&raw_name)?;
         if file
             .unix_mode()
@@ -361,23 +366,11 @@ fn push_zip(
     Ok(())
 }
 
-fn archive_entry_name<'a>(
-    name: zip::result::ZipResult<Cow<'a, str>>,
-    archive_name: &str,
-    index: usize,
-) -> Result<Cow<'a, str>> {
-    name.map_err(|error| {
-        format_error(format!(
-            "cannot read entry {index} name from {archive_name}: {error}"
-        ))
-    })
-}
-
 /// Open an archive after bounding its end records and the entry counts they
 /// declare, then refuse entries that disagree with the first count, leave
 /// the entry data, or share bytes.
 ///
-/// The ZIP reader examines end records from the last. It reserves its entry table
+/// zip 8.6 examines end records from the last. It reserves its entry table
 /// from the count of the first record it accepts and indexes every central
 /// record before `ZipArchive::new` returns; when that fails, it falls back to
 /// an earlier record and reserves again. So before opening, the number of
@@ -432,9 +425,11 @@ fn open_archive<'a>(
         {
             Some(end) if end <= directory_start => regions.push((start, end, index)),
             _ => {
+                let entry_name = entry.name().map_err(|error| {
+                    format_error(format!("cannot read entry name in {archive_name}: {error}"))
+                })?;
                 return Err(format_error(format!(
-                    "archive {archive_name} is refused as malformed: entry {} lies outside the archive's entry data",
-                    archive_entry_name(entry.name(), archive_name, index)?
+                    "archive {archive_name} is refused as malformed: entry {entry_name} lies outside the archive's entry data"
                 )));
             }
         }
@@ -444,18 +439,16 @@ fn open_archive<'a>(
     regions.sort_unstable();
     if let Some(pair) = regions.windows(2).find(|pair| pair[1].0 < pair[0].1) {
         let name = |index| {
-            archive_entry_name(
-                archive
-                    .name_for_index(index)
-                    .unwrap_or(Err(zip::result::ZipError::FileNotFound)),
-                archive_name,
-                index,
-            )
+            archive
+                .name_for_index(index)
+                .and_then(std::result::Result::ok)
+                .map(std::borrow::Cow::into_owned)
+                .unwrap_or_default()
         };
         return Err(format_error(format!(
             "archive {archive_name} is refused as unsafe: entries {} and {} overlap",
-            name(pair[0].2)?,
-            name(pair[1].2)?
+            name(pair[0].2),
+            name(pair[1].2)
         )));
     }
     Ok(archive)
@@ -466,7 +459,7 @@ const ZIP64_END_LOCATOR: &[u8] = b"PK\x06\x07";
 const ZIP64_END_RECORD: &[u8] = b"PK\x06\x06";
 
 /// Most end records an archive may hold: its end of central directory
-/// signatures, plus the Zip64 end records the ZIP reader reads for their locators.
+/// signatures, plus the Zip64 end records zip 8.6 reads for their locators.
 /// An honest archive holds one or two, and a four byte signature occurs by
 /// chance in compressed data about once per 4 GiB. Each record can cost the
 /// reader, and the scan in [`declared_entries`], one search of the archive,
@@ -476,7 +469,7 @@ const MAX_END_RECORDS: usize = 8;
 /// The entry counts an archive's end records declare.
 #[derive(Debug, PartialEq, Eq)]
 struct DeclaredEntries {
-    /// The count of the end record the ZIP reader examines first: the last end
+    /// The count of the end record zip 8.6 examines first: the last end
     /// record signature whose comment fits in the archive, or the Zip64
     /// record its locator names when a 16 bit field is saturated.
     first: u64,
@@ -502,7 +495,7 @@ enum EndCount {
     Zip64(u64),
 }
 
-/// Read every end record the ZIP reader may examine, last first.
+/// Read every end record zip 8.6 may examine, last first.
 ///
 /// These checks are a subset of those the reader applies before it reserves
 /// a table, so it may reject a record accepted here and fall back to an
@@ -6443,7 +6436,7 @@ mod tests {
     #[test]
     fn every_end_record_the_reader_may_fall_back_to_is_bounded() {
         // The last end record declares one entry, but no central record
-        // follows its directory offset, so the ZIP reader rejects it and falls back
+        // follows its directory offset, so zip 8.6 rejects it and falls back
         // to the earlier Zip64 record, reserving a table from that count.
         let claimed = MAX_FILES as u64 + 1;
         let mut fallback = b"PK\x03\x04".to_vec();
