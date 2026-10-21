@@ -141,7 +141,6 @@ pub use powerio_tx::{
 /// the facade root.
 pub use powerio_tx::{contingency, dynamic, geo, network, version};
 
-
 pub use powerio_core::diagnostic_codes;
 /// The common module records and containers. These explicit facade exports
 /// keep ordinary callers out of the component crate paths.
