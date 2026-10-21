@@ -615,13 +615,17 @@ impl BalancedNetwork {
 
     /// Scale every transformer's series impedance by its impedance correction
     /// table, at the winding's present turns ratio or phase shift, returning
-    /// the number of two winding transformers and three winding transformer
-    /// windings scaled.
+    /// the number of two winding transformers and three winding correction
+    /// targets (windings or pairs, according to ZCOD) scaled.
     ///
     /// A two winding transformer's factor multiplies `r + jx`. A three winding
     /// transformer's factor for a winding multiplies that winding's star
     /// impedance, and the pairwise impedances are restated from the scaled
-    /// star. The first call records each scaled transformer's nominal
+    /// star. With PSS/E `ZCOD=1`, TAB1/2/3 instead scale nominal Z12/Z23/Z31
+    /// at the sole winding with a nonfixed control (even if disabled).
+    /// A ZCOD=1 transformer with no unique adjustable winding is skipped;
+    /// the RAW reader refuses that ambiguous configuration.
+    /// The first call records each scaled transformer's nominal
     /// impedance under `extras["impedance_correction_nominal"]`, and every
     /// call scales that nominal value: a repeated call changes nothing, and a
     /// call after a tap or shift change evaluates the table there. The PSS/E
@@ -652,9 +656,23 @@ impl BalancedNetwork {
             scaled += 1;
         }
         for transformer in self.transformers_3w_mut().iter_mut() {
+            let pairwise_mode =
+                transformer.extras.get("psse_zcod").and_then(Value::as_i64) == Some(1);
+            let controlling = transformer.impedance_correction_control_winding();
+            // The RAW reader refuses this ambiguous configuration. If controls
+            // were edited afterward, leave this transformer unchanged and
+            // contribute zero to the aggregate applied count.
+            if pairwise_mode && controlling.is_none() {
+                continue;
+            }
             let factors: [Option<(f64, f64)>; 3] = std::array::from_fn(|winding| {
                 let correction = transformer.winding_impedance_correction(winding)?;
-                let w = &transformer.windings[winding];
+                let setting = if pairwise_mode {
+                    controlling.unwrap_or(winding)
+                } else {
+                    winding
+                };
+                let w = &transformer.windings[setting];
                 let at = match correction.variable {
                     ImpedanceCorrectionVariable::Angle => w.shift * angle_scale,
                     _ => w.tap,
@@ -665,7 +683,19 @@ impl BalancedNetwork {
                 continue;
             }
             let pairwise = transformer.z.map(|z| [z.r, z.x]);
-            let [z12, z23, z31] = recorded_nominal(&mut transformer.extras, pairwise);
+            let nominal = recorded_nominal(&mut transformer.extras, pairwise);
+            if pairwise_mode {
+                for ((z, [r, x]), factor) in transformer.z.iter_mut().zip(nominal).zip(factors) {
+                    (z.r, z.x) = if let Some(factor) = factor {
+                        scaled += 1;
+                        complex_product((r, x), factor)
+                    } else {
+                        (r, x)
+                    };
+                }
+                continue;
+            }
+            let [z12, z23, z31] = nominal;
             let star = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| {
                 ((a[0] + b[0] - c[0]) / 2.0, (a[1] + b[1] - c[1]) / 2.0)
             };

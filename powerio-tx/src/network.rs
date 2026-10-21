@@ -3747,8 +3747,29 @@ impl Transformer3W {
             .unwrap_or_default()
     }
 
+    /// The sole adjustable winding for PSS/E bus-to-bus correction. The
+    /// sign of COD enables regulation but does not change which winding the
+    /// tables describe: a disabled nonzero control remains adjustable.
+    pub(crate) fn impedance_correction_control_winding(&self) -> Option<usize> {
+        let mut adjustable = self
+            .windings
+            .iter()
+            .enumerate()
+            .filter(|(_, winding)| {
+                winding
+                    .control
+                    .as_ref()
+                    .is_some_and(|control| control.mode != TransformerControlMode::Fixed)
+            })
+            .map(|(index, _)| index);
+        let winding = adjustable.next()?;
+        adjustable.next().is_none().then_some(winding)
+    }
+
     /// The impedance correction table winding `winding` (0, 1, or 2) follows:
-    /// it scales that winding's star impedance. The tables are kept under
+    /// it scales that winding's star impedance, except with PSS/E `ZCOD=1`,
+    /// where entries 0/1/2 scale Z12/Z23/Z31 at the sole adjustable winding.
+    /// The tables are kept under
     /// `extras["impedance_correction"]` as three entries in winding order, each
     /// a table or `null`; an absent or malformed entry reads as none.
     ///
@@ -6862,6 +6883,4 @@ mod tests {
         let empty = ImpedanceCorrection::new(3, ImpedanceCorrectionVariable::Ratio, Vec::new());
         assert_eq!(empty.calc_factor(1.0), None);
     }
-
-
 }

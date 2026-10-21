@@ -167,3 +167,30 @@ fn invalid_equivalents_return_errors_instead_of_nonfinite_shunts() {
         Err(powerio_tx::Error::NonFiniteSusceptance { row: 0 })
     ));
 }
+
+#[test]
+fn impedance_correction_before_merging_folds_the_corrected_admittance() {
+    use powerio_tx::{ImpedanceCorrection, ImpedanceCorrectionPoint, ImpedanceCorrectionVariable};
+    let mut net = network(1.05, 20.0, true);
+    net.branches_mut()[0].set_impedance_correction(Some(ImpedanceCorrection::new(
+        1,
+        ImpedanceCorrectionVariable::Ratio,
+        vec![
+            ImpedanceCorrectionPoint::new(0.9, 1.0, 0.0),
+            ImpedanceCorrectionPoint::new(1.1, 2.0, 0.2),
+        ],
+    )));
+    assert_eq!(net.apply_impedance_correction(), 1);
+    assert!((net.branches()[0].r - 0.0025).abs() < 1e-12);
+    assert!((net.branches()[0].x - 0.1765).abs() < 1e-12);
+    assert_projection(&net, BusMergeRule::closed_switches());
+    let mut merged = net
+        .merge_buses(&BusMergeRule::closed_switches())
+        .unwrap()
+        .network;
+    assert_eq!(
+        merged.apply_impedance_correction(),
+        0,
+        "the transformer is already folded into the shunt"
+    );
+}

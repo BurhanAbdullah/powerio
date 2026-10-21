@@ -2,47 +2,22 @@
 
 ## Unreleased
 
-- Behavior change: PSS/E and RAWX two winding transformers whose winding 2
-  ratio `t2` is not one now read with the admittance PSS/E solves with. `t2`
-  is `WINDV2` under `CW` 1, `WINDV2` over the winding 2 bus base kV under
-  `CW` 2, and `WINDV2·NOMV2` over that base under `CW` 3. PSS/E places the
-  series impedance between an ideal `t1 : 1` at winding 1 and an ideal
-  `1 : t2` at winding 2; the neutral branch states one tap `t1 / t2` with the
-  impedance behind it, and the reader divided the ratios without moving the
-  impedance across `t2`, so every such transformer read with an impedance off
-  by `t2²`. The impedance now scales by `t2²` and a winding 1 tap control
-  range divides by `t2`, so the branch's two port admittance equals the PSS/E
-  circuit's, and the branch `r`, `x`, and tap limits of these transformers
-  change. A transformer with `t2 = 1` reads as before. Writing back to PSS/E
-  is consistent: the same format write echoes the source record byte for
-  byte, and fresh output states the canonical `CW = 1` record with winding 2
-  at one and the scaled impedance, which reads back to the same branch with
-  nothing scaled twice. A PowerIO IR document an earlier release wrote from
-  such a case carries the old impedance, so read the case again.
+- PSS/E transformer impedance correction tables are read, retained and freshly
+  written. `apply_impedance_correction` interpolates their complex factors
+  from a cached nominal impedance, so repeated application is idempotent.
+  Original table ranges select angle versus ratio; ratio points always use
+  bus-base per-unit winding ratios, independently of CW=1/2/3. Two-winding
+  tables follow winding 1 while accounting for the branch's t1/t2 tap.
+  Fresh output preserves that function and table classification, choosing an
+  equivalent nonunit winding 2 when needed. Three-winding ZCOD=0 corrects
+  star impedances; ZCOD=1 corrects Z12/Z23/Z31 at the sole adjustable winding.
+  Ambiguous ZCOD=1 controls are refused. RAW33/34 output freezes ZCOD=1 at
+  its current setting with a diagnostic. Partial-winding statuses and all
+  twelve ratings remain intact. Apply correction before bus merging or
+  switch normalization so folded admittance uses the corrected impedance.
+  RAWX table support remains deferred and reports dropped corrections.
+  Tables and nominal caches live in extras; the IR schema is unchanged.
 
-- PSS/E transformer impedance correction tables are read, kept, and written
-  back. The reader parses the section in both layouts: one line of eleven
-  real `T, F` pairs before revision 34, and complex `T, Re(F), Im(F)` points
-  over as many lines as a table takes, ended by `0.0, 0.0, 0.0`, from
-  revision 34. Each transformer winding that names a table through `TAB`
-  carries it, read through `Branch::impedance_correction` and
-  `Transformer3W::winding_impedance_correction`. The factor is tabulated
-  against the phase shift for a winding that controls active power flow or
-  states a fixed phase shift, and against winding 1's turns ratio otherwise;
-  turns ratios convert to the branch tap's per unit terms with the winding's
-  own `CW` and its winding 2 ratio. The new
-  `BalancedNetwork::apply_impedance_correction` scales each transformer's
-  series impedance by the factor interpolated at its present ratio or angle:
-  `r + jx` for a two winding transformer, a complex factor that commutes
-  with the reader's referral of that impedance across the winding 2 ratio,
-  and the winding's star impedance for a three winding transformer. It records the nominal impedance and
-  scales from it, so a second call changes nothing. The PSS/E writer states
-  the nominal impedance beside each table, renumbering a table whose per unit
-  points differ between windings, and revision 33 output reports the
-  imaginary parts and the points past eleven it cannot state. Tables no
-  transformer names, and table numbers no table answers, are reported. RAWX
-  output reports the tables it drops. The tables live in `extras`, so the
-  PowerIO IR schema is unchanged.
 - Preserve BMOPF per-coil capacitor ratings as exact terminal shunts shared by
   matrix and distribution preparation consumers. Retain custom open-delta
   terminal maps and n-winding apparent-power bounds; edited winding maps cannot
