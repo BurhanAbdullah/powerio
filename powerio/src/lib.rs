@@ -133,7 +133,12 @@ pub use powerio_tx::{
 /// Derived indexes, normalization data, solver tables, and component error
 /// types remain available from `powerio-tx` rather than being duplicated at
 /// the facade root.
-pub use powerio_tx::{contingency, geo, network, version};
+pub use powerio_tx::{contingency, dynamic, geo, network, version};
+/// Loss-preserving PSS/E transient-stability parsing and explicit study pairing.
+pub use powerio_tx::dynamic::{
+    DynamicCase, DynamicRecord, DynamicStudy, DyrError, UnresolvedBusReference,
+    parse_dyr, parse_dyr_bytes,
+};
 
 pub use powerio_core::diagnostic_codes;
 /// The common module records and containers. These explicit facade exports
