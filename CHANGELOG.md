@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add solver-independent AC multiconductor IVR preparation in `powerio-matrix`,
+  including explicit terminal/coil axes, bases, selected bounds, winding-current
+  transformer descriptors and supported nonlinear load/IBR controls. Unsupported
+  formulation profiles, including terminal-referenced voltage sources, fail
+  explicitly; no optimizer or AD dependency is added. Star-device current caps
+  follow terminal identities, and inverter control laws retain selected reactive
+  capability bounds.
+
 - Multiconductor voltage sources can prescribe voltages relative to an explicit
   terminal, preserving floating-star displacement and reference current in the
   sparse matrix constraints. IR 2 carries these as distinct tagged source
