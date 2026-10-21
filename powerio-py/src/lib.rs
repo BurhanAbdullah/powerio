@@ -1927,7 +1927,7 @@ impl PyBusMerge {
         self.merge.switch_rows.clone()
     }
 
-    /// Rows of the merged shunt table that hold removed branches' charging.
+    /// Rows of the merged shunt table that hold removed branches' equivalent admittances.
     #[getter]
     fn charging_shunts(&self) -> Vec<usize> {
         self.merge.charging_shunts.clone()

@@ -198,6 +198,13 @@
 
 ### Changed results
 
+- Bus merging preserves the complete equivalent admittance of a finite
+  transformer bypassed by a closed switch or jumper, including off-nominal
+  taps, phase shifts, and tap-scaled terminal charging. `MergedCharging::Drop`
+  drops only terminal charging; the series equivalent remains. Bypassing an
+  ideal transformer with a nonunity tap or phase shift returns an error
+  instead of silently deleting its voltage constraint.
+
 - `reduce_zero_impedance` and `merge_zero_impedance_buses` now run through
   `merge_buses`, so they are linear rather than quadratic in the bus count and
   rewrite every element reference: `merge_zero_impedance_buses` used to leave

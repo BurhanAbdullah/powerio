@@ -344,7 +344,7 @@ class BusMerge:
     (``"zero_impedance"``, ``"closed_switch"``, or ``"shorted"``), status, and
     ratings. ``branch_rows`` and ``switch_rows`` map each source row to its
     merged row, or ``None`` when removed, and ``charging_shunts`` lists the
-    merged shunt rows that hold removed branches' charging. ``diagnostics`` holds the merge's
+    merged shunt rows that hold removed branches' equivalent admittances. ``diagnostics`` holds the merge's
     findings, which the merged network's module carries as well.
     """
 
@@ -792,8 +792,11 @@ class BalancedNetwork:
         first. Every element moves onto it. The merged elements and any
         branch the merge shorts are removed and listed with their source rows
         and ratings. ``charging="fold"`` turns each removed branch's line
-        charging and line shunts into a fixed shunt at the survivor;
-        ``"drop"`` discards them. This network is unchanged.
+        charging and line shunts, including tap scaling, into a fixed shunt
+        at the survivor. ``"drop"`` discards only terminal charging. Both
+        choices preserve the series equivalent of a bypassed transformer.
+        An ideal transformer with a nonunity tap or phase shift cannot be
+        bypassed and raises an error. This network is unchanged.
 
         Raises :class:`PowerIODataError` for a threshold that is negative or
         not finite, or for ``"psse"`` with no threshold when the case states
