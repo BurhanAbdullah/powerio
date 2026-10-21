@@ -404,6 +404,9 @@ pub mod codes {
             "a bus merge rule cannot be applied to this network", category = Data;
         CANONICALIZE_MERGE_FLOW_SHAPE_MISMATCH = "CANONICALIZE.MERGE.FLOW_SHAPE_MISMATCH", Error,
             "a merged network solution does not match the merge's tables", category = Data;
+        CANONICALIZE_NORMALIZE_WINDING_TAKEN_OUT =
+            "CANONICALIZE.NORMALIZE.WINDING_TAKEN_OUT", Warning,
+            "a three winding transformer winding on a bus normalization drops was taken out of service";
 
         // BUILD: assembling a derived object from a network that already parsed.
         BUILD_INDEX_UNKNOWN_BUS = "BUILD.INDEX.UNKNOWN_BUS", Error,
