@@ -334,16 +334,42 @@ fn ir_version_2_schemas_only_add() {
 }
 
 #[test]
+fn monitor_schema_additions_preserve_published_variants() {
+    let published: serde_json::Value =
+        serde_json::from_str(&read_schema_file("pio-ir/2/0.11.5/schema.json")).unwrap();
+    let current: serde_json::Value =
+        serde_json::from_str(&read_schema_file(CURRENT_SCHEMA)).unwrap();
+    for name in ["MonitorScope", "MonitorStatement"] {
+        assert_monitor_schema_preserved(
+            &published["$defs"][name],
+            &current["$defs"][name],
+            name,
+        );
+    }
+}
+
+#[test]
 fn monitor_schema_guard_rejects_new_restrictions_and_allows_additive_shapes() {
     let published = serde_json::json!({"type": "string"});
-    let narrowed = serde_json::json!({"type": "string", "maxLength": 0});
-    assert!(
-        std::panic::catch_unwind(|| {
-            assert_monitor_schema_preserved(&published, &narrowed, "probe");
-        })
-        .is_err(),
-        "new validation restrictions must not be silently accepted"
-    );
+    for (keyword, value) in [
+        ("maxLength", serde_json::json!(0)),
+        ("pattern", serde_json::json!("^")),
+        ("maximum", serde_json::json!(0)),
+        ("maxItems", serde_json::json!(0)),
+    ] {
+        let mut narrowed = published.clone();
+        narrowed
+            .as_object_mut()
+            .unwrap()
+            .insert(keyword.to_owned(), value);
+        assert!(
+            std::panic::catch_unwind(|| {
+                assert_monitor_schema_preserved(&published, &narrowed, "probe");
+            })
+            .is_err(),
+            "new validation restriction {keyword} must not be silently accepted"
+        );
+    }
 
     let published_object = serde_json::json!({
         "type": "object",
