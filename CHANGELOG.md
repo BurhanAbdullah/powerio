@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Parse caller-supplied file trees entirely in memory, including PyPSA folders
+  and OpenDSS projects with nested references.
+- Keep included files and their original paths when copying unchanged OpenDSS
+  projects.
+- Discover grid format names, electrical families, and reader/writer capabilities
+  through the Rust facade.
 - Add explicit angle-difference policies to DC OPF, AC OPF and AC power-flow
   preparation and `powerio dcopf --angle-difference-bounds`. `PowerModelsPad`
   remains the default zero-centered ±60° policy; `ShiftCenteredPad` centers
