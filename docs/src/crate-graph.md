@@ -21,7 +21,7 @@ powerio-matrix        sparse matrices and graph data for both network families;
 powerio               PioValue, parse, emit, serialize, deserialize, and the
                       re-exports; depends on core, tx, dist, prob, sincal, and on
                       matrix behind the `matrix` feature
-powerio-cli, powerio-capi, powerio-py    over the facade
+powerio-cli, powerio-capi, powerio-py, powerio-wasm    over the facade
 ```
 
 A change has to keep that shape. `powerio-core` owns no electrical type,
@@ -48,7 +48,7 @@ crates and any internal workspace dependency of `powerio-sincal` other than
 
 ## Components
 
-![The PowerIO component map: powerio-core at the bottom; powerio-tx and powerio-dist as independent siblings above it; powerio-prob over both networks; powerio-matrix over the networks and prob; the powerio facade over the component crates with an optional matrix feature edge; powerio-cli, powerio-capi, and powerio-py over the facade; solvers consume instances from powerio-prob and the GridFM pipeline reads Parquet datasets from powerio-matrix.](assets/architecture.svg)
+![The PowerIO component map: powerio-core at the bottom; powerio-tx and powerio-dist as independent siblings above it; powerio-prob over both networks; powerio-matrix over the networks and prob; the powerio facade over the component crates with an optional matrix feature edge; powerio-cli, powerio-capi, powerio-py, and powerio-wasm over the facade; solvers consume instances from powerio-prob and the GridFM pipeline reads Parquet datasets from powerio-matrix.](assets/architecture.svg)
 
 The facade does not force a consumer to depend on every component crate, and
 the two network crates are siblings with no edge between them. Solvers consume

@@ -2594,6 +2594,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "powerio-wasm"
+version = "0.11.5"
+dependencies = [
+ "powerio",
+ "rusqlite",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "ppv-lite86"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
