@@ -1270,6 +1270,11 @@ pub fn emit_with_options(
         let (artifacts, format_diagnostics) = cgmes::artifacts(&working).map_err(core_error)?;
         diagnostics.extend(format_diagnostics.into_records());
         diagnostics.extend(sincal_source_omitted(&working));
+        powerio_sincal::attach_retention_details(
+            module.diagnostics(),
+            &mut diagnostics,
+            "EMIT.SINCAL.RETAINED_SOURCE_OMITTED",
+        )?;
         return destination.__commit_artifacts(
             true,
             powerio_core::Fidelity::Canonical,
@@ -1277,7 +1282,12 @@ pub fn emit_with_options(
             diagnostics,
         );
     }
-    let conv = emit_text_with_options(module, format, options)?;
+    let mut conv = emit_text_with_options(module, format, options)?;
+    powerio_sincal::attach_retention_details(
+        module.diagnostics(),
+        &mut conv.diagnostics,
+        "EMIT.SINCAL.RETAINED_SOURCE_OMITTED",
+    )?;
     let artifact = powerio_core::MemoryArtifact::new(
         powerio_core::ArtifactPath::new("case").expect("static name is a valid artifact path"),
         conv.text.into_bytes(),
@@ -1322,6 +1332,11 @@ pub fn __emit_pypsa_csv_with_options(
         pypsa::pypsa_csv_artifacts(working.as_ref().unwrap_or(module.value()));
     diagnostics.extend(format_diagnostics);
     diagnostics.extend(sincal_source_omitted(module.value()));
+    powerio_sincal::attach_retention_details(
+        module.diagnostics(),
+        &mut diagnostics,
+        "EMIT.SINCAL.RETAINED_SOURCE_OMITTED",
+    )?;
     let artifacts = artifacts
         .into_iter()
         .map(|(name, text)| {
