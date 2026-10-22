@@ -678,7 +678,8 @@ fn indexed_assignment_scanner_handles_nested_index_expressions_and_comparisons()
 fn indexed_assignment_scanner_handles_ellipsis_continuation_and_statement_boundaries() {
     let continued = "mpc.bus(:, ...\n [3 4]) = mpc.bus(:, [3 4]) / 1000;";
     let same_line = "scale = 1000; mpc.bus(:, [3 4]) = mpc.bus(:, [3 4]) / scale;";
-    for mutation in [continued, same_line] {
+    let comma_separated = "scale = 1000, mpc.bus(:, [3 4]) = mpc.bus(:, [3 4]) / scale;";
+    for mutation in [continued, same_line, comma_separated] {
         let src = format!("{CASE_TINY}\n{mutation}\n");
         let mut warnings = crate::collect::Diagnostics::new();
         warnings.locate_in(powerio_core::SourceId::new("/input").unwrap(), 0);
