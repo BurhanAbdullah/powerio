@@ -1155,7 +1155,8 @@ fn resolve_branches_in_subsystem(
         if buses.contains(&branch.from)
             && buses.contains(&branch.to)
             && kv_range.is_none_or(|(lo, hi)| {
-                bus_in_kv_range(index, branch.from, lo, hi) && bus_in_kv_range(index, branch.to, lo, hi)
+                bus_in_kv_range(index, branch.from, lo, hi)
+                    && bus_in_kv_range(index, branch.to, lo, hi)
             })
         {
             out.branch_rows.insert(row);
