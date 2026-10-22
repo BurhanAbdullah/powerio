@@ -1280,3 +1280,151 @@ fn sincal_balanced_cli_parses_converts_and_echoes_without_inference() {
     let stdin = run_with_stdin(&["summary", "-", "--from", "sincal-balanced"], &native);
     assert_success(&stdin);
 }
+
+#[test]
+fn merge_buses_applies_the_psse_rule_before_summary_convert_and_verify() {
+    let case = repo_file("tests/data/psse/merge_v35.raw");
+    let case = case.to_str().unwrap();
+
+    let out = run(&["summary", case, "--merge-buses", "psse"]);
+    assert_success(&out);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["elements"]["buses"], 2);
+    let merge = &value["bus_merge"];
+    assert_eq!(merge["merged_buses"], 3);
+    assert_eq!(merge["removed_branches"]["zero_impedance"], 2);
+    assert_eq!(merge["removed_switches"], 1);
+    let warnings = value["warnings"].as_array().unwrap();
+    assert!(warnings.iter().any(|w| {
+        w.as_str()
+            .unwrap()
+            .starts_with("CANONICALIZE.MERGE.CLOSED_SWITCH")
+    }));
+
+    // Without the flag the summary is unchanged.
+    let out = run(&["summary", case]);
+    assert_success(&out);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["elements"]["buses"], 5);
+    assert!(value.get("bus_merge").is_none());
+
+    let out = run(&[
+        "convert",
+        case,
+        "--merge-buses",
+        "psse=1e-4",
+        "--to",
+        "matpower",
+        "-o",
+        "-",
+    ]);
+    assert_success(&out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let bus_rows = stdout
+        .split("mpc.bus = [")
+        .nth(1)
+        .unwrap()
+        .split("];")
+        .next()
+        .unwrap()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count();
+    assert_eq!(bus_rows, 2, "{stdout}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("CANONICALIZE.MERGE.ZERO_IMPEDANCE"),
+        "{stderr}"
+    );
+
+    let out = run(&["verify", case, "--merge-buses", "exact"]);
+    assert_success(&out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("n=4"),
+        "exact merges only the switch: {stdout}"
+    );
+}
+
+#[test]
+fn merge_buses_refuses_an_unknown_rule_and_a_missing_threshold() {
+    let case = repo_file("tests/data/psse/merge_v35.raw");
+    let out = run(&[
+        "--diagnostics-format",
+        "json",
+        "summary",
+        case.to_str().unwrap(),
+        "--merge-buses",
+        "nearby",
+    ]);
+    assert_eq!(out.status.code(), Some(2), "a request failure");
+    assert_eq!(
+        json_diagnostics(&out)[0]["code"],
+        "REQUEST.CLI.OPTION_INVALID"
+    );
+
+    // MATPOWER states no THRSHZ, so `psse` needs an explicit threshold.
+    let case = repo_file("tests/data/case9.m");
+    let out = run(&[
+        "--diagnostics-format",
+        "json",
+        "summary",
+        case.to_str().unwrap(),
+        "--merge-buses",
+        "psse",
+    ]);
+    assert_eq!(out.status.code(), Some(5), "a data failure");
+    assert_eq!(
+        json_diagnostics(&out)[0]["code"],
+        "CANONICALIZE.MERGE.INVALID_RULE"
+    );
+}
+
+/// Three islands: one with the reference bus, one with generation only, and
+/// one with load only.
+const THREE_ISLANDS: &str = "function mpc = islands
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+\t1\t3\t0\t0\t0\t0\t1\t1\t0\t230\t1\t1.1\t0.9;
+\t2\t1\t50\t0\t0\t0\t1\t1\t0\t230\t1\t1.1\t0.9;
+\t3\t1\t0\t0\t0\t0\t1\t1\t0\t230\t1\t1.1\t0.9;
+\t4\t1\t30\t0\t0\t0\t1\t1\t0\t230\t1\t1.1\t0.9;
+\t5\t1\t20\t0\t0\t0\t1\t1\t0\t230\t1\t1.1\t0.9;
+\t6\t1\t10\t0\t0\t0\t1\t1\t0\t230\t1\t1.1\t0.9;
+];
+mpc.gen = [
+\t1\t50\t0\t100\t-100\t1\t100\t1\t200\t0;
+\t3\t30\t0\t100\t-100\t1\t100\t1\t150\t0;
+];
+mpc.branch = [
+\t1\t2\t0.01\t0.1\t0\t0\t0\t0\t0\t0\t1\t-360\t360;
+\t3\t4\t0.01\t0.1\t0\t0\t0\t0\t0\t0\t1\t-360\t360;
+\t5\t6\t0.01\t0.1\t0\t0\t0\t0\t0\t0\t1\t-360\t360;
+];
+mpc.dcline = [
+\t1\t5\t1\t10\t9.5\t0\t0\t1\t1\t0\t20\t-10\t10\t-10\t10\t0\t0;
+];
+";
+
+#[test]
+fn summary_lists_the_islands() {
+    let out = run_with_stdin(
+        &["summary", "-", "--from", "matpower"],
+        THREE_ISLANDS.as_bytes(),
+    );
+    assert_success(&out);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let islands = &value["topology"]["islands"];
+    assert_eq!(islands["count"], 3);
+    assert_eq!(islands["unsupplied"], 1);
+    assert_eq!(islands["unsupplied_hvdc_fed"], 1);
+    assert_eq!(islands["without_reference"], 2);
+    assert_eq!(
+        islands["islands"][0]["reference_buses"],
+        serde_json::json!([1])
+    );
+    assert_eq!(islands["islands"][2]["generators"], 0);
+    assert_eq!(islands["islands"][2]["hvdc_ties"], 1);
+    assert_eq!(islands["islands"][1]["hvdc_ties"], 0);
+}
