@@ -12,6 +12,8 @@ name: Validation
 on:
   pull_request:
     paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
       - "powerio/**"
       - "powerio-tx/**"
       - "powerio-core/**"
