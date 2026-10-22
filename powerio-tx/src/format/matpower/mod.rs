@@ -173,6 +173,11 @@ fn indexed_assignment_spans(source: &str) -> Vec<(usize, usize, &str)> {
             i += 1;
             continue;
         }
+        if let Some(end) = matlab_continuation_end(b, i) {
+            i = end;
+            line_start = i;
+            continue;
+        }
         if c == b'%' {
             while i < b.len() && b[i] != b'\n' {
                 i += 1;
@@ -194,14 +199,7 @@ fn indexed_assignment_spans(source: &str) -> Vec<(usize, usize, &str)> {
             b']' => square = square.saturating_sub(1),
             b'{' => brace += 1,
             b'}' => brace = brace.saturating_sub(1),
-            b',' if p == 0 && square == 0 && brace == 0 => statement = i + 1,
-            b';' if p == 0 && square == 0 && brace == 0 => statement = i + 1,
-            b'\n' if p == 0 && square == 0 && brace == 0 => {
-                if !source[line_start..i].trim_end().ends_with("...") {
-                    statement = i + 1;
-                }
-                line_start = i + 1;
-            }
+            b',' | b';' | b'\n' if p == 0 && square == 0 && brace == 0 => statement = i + 1,
             _ => {}
         }
         if c == b'\n' {
@@ -217,11 +215,39 @@ fn is_transpose_quote(b: &[u8], at: usize) -> bool {
     while j > 0 && b[j - 1].is_ascii_whitespace() {
         j -= 1;
     }
+    // The dot in `A.'` belongs to the nonconjugate transpose operator.
+    if j > 0 && b[j - 1] == b'.' {
+        j -= 1;
+    }
     j > 0
         && matches!(
             b[j - 1],
             b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b')' | b']' | b'}' | b'\''
         )
+}
+
+/// MATLAB ignores everything after an unquoted ellipsis on its physical line.
+/// Return the original offset after that line, without inspecting its contents.
+fn matlab_continuation_end(b: &[u8], at: usize) -> Option<usize> {
+    (b.get(at..at + 3) == Some(b"...")).then(|| {
+        b[at..]
+            .iter()
+            .position(|c| *c == b'\n')
+            .map_or(b.len(), |offset| at + offset + 1)
+    })
+}
+
+fn skip_matlab_assignment_trivia(b: &[u8], mut at: usize) -> usize {
+    loop {
+        while at < b.len() && b[at].is_ascii_whitespace() {
+            at += 1;
+        }
+        if let Some(end) = matlab_continuation_end(b, at) {
+            at = end;
+        } else {
+            return at;
+        }
+    }
 }
 
 fn indexed_assignment_at(source: &str, start: usize) -> Option<(usize, &str)> {
@@ -235,9 +261,7 @@ fn indexed_assignment_at(source: &str, start: usize) -> Option<(usize, &str)> {
         return None;
     }
     let field = &source[field_start..i];
-    while i < b.len() && b[i].is_ascii_whitespace() {
-        i += 1;
-    }
+    i = skip_matlab_assignment_trivia(b, i);
     if b.get(i) != Some(&b'(') {
         return None;
     }
@@ -263,6 +287,10 @@ fn indexed_assignment_at(source: &str, start: usize) -> Option<(usize, &str)> {
             i += 1;
             continue;
         }
+        if let Some(end) = matlab_continuation_end(b, i) {
+            i = end;
+            continue;
+        }
         if c == b'%' {
             while i < b.len() && b[i] != b'\n' {
                 i += 1;
@@ -274,10 +302,7 @@ fn indexed_assignment_at(source: &str, start: usize) -> Option<(usize, &str)> {
             b'(' => depth += 1,
             b')' if depth == 0 => {
                 let end = i + 1;
-                i += 1;
-                while i < b.len() && b[i].is_ascii_whitespace() {
-                    i += 1;
-                }
+                i = skip_matlab_assignment_trivia(b, end);
                 if b.get(i) == Some(&b'=')
                     && b.get(i + 1) != Some(&b'=')
                     && !matches!(
@@ -299,7 +324,7 @@ fn indexed_assignment_at(source: &str, start: usize) -> Option<(usize, &str)> {
 
 fn matlab_statement_end(source: &str, start: usize) -> usize {
     let b = source.as_bytes();
-    let (mut i, mut line_start) = (start, start);
+    let mut i = start;
     let (mut p, mut square, mut brace) = (0usize, 0usize, 0usize);
     let mut quote = None;
 
@@ -321,6 +346,10 @@ fn matlab_statement_end(source: &str, start: usize) -> usize {
             i += 1;
             continue;
         }
+        if let Some(end) = matlab_continuation_end(b, i) {
+            i = end;
+            continue;
+        }
         if c == b'%' {
             while i < b.len() && b[i] != b'\n' {
                 i += 1;
@@ -335,17 +364,9 @@ fn matlab_statement_end(source: &str, start: usize) -> usize {
             b']' => square = square.saturating_sub(1),
             b'{' => brace += 1,
             b'}' => brace = brace.saturating_sub(1),
-            b';' if p == 0 && square == 0 && brace == 0 => return i + 1,
-            b'\n' if p == 0 && square == 0 && brace == 0 => {
-                if !source[line_start..i].trim_end().ends_with("...") {
-                    return i;
-                }
-                line_start = i + 1;
-            }
+            b',' | b';' if p == 0 && square == 0 && brace == 0 => return i + 1,
+            b'\n' if p == 0 && square == 0 && brace == 0 => return i,
             _ => {}
-        }
-        if c == b'\n' {
-            line_start = i + 1;
         }
         i += 1;
     }
