@@ -6,6 +6,104 @@ use std::path::Path;
 const SCHEMA_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/schema");
 const CURRENT_SCHEMA: &str = "pio-ir/2/0.11.6/schema.json";
 
+fn assert_monitor_schema_preserved(
+    published: &serde_json::Value,
+    current: &serde_json::Value,
+    path: &str,
+) {
+    fn discriminator(value: &serde_json::Value) -> Option<&serde_json::Value> {
+        let kind = &value["properties"]["kind"]["const"];
+        if kind.is_string() {
+            return Some(kind);
+        }
+        let ty = &value["properties"]["type"]["const"];
+        ty.is_string().then_some(ty)
+    }
+
+    match (published, current) {
+        (serde_json::Value::Object(old), serde_json::Value::Object(new)) => {
+            for (name, value) in old {
+                let current_value = new.get(name).unwrap_or_else(|| {
+                    panic!("{path}.{name}: published schema member was removed")
+                });
+                if name == "properties" {
+                    let old_properties = value.as_object().expect("published properties object");
+                    let new_properties = current_value
+                        .as_object()
+                        .expect("current properties object");
+                    let required = current["required"].as_array();
+                    for (property, old_schema) in old_properties {
+                        let new_schema = new_properties.get(property).unwrap_or_else(|| {
+                            panic!("{path}.properties.{property}: published property was removed")
+                        });
+                        assert_monitor_schema_preserved(
+                            old_schema,
+                            new_schema,
+                            &format!("{path}.properties.{property}"),
+                        );
+                    }
+                    for property in new_properties.keys() {
+                        if !old_properties.contains_key(property) {
+                            assert!(
+                                !required.is_some_and(|fields| fields.iter().any(|field| field == property)),
+                                "{path}.properties.{property}: additive property became required"
+                            );
+                            // A new optional property is backward compatible.
+                        }
+                    }
+                } else {
+                    assert_monitor_schema_preserved(
+                        value,
+                        current_value,
+                        &format!("{path}.{name}"),
+                    );
+                }
+            }
+            for name in new.keys() {
+                if !old.contains_key(name) {
+                    assert!(
+                        matches!(
+                            name.as_str(),
+                            "description" | "title" | "examples" | "default" | "deprecated"
+                                | "readOnly" | "writeOnly" | "$comment"
+                        ),
+                        "{path}.{name}: unapproved schema keyword was added"
+                    );
+                }
+            }
+        }
+        (serde_json::Value::Array(old), serde_json::Value::Array(new))
+            if path.ends_with(".oneOf") || path.ends_with(".anyOf") =>
+        {
+            let is_tagged = !old.is_empty() && old.iter().all(|item| discriminator(item).is_some());
+            if is_tagged {
+                for item in old {
+                    let key = discriminator(item).expect("tagged published variant");
+                    let matching = new.iter().find(|candidate| discriminator(candidate) == Some(key))
+                        .unwrap_or_else(|| panic!("{path}: published variant {key} was removed"));
+                    assert_monitor_schema_preserved(item, matching, path);
+                }
+                for item in new {
+                    assert!(
+                        discriminator(item).is_some(),
+                        "{path}: additive variant must have a kind/type discriminator"
+                    );
+                }
+            } else {
+                assert_eq!(old, new, "{path}: non-discriminated alternatives changed");
+            }
+        }
+        (serde_json::Value::Array(old), serde_json::Value::Array(new))
+            if path.ends_with(".enum") =>
+        {
+            for value in old {
+                assert!(new.contains(value), "{path}: published enum value {value} was removed");
+            }
+        }
+        _ => assert_eq!(published, current, "{path}: published schema changed"),
+    }
+}
+
 fn read_schema_file(relative: &str) -> String {
     let path = Path::new(SCHEMA_ROOT).join(relative);
     std::fs::read_to_string(&path).unwrap_or_else(|error| {
@@ -196,6 +294,12 @@ fn ir_version_2_schemas_only_add() {
                     "powerio.ReferencedVoltageSource"
                 );
                 assert_eq!(new_source["required"], serde_json::json!(["type", "value"]));
+            } else if name == "MonitorScope" || name == "MonitorStatement" {
+                assert_monitor_schema_preserved(
+                    definition,
+                    &current_defs[name],
+                    &format!("{earlier}: record {name}"),
+                );
             } else if let Some(values) = definition["enum"].as_array() {
                 // A list of allowed values keeps every value it had; it may
                 // gain values, and nothing else about it changes.
@@ -227,6 +331,59 @@ fn ir_version_2_schemas_only_add() {
             }
         }
     }
+}
+
+#[test]
+fn monitor_schema_guard_rejects_new_restrictions_and_allows_additive_shapes() {
+    let published = serde_json::json!({"type": "string"});
+    let narrowed = serde_json::json!({"type": "string", "maxLength": 0});
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_monitor_schema_preserved(&published, &narrowed, "probe");
+        })
+        .is_err(),
+        "new validation restrictions must not be silently accepted"
+    );
+
+    let published_object = serde_json::json!({
+        "type": "object",
+        "properties": {"kind": {"const": "old", "type": "string"}},
+        "required": ["kind"]
+    });
+    let additive_object = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "kind": {"const": "old", "type": "string"},
+            "label": {"type": "string"}
+        },
+        "required": ["kind"]
+    });
+    assert_monitor_schema_preserved(&published_object, &additive_object, "probe");
+
+    let restricted_object = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "kind": {"const": "old", "type": "string"},
+            "label": {"type": "string"}
+        },
+        "required": ["kind", "label"]
+    });
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_monitor_schema_preserved(&published_object, &restricted_object, "probe");
+        })
+        .is_err(),
+        "a newly added property must not become required"
+    );
+
+    let old_variants = serde_json::json!({"oneOf": [
+        {"properties": {"kind": {"const": "old", "type": "string"}}, "required": ["kind"], "type": "object"}
+    ]});
+    let extended_variants = serde_json::json!({"oneOf": [
+        {"properties": {"kind": {"const": "old", "type": "string"}}, "required": ["kind"], "type": "object"},
+        {"properties": {"kind": {"const": "new", "type": "string"}}, "required": ["kind"], "type": "object"}
+    ]});
+    assert_monitor_schema_preserved(&old_variants, &extended_variants, "probe");
 }
 
 /// Every property of every value kind in the current document carries a type,
