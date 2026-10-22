@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+- Add solver-independent AC multiconductor IVR preparation in `powerio-matrix`,
+  including explicit terminal/coil axes, bases, selected bounds, winding-current
+  transformer descriptors and supported nonlinear load/IBR controls. Unsupported
+  formulation profiles, including terminal-referenced voltage sources, fail
+  explicitly; no optimizer or AD dependency is added. Star-device current caps
+  follow terminal identities, and inverter control laws retain selected reactive
+  capability bounds.
+
+- Multiconductor voltage sources can prescribe voltages relative to an explicit
+  terminal, preserving floating-star displacement and reference current in the
+  sparse matrix constraints. IR 2 carries these as distinct tagged source
+  records that older readers reject; ordinary source records keep their
+  original shape. Prescribed PF boundaries and additive C source views expose
+  both voltage endpoints; existing C layouts remain unchanged. Canonical
+  exchange writers, balanced/LinDist3Flow projections, neutral Kron reduction
+  and legacy C source views reject referenced sources they cannot represent.
+
+- Multiconductor AC power-flow and OPF instance construction now requires a
+  voltage source on every physical bus island, including after network
+  replacement. An open switch cannot leave an island implicitly anchored by
+  a source elsewhere. Resolve de-energized islands explicitly before building
+  an instance; parsing preserves those devices and their data. This bus-level
+  check is necessary but does not establish conductor coverage or solvability.
+
+- Preserve explicit floating neutrals in ideal two-winding WYE multiconductor
+  transformer constraints. Phase-to-neutral voltage ratios now carry neutral
+  currents into nodal balance, including fixed taps and grounding switches.
+  Invalid winding maps and voltage ratios fail instead of silently omitting
+  equipment. Leakage, non-WYE connections, implicit neutral impedances, core
+  losses and tap controls remain outside this matrix builder's supported profile.
+
 - PSS/E transformer impedance correction tables are read, retained and freshly
   written. `apply_impedance_correction` interpolates their complex factors
   from a cached nominal impedance, so repeated application is idempotent.
