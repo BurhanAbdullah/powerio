@@ -269,8 +269,12 @@ fn angle_difference_correction_matches_powermodels_and_can_be_disabled() {
     )
     .unwrap();
     assert!(!exact.correct_angle_difference_bounds);
-    assert_close(exact.branches.angle_min[0], -2.0 * std::f64::consts::PI);
-    assert_close(exact.branches.angle_max[0], 2.0 * std::f64::consts::PI);
+    assert!(
+        exact.branches.angle_min[0].is_infinite() && exact.branches.angle_min[0].is_sign_negative()
+    );
+    assert!(
+        exact.branches.angle_max[0].is_infinite() && exact.branches.angle_max[0].is_sign_positive()
+    );
 
     let normalized = network.to_normalized().unwrap();
     let normalized = IndexedNetwork::new(&normalized);
@@ -332,8 +336,14 @@ fn angle_difference_bounds_select_a_pad_the_stated_bounds_or_none() {
     )
     .unwrap();
     assert!(!stated.correct_angle_difference_bounds);
-    assert_close(stated.branches.angle_min[0], -full);
-    assert_close(stated.branches.angle_max[0], full);
+    assert!(
+        stated.branches.angle_min[0].is_infinite()
+            && stated.branches.angle_min[0].is_sign_negative()
+    );
+    assert!(
+        stated.branches.angle_max[0].is_infinite()
+            && stated.branches.angle_max[0].is_sign_positive()
+    );
 
     let mut bounded = network.clone();
     bounded.branches_mut()[0].angmin = -30.0;
@@ -347,19 +357,28 @@ fn angle_difference_bounds_select_a_pad_the_stated_bounds_or_none() {
     )
     .unwrap();
     assert!(!unbounded.correct_angle_difference_bounds);
-    assert_close(unbounded.branches.angle_min[0], -full);
-    assert_close(unbounded.branches.angle_max[0], full);
+    assert!(
+        unbounded.branches.angle_min[0].is_infinite()
+            && unbounded.branches.angle_min[0].is_sign_negative()
+    );
+    assert!(
+        unbounded.branches.angle_max[0].is_infinite()
+            && unbounded.branches.angle_max[0].is_sign_positive()
+    );
 
     // The MATPOWER 0/0 spelling states no constraint, which the stated form
     // reads as the widest window and PowerModels pads.
-    assert_eq!(stated_angle_difference_bounds(0.0, 0.0), (-full, full));
+    assert_eq!(
+        stated_angle_difference_bounds(0.0, 0.0),
+        (f64::NEG_INFINITY, f64::INFINITY)
+    );
     assert_eq!(
         stated_angle_difference_bounds(-45.0_f64.to_radians(), 30.0_f64.to_radians()),
         (-45.0_f64.to_radians(), 30.0_f64.to_radians())
     );
     assert_eq!(
         stated_angle_difference_bounds(-3.0 * full, 2.0 * full),
-        (-full, full)
+        (f64::NEG_INFINITY, f64::INFINITY)
     );
 
     // PowerModelsPad ignores the phase shift, as PowerModels does; the
@@ -389,11 +408,11 @@ fn angle_difference_bounds_select_a_pad_the_stated_bounds_or_none() {
     );
     assert_eq!(
         AngleDifferenceBounds::None.calc_bounds(-0.1, 0.1, shift),
-        (-full, full)
+        (f64::NEG_INFINITY, f64::INFINITY)
     );
     assert_eq!(
         AngleDifferenceBounds::Stated.calc_bounds(0.0, 0.0, shift),
-        (-full, full)
+        (f64::NEG_INFINITY, f64::INFINITY)
     );
 }
 

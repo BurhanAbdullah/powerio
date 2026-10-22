@@ -108,18 +108,18 @@ pub const IR_MIN_VERSION: u64 = 2;
 
 /// The `$id` of the schema snapshot describing this build's structural types.
 /// The release in the path identifies the catalog, not a new IR version.
-pub const IR_SCHEMA_ID: &str = "https://powerio.dev/schema/pio-ir/2/0.11.4/schema.json";
+pub const IR_SCHEMA_ID: &str = "https://powerio.dev/schema/pio-ir/2/0.11.6/schema.json";
 
 use powerio_tx::format;
 pub use powerio_tx::{
     Area, AutomaticOrder, AutomaticSpec, AutomaticTarget, BalancedNetwork, Branch, BranchCharging,
     BranchCurrentRatings, BranchRatingSet, BranchRef, BranchSolution, BranchSusceptanceFormula,
-    Bus, BusId, BusType, Canvas, Change, ChangeOp, ChangeUnit, ContingencyAction, ContingencyCase,
-    ContingencyParsed, ContingencyResolution, ContingencySet, CoordinateSpace, CoordsKind,
-    DEFAULT_BASE_FREQUENCY, Detection, ElementKey, Expanded, Extras, GenCaps, GenCost, Generator,
-    GeoApplyReport, GeoFeature, GeoGeometry, GeoLayer, GeoMeta, GeoParsed, GeoTarget, Hvdc,
-    Impedance, IndexCore, IndexedNetwork, InterfaceMember, JSON_CLASSES, JoinName, JsonClass, Load,
-    LoadVoltageModel, Location, MonitorScope, MonitorStatement, MonitoredParsed,
+    Bus, BusId, BusSubset, BusType, Canvas, Change, ChangeOp, ChangeUnit, ContingencyAction,
+    ContingencyCase, ContingencyParsed, ContingencyResolution, ContingencySet, CoordinateSpace,
+    CoordsKind, DEFAULT_BASE_FREQUENCY, Detection, ElementKey, Expanded, Extras, GenCaps, GenCost,
+    Generator, GeoApplyReport, GeoFeature, GeoGeometry, GeoLayer, GeoMeta, GeoParsed, GeoTarget,
+    Hvdc, Impedance, IndexCore, IndexedNetwork, InterfaceMember, JSON_CLASSES, JoinName, JsonClass,
+    Load, LoadVoltageModel, Location, MonitorScope, MonitorStatement, MonitoredParsed,
     MonitoredResolution, MonitoredSet, PsseEquipmentIndex, PwdDisplay, PwdSubstation, ResolvedCase,
     ResolvedComponent, ResolvedInterface, ResolvedVoltageScope, RetainedStatement, Selector,
     SelectorGroup, Shunt, ShuntBlock, SkipRule, SolverParams, SourceFormat, Storage, Subsystem,
@@ -204,7 +204,9 @@ pub mod dist_geo;
 pub use __gridfm::codes as gridfm_codes;
 mod stored;
 mod write;
-pub use write::emit;
+pub use write::{EmitOptions, emit, emit_with_options};
+mod sincal_write;
+pub use sincal_write::{SincalContainer, SincalExperimentalOptions};
 mod ir;
 #[cfg(feature = "schema")]
 pub use ir::generate_ir_schema;
@@ -385,6 +387,11 @@ pub use value::{PioScenarioSet, PioTimeSeries, PioValue};
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct ParseOptions {
+    /// Explicit native selections for the sincal-balanced format only.
+    pub sincal_balanced: Option<powerio_tx::format::SincalBalancedReadOptions>,
+    /// Explicit native-variant, daily-snapshot and Access-acquisition options.
+    /// Valid only with the sincal-multiconductor format selection.
+    pub sincal_multiconductor: Option<powerio_dist::SincalReadOptions>,
     /// The parser selected by its stable format token rather than inferred
     /// from the input's name and content.
     pub format: Option<powerio_core::FormatId>,
@@ -421,7 +428,7 @@ impl ParseOptions {
 /// Parse one source into a compiled module of whichever built in family
 /// claims it. Balanced network formats produce
 /// [`PioValue::BalancedNetwork`]; network only distribution formats (OpenDSS
-/// `.dss`, PMD ENGINEERING JSON, and BMOPF JSON) produce
+/// `.dss`, PMD ENGINEERING JSON, BMOPF JSON, and distribution CIM) produce
 /// [`PioValue::MulticonductorNetwork`]. A source that defines a particular
 /// calculation produces that calculation's value. One DOE GO Challenge 3
 /// problem data file produces [`PioValue::AcScucInstance`]. One source that
@@ -446,8 +453,11 @@ impl ParseOptions {
 /// distribution parser, a `.json` document routes by its top level markers
 /// ([`format::routing::classify_json_text`]), a name with no recognized
 /// extension whose content opens a JSON document (an in-memory source has no
-/// extension) routes the same way, and every other name routes to
-/// the balanced network hub, whose own detection and refusals apply.
+/// extension) routes the same way, a `.xml` document, a name with no
+/// recognized extension, or a directory member that reads as distribution CIM
+/// ([`powerio_dist::source_looks_like_cim_dist`]) routes to the distribution parser,
+/// and every other name routes to the balanced network hub, whose own
+/// detection and refusals apply.
 ///
 /// PowerIO IR is not a grid exchange format: [`parse`] refuses it and
 /// [`deserialize`] reads the current PowerIO IR document.
@@ -478,6 +488,31 @@ pub fn parse_with_options(
     }
     if let Some(format) = &options.format {
         source = source.with_format(format.clone());
+    }
+    if options.sincal_balanced.is_some() && options.sincal_multiconductor.is_some() {
+        return Err(powerio_core::Error::new(
+            &codes::REQUEST_SINCAL_OPTIONS_PROFILE,
+            "SINCAL selections must name exactly one electrical family",
+        )
+        .with_source(source));
+    }
+    if let Some(sincal) = &options.sincal_balanced {
+        return powerio_tx::format::parse_sincal_balanced_with_options(source, sincal)
+            .map(|m| m.map_value(PioValue::from));
+    }
+    if let Some(sincal) = &options.sincal_multiconductor {
+        if source
+            .format()
+            .and_then(|f| format::routing::parse_distribution_format(f.as_str()))
+            != Some(format::routing::DistributionFormat::SincalMulticonductor)
+        {
+            return Err(powerio_core::Error::new(
+                &codes::REQUEST_SINCAL_OPTIONS_PROFILE,
+                "sincal_multiconductor options require explicit format sincal-multiconductor",
+            )
+            .with_source(source));
+        }
+        return powerio_dist::parse_sincal(source, sincal).map(|m| m.map_value(PioValue::from));
     }
     match routed_family(&source)? {
         RoutedFamily::Goc3 => parse_goc3(source),
@@ -819,6 +854,13 @@ fn routed_family(
         {
             return Ok(RoutedFamily::Gridfm);
         }
+        // Distribution CIM documents carry per phase classes and no CGMES
+        // model header; a CGMES profile directory has neither.
+        if powerio_dist::source_looks_like_cim_dist(source) {
+            return Ok(RoutedFamily::Distribution(Some(
+                format::routing::DistributionFormat::CimDist,
+            )));
+        }
         return Ok(RoutedFamily::Balanced(None));
     }
     let extension = std::path::Path::new(source.name())
@@ -834,6 +876,11 @@ fn routed_family(
             format::routing::DistributionFormat::Dss,
         ))),
         "json" => json_family(source),
+        // CIM RDF/XML is CGMES unless the document reads as distribution
+        // CIM; XIIDM never declares the RDF and CIM namespaces.
+        "xml" if powerio_dist::source_looks_like_cim_dist(source) => Ok(
+            RoutedFamily::Distribution(Some(format::routing::DistributionFormat::CimDist)),
+        ),
         // Extensions with dedicated non-JSON readers keep them; anything
         // else (a nameless in-memory source above all) can still carry a
         // JSON document, so content that opens one routes by classification,
@@ -856,6 +903,10 @@ fn routed_family(
             });
             if jsonish {
                 json_family(source)
+            } else if powerio_dist::source_looks_like_cim_dist(source) {
+                Ok(RoutedFamily::Distribution(Some(
+                    format::routing::DistributionFormat::CimDist,
+                )))
             } else {
                 Ok(RoutedFamily::Balanced(None))
             }
@@ -1037,8 +1088,8 @@ fn family_of_token(token: &str) -> RoutedFamily {
         return RoutedFamily::Contingency(kind);
     }
 
-    if powerio_dist::parse_dist_target_format(token).is_some() {
-        return RoutedFamily::Distribution(None);
+    if let Some(format) = format::routing::parse_distribution_format(token) {
+        return RoutedFamily::Distribution(Some(format));
     }
     if format::is_pypsa_csv_name(token) {
         return RoutedFamily::PypsaDirectory;
@@ -1182,6 +1233,70 @@ mod tests {
             );
         };
         assert_eq!(network.name().as_deref(), Some("c"));
+    }
+
+    #[test]
+    fn distribution_cim_routes_by_content_and_echoes_its_bytes() {
+        let fixture = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tests/data/dist/cim/micro_feeder.xml"
+        );
+        let bytes = std::fs::read(fixture).unwrap();
+        // By the `.xml` extension, with no name at all, and from a
+        // directory holding the document.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("feeder.xml"), &bytes).unwrap();
+        for source in [
+            Source::from_memory("feeder.xml", bytes.clone()).unwrap(),
+            Source::from_memory("<memory>", bytes.clone()).unwrap(),
+            Source::open(dir.path()).unwrap(),
+        ] {
+            let module = parse(source).expect("distribution CIM parses");
+            assert_value_type(&module, "powerio.MulticonductorNetwork");
+            assert_eq!(
+                module
+                    .source()
+                    .and_then(Source::format)
+                    .map(FormatId::as_str),
+                Some("cim-dist")
+            );
+        }
+        let module = parse(Source::from_memory("feeder.xml", bytes.clone()).unwrap()).unwrap();
+        let emitted = emit(
+            &module,
+            "cim-dist",
+            Destination::memory("copy.xml").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(emitted.fidelity(), Fidelity::ExactSameFormat);
+        let EmittedOutput::Memory { artifacts } = emitted.into_output() else {
+            panic!("memory destination returned a path output");
+        };
+        assert_eq!(artifacts[0].bytes(), bytes);
+
+        // The network records where it came from, and the IR carries it.
+        let PioValue::MulticonductorNetwork(network) = module.value() else {
+            panic!("distribution CIM parses to a multiconductor network");
+        };
+        assert_eq!(
+            *network.source_format(),
+            Some(powerio_dist::DistSourceFormat::CimDist)
+        );
+        let stored = serialize(&module, Destination::memory("feeder.pio.json").unwrap()).unwrap();
+        let EmittedOutput::Memory { artifacts } = stored.into_output() else {
+            panic!("memory destination returned a path output");
+        };
+        let back = deserialize(
+            Source::from_memory("feeder.pio.json", artifacts[0].bytes().to_vec()).unwrap(),
+        )
+        .unwrap();
+        let PioValue::MulticonductorNetwork(network) = back.value() else {
+            panic!("the IR keeps the multiconductor network");
+        };
+        assert_eq!(
+            *network.source_format(),
+            Some(powerio_dist::DistSourceFormat::CimDist)
+        );
     }
 
     #[test]

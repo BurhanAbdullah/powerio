@@ -148,8 +148,10 @@ pub struct DcBranchParameters {
     pub shift: Vec<f64>,
     /// Thermal limit in the selected power unit. Zero means unlimited.
     pub f_max: Vec<f64>,
-    /// Branch angle bounds in radians.
+    /// Selected branch angle bounds in radians; absent sides are infinities.
+    #[serde(with = "crate::opf::angle_bounds_serde")]
     pub angle_min: Vec<f64>,
+    #[serde(with = "crate::opf::angle_bounds_serde")]
     pub angle_max: Vec<f64>,
     /// Branch column to row in the star-lowered analysis network.
     pub analysis_rows: Vec<usize>,

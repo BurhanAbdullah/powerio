@@ -144,7 +144,7 @@ fn a_150_degree_winding_meets_the_stated_bounds_and_the_centered_pad() {
             .all(|&max| (max - zero_centered_max).abs() < 1e-12)
     );
 
-    // The stated bounds, ±360 degrees here, hold it.
+    // The stated bounds are absent here and hold it.
     let stated = build_dc_opf_preparation(
         &instance,
         &DcOpfAssemblyOptions::default()
@@ -198,6 +198,155 @@ fn a_150_degree_winding_meets_the_stated_bounds_and_the_centered_pad() {
             .angle_min
             .iter()
             .chain(&unbounded.branches.angle_max)
-            .all(|bound| (bound.abs() - std::f64::consts::TAU).abs() < 1e-12)
+            .all(|bound| bound.is_infinite())
     );
+}
+
+fn shifted_ring() -> BalancedNetwork {
+    let buses = [10, 20, 30, 40]
+        .map(|id| {
+            Bus::new(
+                BusId(id),
+                if id == 10 { BusType::Ref } else { BusType::Pq },
+                230.0,
+            )
+        })
+        .to_vec();
+    let mut branches = [(10, 20), (20, 30), (30, 40)]
+        .map(|(from, to)| {
+            let mut branch = Branch::new(BusId(from), BusId(to), 0.0, 1.0);
+            branch.shift = 150.0;
+            branch
+        })
+        .to_vec();
+    branches.push(Branch::new(BusId(10), BusId(40), 0.0, 1000.0));
+    let mut inactive = Branch::new(BusId(10), BusId(40), 0.0, 1.0);
+    inactive.in_service = false;
+    branches.insert(0, inactive);
+    let mut net = BalancedNetwork::in_memory("unwrapped-ring", 100.0, buses, branches);
+    let mut generator = Generator::new(BusId(10));
+    generator.cost = Some(GenCost::new(2, 0.0, 0.0, vec![1.0, 0.0]));
+    net.generators_mut().push(generator);
+    net
+}
+
+#[test]
+fn unbounded_policies_keep_a_dc_solution_beyond_one_turn_in_raw_and_normalized_units() {
+    let raw = shifted_ring();
+    for net in [raw.clone(), raw.to_normalized().unwrap()] {
+        let angles = dc_angles(&net);
+        let instance = DcOpfInstance::from_network(net).unwrap();
+        let padded = build_dc_opf_preparation(&instance, &DcOpfAssemblyOptions::default()).unwrap();
+        let differences = branch_differences(&padded, &angles);
+        let widest = differences.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
+        assert!((widest.to_degrees() - 450.0 * 1000.0 / 1003.0).abs() < 1e-8);
+        assert!(widest > std::f64::consts::TAU);
+        assert!(
+            differences
+                .iter()
+                .zip(&padded.branches.angle_max)
+                .any(|(d, max)| d > max)
+        );
+        for policy in [AngleDifferenceBounds::None, AngleDifferenceBounds::Stated] {
+            let options = DcOpfAssemblyOptions::default().with_angle_difference_bounds(policy);
+            let prep = build_dc_opf_preparation(&instance, &options).unwrap();
+            assert_holds(&prep, &branch_differences(&prep, &angles));
+            assert_eq!(prep.branches.angle_min, vec![f64::NEG_INFINITY; 4]);
+            assert_eq!(prep.branches.angle_max, vec![f64::INFINITY; 4]);
+            assert_eq!(prep.branches.analysis_rows, padded.branches.analysis_rows);
+            assert_eq!(
+                prep.branches.analysis_sources,
+                padded.branches.analysis_sources
+            );
+            let json = serde_json::to_value(&prep.branches).unwrap();
+            assert_eq!(json["angle_min"][0], "-Infinity");
+            assert_eq!(json["angle_max"][0], "Infinity");
+            let restored: powerio_matrix::DcBranchParameters =
+                serde_json::from_value(json).unwrap();
+            assert_eq!(restored, prep.branches);
+        }
+    }
+}
+
+#[test]
+fn stated_limits_preserve_one_sided_and_finite_intervals() {
+    use powerio_tx::stated_angle_difference_bounds as bounds;
+    let full = std::f64::consts::TAU;
+    let finite = 30.0_f64.to_radians();
+    assert_eq!(bounds(-full, finite), (f64::NEG_INFINITY, finite));
+    assert_eq!(bounds(-finite, full), (-finite, f64::INFINITY));
+    assert_eq!(
+        bounds(-full - 1.0, full + 1.0),
+        (f64::NEG_INFINITY, f64::INFINITY)
+    );
+    assert_eq!(bounds(0.0, 0.0), (f64::NEG_INFINITY, f64::INFINITY));
+    assert_eq!(bounds(-finite, finite), (-finite, finite));
+    assert_eq!(bounds(-finite, 0.0), (-finite, 0.0));
+    assert_eq!(bounds(0.0, finite), (0.0, finite));
+    assert_eq!(
+        AngleDifferenceBounds::None.calc_bounds(-finite, finite, 0.0),
+        (f64::NEG_INFINITY, f64::INFINITY)
+    );
+}
+
+#[test]
+fn bundle_roundtrip_keeps_absent_and_one_sided_angle_limits() {
+    let mut net = shifted_ring();
+    net.branches_mut()[1].angmax = 30.0;
+    let instance = DcOpfInstance::from_network(net).unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let options = powerio_matrix::DcOpfBundleOptions {
+        assembly: DcOpfAssemblyOptions::default()
+            .with_angle_difference_bounds(AngleDifferenceBounds::Stated),
+        ..Default::default()
+    };
+    let output = powerio_matrix::emit_dcopf_bundle(&instance, temp.path(), &options).unwrap();
+    let minimum =
+        powerio_matrix::io::mtx::read_vector_mtx(output.dir.join("angle_min.mtx")).unwrap();
+    let maximum =
+        powerio_matrix::io::mtx::read_vector_mtx(output.dir.join("angle_max.mtx")).unwrap();
+    assert_eq!(minimum, vec![f64::NEG_INFINITY; 4]);
+    assert!((maximum[0] - 30.0_f64.to_radians()).abs() < 1e-12);
+    assert_eq!(&maximum[1..], &[f64::INFINITY; 3]);
+}
+
+#[test]
+fn ac_preparations_preserve_unbounded_angles_and_json_in_both_unit_systems() {
+    use powerio_matrix::{
+        AcOpfAssemblyOptions, AcPfAssemblyOptions, build_ac_opf_preparation,
+        build_ac_pf_preparation,
+    };
+    use powerio_prob::{AcOpfInstance, AcPfInstance};
+    let mut raw = shifted_ring();
+    raw.branches_mut()[1].angmax = 30.0;
+    for net in [raw.clone(), raw.to_normalized().unwrap()] {
+        for policy in [AngleDifferenceBounds::Stated, AngleDifferenceBounds::None] {
+            let opf = build_ac_opf_preparation(
+                &AcOpfInstance::from_network(net.clone()).unwrap(),
+                &AcOpfAssemblyOptions::default().with_angle_difference_bounds(policy),
+            )
+            .unwrap();
+            let pf = build_ac_pf_preparation(
+                &AcPfInstance::from_network(net.clone()).unwrap(),
+                &AcPfAssemblyOptions::default().with_angle_difference_bounds(policy),
+            )
+            .unwrap();
+            for branches in [&opf.branches, &pf.branches] {
+                assert_eq!(branches.angle_min, vec![f64::NEG_INFINITY; 4]);
+                if policy == AngleDifferenceBounds::Stated {
+                    assert!((branches.angle_max[0] - 30.0_f64.to_radians()).abs() < 1e-12);
+                } else {
+                    assert!(
+                        branches.angle_max[0].is_infinite()
+                            && branches.angle_max[0].is_sign_positive()
+                    );
+                }
+                assert_eq!(&branches.angle_max[1..], &[f64::INFINITY; 3]);
+                let json = serde_json::to_value(branches).unwrap();
+                assert_eq!(json["angle_min"][0], "-Infinity");
+                let restored: powerio_matrix::AcBranchData = serde_json::from_value(json).unwrap();
+                assert_eq!(&restored, branches);
+            }
+        }
+    }
 }

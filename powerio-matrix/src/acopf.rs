@@ -322,8 +322,10 @@ pub struct AcBranchData {
     pub shift: Vec<f64>,
     /// Apparent power limit in the selected power unit. Zero means unlimited.
     pub s_max: Vec<f64>,
-    /// Branch angle bounds in radians, as the source states them.
+    /// Selected branch angle bounds in radians; absent sides are infinities.
+    #[serde(with = "crate::opf::angle_bounds_serde")]
     pub angle_min: Vec<f64>,
+    #[serde(with = "crate::opf::angle_bounds_serde")]
     pub angle_max: Vec<f64>,
     /// Branch column to row in the star-lowered analysis network.
     pub analysis_rows: Vec<usize>,

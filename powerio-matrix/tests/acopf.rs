@@ -84,14 +84,8 @@ fn public_preparation_formulates_the_complete_ac_opf() {
         exact.angle_difference_bounds,
         Some(AngleDifferenceBounds::Stated)
     );
-    assert_eq!(
-        exact.branches.angle_min,
-        vec![-2.0 * std::f64::consts::PI; 2]
-    );
-    assert_eq!(
-        exact.branches.angle_max,
-        vec![2.0 * std::f64::consts::PI; 2]
-    );
+    assert_eq!(exact.branches.angle_min, vec![f64::NEG_INFINITY; 2]);
+    assert_eq!(exact.branches.angle_max, vec![f64::INFINITY; 2]);
 
     // Per unit demand and the series admittance of the plain line:
     // y = 1/(0.01 + j0.1) => g = 0.01/0.0101, b = -0.1/0.0101.
@@ -546,7 +540,7 @@ fn ac_pf_preparation_does_not_require_a_generator() {
     )
     .unwrap();
     assert!(!exact.correct_angle_difference_bounds);
-    assert_eq!(exact.branches.angle_min, vec![-2.0 * std::f64::consts::PI]);
+    assert_eq!(exact.branches.angle_min, vec![f64::NEG_INFINITY]);
 }
 
 #[test]

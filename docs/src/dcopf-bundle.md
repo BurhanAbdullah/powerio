@@ -83,8 +83,15 @@ branch that shifts phase by more than 60 degrees cannot meet that window, so
 `powerio dcopf --angle-difference-bounds`, select another rule:
 `ShiftCenteredPad` (`shift-centered-pad`) centers the same pad on each
 branch's phase shift, `Stated` (`stated`) keeps the bounds the case states and
-reads an unconstrained side as ±360 degrees, which never binds, and `None`
-(`none`) writes ±360 degrees for every branch.
+reads an absent side as negative or positive infinity, and `None` (`none`)
+removes both bounds for every branch. The MATPOWER `0`/`0` pair denotes no
+bounds; a lower side at or below −360 degrees and an upper side at or above
+360 degrees denote absent sides. Other stated sides remain unchanged.
+Unwrapped DC angle differences can exceed a full turn, so ±360 degrees is
+not a substitute for no constraint. Bundle vectors spell infinities `-inf`
+and `inf`; consumers must omit the corresponding inequality side. Preparation
+JSON uses the strings `"-Infinity"` and `"Infinity"`, retaining numeric values
+for finite limits. The default padded policy and ABI 7 remain unchanged.
 
 The generator space vectors, of length \\(n_{\mathrm{gen}}\\), are `q_gen`,
 `c_gen`, `c0_gen`, `pmax_gen`, and `pmin_gen`.
