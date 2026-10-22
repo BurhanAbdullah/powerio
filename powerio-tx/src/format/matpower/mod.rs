@@ -194,6 +194,7 @@ fn indexed_assignment_spans(source: &str) -> Vec<(usize, usize, &str)> {
             b']' => square = square.saturating_sub(1),
             b'{' => brace += 1,
             b'}' => brace = brace.saturating_sub(1),
+            b',' if p == 0 && square == 0 && brace == 0 => statement = i + 1,
             b';' if p == 0 && square == 0 && brace == 0 => statement = i + 1,
             b'\n' if p == 0 && square == 0 && brace == 0 => {
                 if !source[line_start..i].trim_end().ends_with("...") {
