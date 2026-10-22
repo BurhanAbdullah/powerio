@@ -1499,4 +1499,3 @@ fn kv_scope_scaling_probe() {
         eprintln!("subsystem-kV resolution: buses={size}, elapsed={elapsed:?}");
     }
 }
-
