@@ -94,6 +94,7 @@ __all__ = [
     "ApparentPower",
     "Artifact",
     "BalancedNetwork",
+    "BusMerge",
     "CalculationUpdate",
     "ComponentId",
     "ContingencySet",
@@ -334,6 +335,106 @@ _BALANCED_DELEGATED_NAMES = frozenset(
 
 
 @_guard_class
+class BusMerge:
+    """The result of :meth:`BalancedNetwork.merge_buses`.
+
+    ``network`` is the merged network. ``merged_buses`` maps every merged
+    bus to the bus that now carries it, and ``groups`` lists each joined set
+    as ``{"survivor", "members"}``. ``removed_branches`` and
+    ``removed_switches`` describe every element the merge removed: its source
+    ``row``, ``id``, ``from_id`` and ``to_id`` buses, ``survivor``, ``reason``
+    (``"zero_impedance"``, ``"closed_switch"``, or ``"shorted"``), status, and
+    ratings. ``branch_rows`` and ``switch_rows`` map each source row to its
+    merged row, or ``None`` when removed, and ``charging_shunts`` lists the
+    merged shunt rows that hold removed branches' equivalent admittances. ``diagnostics`` holds the merge's
+    findings, which the merged network's module carries as well.
+    """
+
+    def __init__(self, inner: "_powerio._BusMerge"):
+        self._inner = inner
+
+    def __repr__(self) -> str:
+        return repr(self._inner)
+
+    @property
+    def network(self) -> "BalancedNetwork":
+        return BalancedNetwork(self._inner.network)
+
+    @property
+    def rule(self) -> str:
+        return self._inner.rule
+
+    @property
+    def merged_buses(self) -> dict[int, int]:
+        return self._inner.merged_buses
+
+    @property
+    def groups(self) -> list[dict[str, Any]]:
+        return self._inner.groups
+
+    @property
+    def removed_branches(self) -> list[dict[str, Any]]:
+        return self._inner.removed_branches
+
+    @property
+    def removed_switches(self) -> list[dict[str, Any]]:
+        return self._inner.removed_switches
+
+    @property
+    def branch_rows(self) -> list[Optional[int]]:
+        return self._inner.branch_rows
+
+    @property
+    def switch_rows(self) -> list[Optional[int]]:
+        return self._inner.switch_rows
+
+    @property
+    def charging_shunts(self) -> list[int]:
+        return self._inner.charging_shunts
+
+    @property
+    def diagnostics(self) -> list[Diagnostic]:
+        return self._inner.diagnostics
+
+    def survivor(self, bus: int) -> int:
+        """The bus that carries ``bus`` in the merged network."""
+        return self._inner.survivor(bus)
+
+    def calc_removed_flows(
+        self,
+        branch_p_from: Any,
+        branch_p_to: Any,
+        *,
+        generator_p: Any = None,
+        transformer_3w_p: Any = None,
+    ) -> dict[str, Any]:
+        """Recover the active power on every removed element.
+
+        ``branch_p_from`` and ``branch_p_to`` are the power entering each
+        merged network branch at its from and to ends; ``generator_p``
+        replaces the stated generator outputs, and ``transformer_3w_p`` gives
+        the power entering each three winding transformer winding from its
+        bus, three values per transformer. Values are in the network's units
+        (MW for a parsed network). The result has ``branches`` and
+        ``switches``, one ``{"p_from", "method"}`` per removed element in the
+        order of :attr:`removed_branches` and :attr:`removed_switches`, and
+        ``diagnostics``. ``method`` is ``"tree"`` where Kirchhoff's current
+        law fixes the flow, ``"reactance"`` on a loop split by reactance,
+        ``"minimum_norm"`` on a loop of zero reactance elements, and
+        ``"out_of_service"`` for an element that carries none.
+        """
+        return self._inner.calc_removed_flows(
+            [float(p) for p in branch_p_from],
+            [float(p) for p in branch_p_to],
+            generator_p=None
+            if generator_p is None
+            else [float(p) for p in generator_p],
+            transformer_3w_p=None
+            if transformer_3w_p is None
+            else [tuple(float(p) for p in row) for row in transformer_3w_p],
+        )
+
+
 class BalancedNetwork:
     """A parsed balanced power network.
 
@@ -670,11 +771,55 @@ class BalancedNetwork:
         """Weighted Laplacian ``L = -B``. ``formula`` as in :meth:`calc_ptdf`."""
         return _to_csr(self._inner.weighted_laplacian(formula))
 
+    def merge_buses(
+        self,
+        *,
+        closed_switches: bool = True,
+        zero_impedance: Optional[str] = None,
+        threshold: Optional[float] = None,
+        charging: str = "fold",
+    ) -> "BusMerge":
+        """Merge the buses closed switches and zero impedance branches join.
+
+        ``closed_switches`` merges the two buses of every closed switch.
+        ``zero_impedance`` selects the branches merged as well: ``None``
+        merges none, ``"exact"`` merges ``r == 0`` and ``x == 0``,
+        ``"psse"`` merges non-transformer branches with ``r == 0`` and
+        ``|x| <= threshold`` (PSS/E zero impedance lines; the threshold
+        defaults to the ``THRSHZ`` the case states), and ``"impedance"``
+        merges non-transformer branches with ``|r + jx| <= threshold``.
+
+        Each joined set keeps one bus: its reference bus, else a bus with an
+        in-service generator, else a bus a generator regulates, smallest id
+        first. Every element moves onto it. The merged elements and any
+        branch the merge shorts are removed and listed with their source rows
+        and ratings. ``charging="fold"`` turns each removed branch's line
+        charging and line shunts, including tap scaling, into a fixed shunt
+        at the survivor. ``"drop"`` discards only terminal charging. Both
+        choices preserve the series equivalent of a bypassed transformer.
+        An ideal transformer with a nonunity tap or phase shift cannot be
+        bypassed and raises an error. This network is unchanged.
+
+        Raises :class:`PowerIODataError` for a threshold that is negative or
+        not finite, or for ``"psse"`` with no threshold when the case states
+        none; an unknown rule name raises ``ValueError``.
+        """
+        return BusMerge(
+            self._inner.merge_buses(
+                closed_switches=closed_switches,
+                zero_impedance=zero_impedance,
+                threshold=threshold,
+                charging=charging,
+            )
+        )
+
     def to_normalized(
         self,
         *,
         clamp_angle_bounds: bool = False,
         angle_bound_pad: Optional[float] = None,
+        closed_switches: str = "merge",
+        island_references: str = "stated",
     ) -> "BalancedNetwork":
         """Return a normalized copy with per unit power and radian angles.
 
@@ -690,12 +835,37 @@ class BalancedNetwork:
         become ``[-angle_bound_pad, angle_bound_pad]``. A repair that would
         invert the interval widens to that same window. The default pad is
         1.0472 radians.
+
+        The default ``closed_switches="merge"`` merges the buses closed
+        switches join first, as :meth:`merge_buses` does with
+        ``closed_switches=True``, since the matrix and DC calculations model
+        no switches. ``"keep"`` leaves the switches as data, and ``"refuse"``
+        raises :class:`PowerIODataError` with code ``BUILD.SWITCH.CLOSED``.
+        ``"merge"`` also raises that error when the merge cannot complete,
+        for example across two windings of one three winding transformer.
+        The error names the original switch row and endpoints; no partial
+        normalized network is returned.
+
+        ``island_references="per_island"`` gives every island one reference
+        bus: an island that states none takes the bus of its largest ``pmax``
+        in-service generator, an island stating several keeps one, and an
+        island no in-service generator supplies is left out. The default
+        ``"stated"`` keeps the case's references and designates one only when
+        none survives.
         """
-        if not clamp_angle_bounds and angle_bound_pad is None:
+        if (
+            not clamp_angle_bounds
+            and angle_bound_pad is None
+            and closed_switches == "merge"
+            and island_references == "stated"
+        ):
             return BalancedNetwork(self._inner.to_normalized())
         return BalancedNetwork(
             self._inner.to_normalized_with_options(
-                clamp_angle_bounds=clamp_angle_bounds, angle_bound_pad=angle_bound_pad
+                clamp_angle_bounds=clamp_angle_bounds,
+                angle_bound_pad=angle_bound_pad,
+                closed_switches=closed_switches,
+                island_references=island_references,
             )
         )
 

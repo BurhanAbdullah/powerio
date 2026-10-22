@@ -9,6 +9,7 @@ on:
   pull_request:
     paths:
       - "powerio-tx/src/format/**"
+      - "powerio-tx/src/dynamic.rs"
       - "powerio-tx/src/geo/**"
       - "powerio-dist/src/**"
       - "powerio-sincal/src/**"

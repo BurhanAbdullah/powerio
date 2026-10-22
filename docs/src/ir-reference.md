@@ -226,6 +226,19 @@ Schema definition: `Branch`.
 | `route` | array of `Location` or null | network coordinate space | | | null |
 | `extras` | object | | | | required |
 
+A transformer's impedance correction table rides in `extras`.
+`impedance_correction` holds `{table, variable, points}`. `variable` is
+`ratio` or `angle` (degrees), and each point is `{value, factor_re,
+factor_im}`, the complex factor that multiplies the nominal series impedance
+at that ratio or angle. A three winding transformer keeps three such entries,
+one per winding or `null`, and its factor scales that winding's star
+impedance. With `psse_zcod = 1`, entries 0/1/2 instead scale Z12/Z23/Z31,
+using the sole winding whose control mode is not fixed (regulation may be
+disabled). Ratio coordinates on a branch are in its effective t1/t2 tap
+units; three-winding ratio coordinates are bus-base per-unit winding taps. `impedance_correction_nominal` holds the nominal impedance once
+`apply_impedance_correction` has scaled it: `[r, x]` on a branch and the three
+pairwise `[r, x]` on a three winding transformer.
+
 Schema definition: `BranchCharging`.
 
 | field | type | unit | sign | invariant | if absent |
@@ -439,6 +452,14 @@ Schema definition: `Transformer3W`.
 | `in_service` | boolean | | | | required |
 | `uid` | string or null | | | unique within `transformers_3w` | assigned at serialization |
 | `extras` | object | | | | required |
+
+Two `extras` entries carry per winding data, in winding order. Each is present
+only when it differs from its default. `winding_in_service` holds three
+booleans; a winding that is out leaves the other two coupled through the star
+point, and an absent entry means every winding is in service.
+`winding_rating_sets` holds three arrays of `{name, rate_mva}` objects with the
+MVA ratings beyond `rate_a`, `rate_b`, and `rate_c`, named as in
+`Branch.rating_sets`.
 
 Schema definition: `Winding`.
 
