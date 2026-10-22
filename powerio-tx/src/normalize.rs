@@ -14,6 +14,9 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::islands::{
+    IslandPartition, IslandReferencePolicy, bus_list, kept_reference, largest_generator_bus,
+};
 use crate::merge::{BusMerge, BusMergeRule};
 use crate::network::{
     BalancedNetwork, BalancedNetworkTables, Branch, Bus, BusId, BusType, GEN_EXTRA_KEYS, GenCost,
@@ -126,6 +129,12 @@ pub struct NormalizeSettings {
     pub options: NormalizeOptions,
     /// What happens to closed switches; by default they merge.
     pub closed_switches: ClosedSwitchPolicy,
+    /// How the reference buses of a network with several islands are chosen.
+    /// [`IslandReferencePolicy::Stated`], the default, keeps the behavior of
+    /// [`BalancedNetwork::to_normalized`];
+    /// [`IslandReferencePolicy::PerIsland`] gives every island one reference
+    /// and leaves out the islands no in-service generator supplies.
+    pub island_references: IslandReferencePolicy,
 }
 
 impl NormalizeSettings {
@@ -135,6 +144,7 @@ impl NormalizeSettings {
         Self {
             options,
             closed_switches: ClosedSwitchPolicy::Merge,
+            island_references: IslandReferencePolicy::Stated,
         }
     }
 
@@ -147,6 +157,12 @@ impl NormalizeSettings {
     #[must_use]
     pub const fn with_closed_switches(mut self, policy: ClosedSwitchPolicy) -> Self {
         self.closed_switches = policy;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_island_references(mut self, policy: IslandReferencePolicy) -> Self {
+        self.island_references = policy;
         self
     }
 }
@@ -537,7 +553,7 @@ fn clamp_angle_bounds(
         let mut changes = Vec::new();
 
         let (corrected_min, corrected_max) =
-            correct_angle_difference_bounds_with_pad(old_min, old_max, pad);
+            correct_angle_difference_bounds_with_pad(old_min, old_max, pad, 0.0);
 
         if old_min != corrected_min {
             br.angmin = corrected_min;
@@ -567,26 +583,139 @@ fn clamp_angle_bounds(
 /// at or above 90 degrees becomes 60 degrees, and the MATPOWER 0/0 spelling
 /// becomes ±60 degrees. If correcting one side would invert the interval, the
 /// result is also ±60 degrees. Inputs and outputs are radians.
+///
+/// This is the pad centered on zero, which suits an unshifted branch only;
+/// [`AngleDifferenceBounds::ShiftCenteredPad`] centers it on the branch's
+/// phase shift.
 #[must_use]
 pub fn correct_angle_difference_bounds(angle_min: f64, angle_max: f64) -> (f64, f64) {
-    correct_angle_difference_bounds_with_pad(angle_min, angle_max, POWER_MODELS_ANGLE_BOUND_PAD)
+    correct_angle_difference_bounds_with_pad(
+        angle_min,
+        angle_max,
+        POWER_MODELS_ANGLE_BOUND_PAD,
+        0.0,
+    )
 }
 
-fn correct_angle_difference_bounds_with_pad(
-    mut angle_min: f64,
-    mut angle_max: f64,
-    pad: f64,
-) -> (f64, f64) {
-    if angle_min <= -std::f64::consts::FRAC_PI_2 {
-        angle_min = -pad;
+/// One branch angle difference interval as the source states it, for a
+/// consumer that applies no pad. Inputs and outputs are radians.
+///
+/// The interval constrains `theta_from - theta_to`, as MATPOWER and
+/// PowerModels define it. The MATPOWER `0`/`0` spelling states no
+/// constraint. A lower side at or below −360 degrees and an upper side at or
+/// above 360 degrees also denote absent limits. Absent sides become negative
+/// or positive infinity, respectively: unwrapped DC angle differences can
+/// exceed a full turn. Every other stated bound passes through unchanged.
+#[must_use]
+pub fn stated_angle_difference_bounds(angle_min: f64, angle_max: f64) -> (f64, f64) {
+    let full = std::f64::consts::TAU;
+    if angle_min == 0.0 && angle_max == 0.0 {
+        return (f64::NEG_INFINITY, f64::INFINITY);
     }
-    if angle_max >= std::f64::consts::FRAC_PI_2 {
-        angle_max = pad;
-    }
-    if angle_min == 0.0 && angle_max == 0.0 || angle_min > angle_max {
-        return (-pad, pad);
-    }
+    let angle_min = if angle_min <= -full {
+        f64::NEG_INFINITY
+    } else {
+        angle_min
+    };
+    let angle_max = if angle_max >= full {
+        f64::INFINITY
+    } else {
+        angle_max
+    };
     (angle_min, angle_max)
+}
+
+/// Which angle difference bounds an OPF or power flow preparation carries.
+///
+/// Every bound constrains `theta_from - theta_to`, the MATPOWER and
+/// PowerModels convention, which is not net of a branch's phase shift.
+///
+/// The assembly options select one with `with_angle_difference_bounds`. Left
+/// unselected, their `correct_angle_difference_bounds` flag decides as it
+/// always has: `true`, the default, is [`Self::PowerModelsPad`] and `false`
+/// is [`Self::Stated`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum AngleDifferenceBounds {
+    /// PowerModels' ±60 degree pad exactly as its
+    /// `correct_voltage_angle_differences!` applies it
+    /// ([`correct_angle_difference_bounds`]): a side the source leaves
+    /// unconstrained or unusable (at or beyond ±90 degrees, the `0`/`0`
+    /// spelling, or an inverted window) becomes ±60 degrees around zero, and
+    /// a usable stated side is kept. A branch that shifts phase by more than
+    /// 60 degrees cannot meet this window; select
+    /// [`Self::ShiftCenteredPad`] or [`Self::Stated`] for such a case.
+    PowerModelsPad,
+    /// The same pad centered on the branch's phase shift, so a phase
+    /// shifting branch keeps its operating point inside the window. An
+    /// unshifted branch gets exactly [`Self::PowerModelsPad`].
+    ShiftCenteredPad,
+    /// The bounds the source states ([`stated_angle_difference_bounds`]):
+    /// an absent side becomes negative or positive infinity.
+    Stated,
+    /// No angle difference bound: every interval is `(−∞, +∞)`.
+    None,
+}
+
+impl AngleDifferenceBounds {
+    /// The selection the legacy `correct_angle_difference_bounds` flag
+    /// stands for: [`Self::PowerModelsPad`] when `true`, [`Self::Stated`]
+    /// when `false`.
+    #[must_use]
+    pub const fn from_correct_flag(correct: bool) -> Self {
+        if correct {
+            Self::PowerModelsPad
+        } else {
+            Self::Stated
+        }
+    }
+
+    /// Whether this selection pads unconstrained sides, which is what the
+    /// preparations' `correct_angle_difference_bounds` flag reports.
+    #[must_use]
+    pub const fn is_padded(self) -> bool {
+        matches!(self, Self::PowerModelsPad | Self::ShiftCenteredPad)
+    }
+
+    /// The interval for one branch, in radians, from its stated `angmin`
+    /// and `angmax` and the phase shift the preparation models.
+    #[must_use]
+    pub fn calc_bounds(self, angle_min: f64, angle_max: f64, shift: f64) -> (f64, f64) {
+        match self {
+            Self::PowerModelsPad => correct_angle_difference_bounds(angle_min, angle_max),
+            Self::ShiftCenteredPad => correct_angle_difference_bounds_with_pad(
+                angle_min,
+                angle_max,
+                POWER_MODELS_ANGLE_BOUND_PAD,
+                shift,
+            ),
+            Self::Stated => stated_angle_difference_bounds(angle_min, angle_max),
+            Self::None => (f64::NEG_INFINITY, f64::INFINITY),
+        }
+    }
+}
+
+/// The PowerModels rule with the pad centered on `center`, the branch's
+/// phase shift in radians: PowerModels itself centers it on zero.
+#[allow(clippy::float_cmp)] // the `0`/`0` spelling is an exact sentinel
+fn correct_angle_difference_bounds_with_pad(
+    angle_min: f64,
+    angle_max: f64,
+    pad: f64,
+    center: f64,
+) -> (f64, f64) {
+    let (mut low, mut high) = (angle_min, angle_max);
+    if low <= -std::f64::consts::FRAC_PI_2 {
+        low = center - pad;
+    }
+    if high >= std::f64::consts::FRAC_PI_2 {
+        high = center + pad;
+    }
+    if angle_min == 0.0 && angle_max == 0.0 || low > high {
+        return (center - pad, center + pad);
+    }
+    (low, high)
 }
 
 fn norm_gens(
@@ -831,6 +960,152 @@ fn designate_reference(
     Ok(())
 }
 
+/// The buses of the islands no in-service generator supplies, each island
+/// reported as left out.
+fn unsupplied_island_buses(
+    network: &BalancedNetwork,
+    partition: &IslandPartition,
+    warnings: &mut crate::diagnostics::Diagnostics,
+) -> HashSet<BusId> {
+    let mut unsupplied = HashSet::new();
+    for island in partition
+        .islands
+        .iter()
+        .filter(|island| !island.is_supplied())
+    {
+        warnings.record(
+            network.unsupplied_island_finding(island, "was left out of the normalized network"),
+        );
+        unsupplied.extend(island.buses.iter().copied());
+    }
+    unsupplied
+}
+
+/// Canonical bus types: a bus hosting an in-service generator keeps `Ref` if
+/// the file marked it `Ref`, else becomes `Pv`; a gen-less bus is `Pq`. A
+/// `Pq` bus that becomes `Pv` is reported, since its generator now holds the
+/// bus voltage.
+fn canonicalize_bus_types(
+    buses: &mut [Bus],
+    generators: &[Generator],
+    warnings: &mut crate::diagnostics::Diagnostics,
+) {
+    let gen_buses: HashSet<BusId> = generators.iter().map(|g| g.bus).collect();
+    let mut retyped_pq = Vec::new();
+    for b in buses.iter_mut() {
+        if b.kind == BusType::Pq && gen_buses.contains(&b.id) {
+            retyped_pq.push(b.id);
+        }
+        b.kind = match (gen_buses.contains(&b.id), b.kind) {
+            (true, BusType::Ref) => BusType::Ref,
+            (true, _) => BusType::Pv,
+            (false, _) => BusType::Pq,
+        };
+    }
+    if !retyped_pq.is_empty() {
+        warnings.push(
+            &crate::diagnostics::codes::CANONICALIZE_NORMALIZE_GENERATOR_BUS_RETYPED,
+            format!(
+                "{} PQ bus(es) host an in-service generator and were retyped PV, so the \
+                 generator holds the bus voltage ({})",
+                retyped_pq.len(),
+                bus_list(&retyped_pq)
+            ),
+        );
+    }
+}
+
+/// The reference buses of the normalized tables: one per island of
+/// `partition` under [`IslandReferencePolicy::PerIsland`], and the largest
+/// generator's bus when no reference survives at all.
+fn assign_normalized_references(
+    buses: &mut [Bus],
+    generators: &[Generator],
+    partition: Option<&IslandPartition>,
+    warnings: &mut crate::diagnostics::Diagnostics,
+) -> Result<()> {
+    if let Some(partition) = partition {
+        assign_normalized_island_references(buses, generators, partition, warnings);
+    }
+    if !buses.iter().any(|b| b.kind == BusType::Ref) {
+        designate_reference(buses, generators, warnings)?;
+    }
+    Ok(())
+}
+
+/// [`IslandReferencePolicy::PerIsland`] over the normalized tables: each
+/// supplied island of `partition` keeps exactly one reference bus. The bus
+/// types are already canonical, so a reference hosts a generator and a demoted
+/// one becomes PV.
+fn assign_normalized_island_references(
+    buses: &mut [Bus],
+    generators: &[Generator],
+    partition: &IslandPartition,
+    warnings: &mut crate::diagnostics::Diagnostics,
+) {
+    let mut island_generators: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (row, generator) in generators.iter().enumerate() {
+        if let Some(island) = partition.island_of(generator.bus) {
+            island_generators.entry(island).or_default().push(row);
+        }
+    }
+    let mut island_references: HashMap<usize, Vec<BusId>> = HashMap::new();
+    for bus in buses.iter().filter(|bus| bus.kind == BusType::Ref) {
+        if let Some(island) = partition.island_of(bus.id) {
+            island_references.entry(island).or_default().push(bus.id);
+        }
+    }
+    let mut designated = HashSet::new();
+    let mut demoted = HashSet::new();
+    for (position, island) in partition.islands.iter().enumerate() {
+        let Some(rows) = island_generators.get(&position) else {
+            continue;
+        };
+        let mut references = island_references.remove(&position).unwrap_or_default();
+        references.sort_unstable();
+        match references.as_slice() {
+            [_] => {}
+            [] => {
+                if let Some(bus) = largest_generator_bus(generators, rows) {
+                    warnings.push(
+                        &crate::diagnostics::codes::CANONICALIZE_ISLAND_REFERENCE_DESIGNATED,
+                        format!(
+                            "the island of {} bus(es) ({}) has no reference bus that survives \
+                             normalization; bus {bus} hosts its largest pmax in-service \
+                             generator and was designated the reference",
+                            island.buses.len(),
+                            bus_list(&island.buses)
+                        ),
+                    );
+                    designated.insert(bus);
+                }
+            }
+            many => {
+                let kept = kept_reference(many, generators, rows).unwrap_or(many[0]);
+                let others: Vec<BusId> = many.iter().copied().filter(|&b| b != kept).collect();
+                warnings.push(
+                    &crate::diagnostics::codes::CANONICALIZE_ISLAND_REFERENCE_DEMOTED,
+                    format!(
+                        "the island of {} bus(es) keeps {} reference buses; bus {kept} hosts the \
+                         most generation and stays the reference, and bus(es) {} became PV",
+                        island.buses.len(),
+                        many.len(),
+                        bus_list(&others)
+                    ),
+                );
+                demoted.extend(others);
+            }
+        }
+    }
+    for bus in buses.iter_mut() {
+        if designated.contains(&bus.id) {
+            bus.kind = BusType::Ref;
+        } else if demoted.contains(&bus.id) {
+            bus.kind = BusType::Pv;
+        }
+    }
+}
+
 impl BalancedNetwork {
     /// A normalized, computation-ready copy of this network. The raw `BalancedNetwork` is
     /// kept lossless (MATPOWER units, 1-based sparse ids, out-of-service elements
@@ -862,10 +1137,13 @@ impl BalancedNetwork {
     ///   indices without destroying source ids.
     /// - **Bus types**: a bus hosting a surviving generator keeps `REF` if the file
     ///   marked it `REF`, otherwise becomes `PV`; a generator-less bus is `PQ` (so a
-    ///   generator-less `REF` is demoted). The file's `REF` buses are kept, several
-    ///   included, and the consumer picks the slack. Only when no reference bus
-    ///   survives is the largest-`pmax` in-service generator's bus promoted to
-    ///   `REF`.
+    ///   generator-less `REF` is demoted). A `PQ` bus retyped `PV` is reported as
+    ///   `CANONICALIZE.NORMALIZE.GENERATOR_BUS_RETYPED`. The file's `REF` buses are
+    ///   kept, several included, and the consumer picks the slack. Only when no
+    ///   reference bus survives is the largest-`pmax` in-service generator's bus
+    ///   promoted to `REF`;
+    ///   [`NormalizeSettings::island_references`] applies that rule per island
+    ///   instead.
     ///
     /// This is a derived product, not a source for write-back: `source` is dropped
     /// and `source_format` is [`SourceFormat::Normalized`], so writing it serializes
@@ -965,7 +1243,7 @@ impl BalancedNetwork {
         validate_normalize_options(options)?;
         let (kept, left) = self.closed_switch_rows();
         if kept.is_empty() || settings.closed_switches == ClosedSwitchPolicy::Keep {
-            let (normalized, rows) = self.normalize_pass(options)?;
+            let (normalized, rows) = self.normalize_pass(settings)?;
             return Ok((normalized, rows, NormalizeReport::default()));
         }
         if settings.closed_switches == ClosedSwitchPolicy::Refuse {
@@ -993,7 +1271,7 @@ impl BalancedNetwork {
                 closed: 1 + remaining.count(),
             });
         }
-        let (mut normalized, rows) = merge.network.normalize_pass(options)?;
+        let (mut normalized, rows) = merge.network.normalize_pass(settings)?;
         let rows = rows.through_merge(&merge);
         let mut diagnostics = merge.diagnostics.clone();
         diagnostics.append(&mut normalized.diagnostics);
@@ -1076,11 +1354,25 @@ impl BalancedNetwork {
     /// One normalization pass over this network as it stands.
     fn normalize_pass(
         &self,
-        options: &NormalizeOptions,
+        settings: &NormalizeSettings,
     ) -> Result<(NormalizedNetwork, NormalizeSourceRows)> {
+        let options = &settings.options;
         validate_normalize_options(options)?;
         self.check_base_mva()?;
         let base = self.base_mva();
+        let mut warnings = crate::diagnostics::Diagnostics::new();
+
+        // Per island references: an island no in-service generator supplies
+        // cannot be solved, so its buses stay out like isolated ones and the
+        // element filters below drop what sits on them. The partition follows
+        // what this pass keeps: a three winding transformer keeps its live
+        // windings when another winding sits on an isolated bus.
+        let partition = (settings.island_references == IslandReferencePolicy::PerIsland)
+            .then(|| self.calc_islands());
+        let unsupplied = partition
+            .as_ref()
+            .map(|partition| unsupplied_island_buses(self, partition, &mut warnings))
+            .unwrap_or_default();
 
         // Kept buses keep their original `kind` for now (the reference scan below
         // reads it) and their source ids. Isolated buses are dropped.
@@ -1091,7 +1383,7 @@ impl BalancedNetwork {
         // `pad_to_lowered` extends the map over what the star lowering appends.
         let mut bus_rows: Vec<Option<usize>> = Vec::with_capacity(self.buses().len());
         for (row, b) in self.buses().iter().enumerate() {
-            if b.kind == BusType::Isolated {
+            if b.kind == BusType::Isolated || unsupplied.contains(&b.id) {
                 continue;
             }
             id_map.insert(b.id, b.id);
@@ -1106,7 +1398,6 @@ impl BalancedNetwork {
         let (static_var_compensators, static_var_compensator_rows) =
             norm_static_var_compensators(self.static_var_compensators(), base, &id_map);
         let (mut branches, branch_rows) = norm_branches(self.branches(), base, &id_map);
-        let mut warnings = crate::diagnostics::Diagnostics::new();
         if options.clamp_angle_bounds {
             clamp_angle_bounds(&mut branches, options.angle_bound_pad, &mut warnings);
         }
@@ -1129,21 +1420,11 @@ impl BalancedNetwork {
             transformers_3w: transformer_3w_rows,
         };
 
-        // Bus types: a bus hosting an in-service generator keeps `Ref` if the
-        // file marked it `Ref`, else becomes `Pv`; a gen-less bus is `Pq`.
-        // Multiple file `Ref` buses are kept as-is, and only when no `Ref`
-        // survives is the largest-pmax generator's bus promoted.
-        let gen_buses: HashSet<BusId> = generators.iter().map(|g| g.bus).collect();
-        for b in &mut buses {
-            b.kind = match (gen_buses.contains(&b.id), b.kind) {
-                (true, BusType::Ref) => BusType::Ref,
-                (true, _) => BusType::Pv,
-                (false, _) => BusType::Pq,
-            };
-        }
-        if !buses.iter().any(|b| b.kind == BusType::Ref) {
-            designate_reference(&mut buses, &generators, &mut warnings)?;
-        }
+        // Bus types. Multiple file `Ref` buses are kept as-is unless the per
+        // island policy keeps one per island, and only when no `Ref` survives
+        // is the largest-pmax generator's bus promoted.
+        canonicalize_bus_types(&mut buses, &generators, &mut warnings);
+        assign_normalized_references(&mut buses, &generators, partition.as_ref(), &mut warnings)?;
         // The other silent semantic decision this gateway announces: a
         // solver-ready copy whose cost objective is identically zero.
         if !generators.is_empty() && generators.iter().all(|g| g.cost.is_none()) {
@@ -1157,7 +1438,7 @@ impl BalancedNetwork {
             );
         }
 
-        let net = BalancedNetwork::from_tables(BalancedNetworkTables {
+        let mut net = BalancedNetwork::from_tables(BalancedNetworkTables {
             name: self.name().clone(),
             base_mva: base,
             base_frequency: self.base_frequency(),
@@ -1181,6 +1462,9 @@ impl BalancedNetwork {
             solver: None,
             source_format: SourceFormat::Normalized,
         });
+        // Project source topology after all electrical filters have run, including
+        // unsupplied islands, isolated buses, and out-of-service equipment.
+        crate::operations::filter_connectivity(self, &mut net);
         // The filter drops every reference to a dropped bus by
         // construction, so the result is reference-consistent. Assert it in
         // debug builds to catch a future regression in the filtering logic.

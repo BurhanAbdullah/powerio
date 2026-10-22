@@ -81,6 +81,7 @@ from ._powerio import (
     UpdateReport,
     __version__,
 )
+from ._sincal import SincalBalancedReadOptions
 
 __all__ = [
     "AcOpfInstance",
@@ -150,6 +151,7 @@ __all__ = [
     "ScucStartupLimit",
     "ScucTransformerControl",
     "ScucViolationCosts",
+    "SincalBalancedReadOptions",
     "SocwrOpfSolution",
     "SourceSpan",
     "SubsystemSet",
@@ -817,6 +819,7 @@ class BalancedNetwork:
         clamp_angle_bounds: bool = False,
         angle_bound_pad: Optional[float] = None,
         closed_switches: str = "merge",
+        island_references: str = "stated",
     ) -> "BalancedNetwork":
         """Return a normalized copy with per unit power and radian angles.
 
@@ -842,11 +845,19 @@ class BalancedNetwork:
         for example across two windings of one three winding transformer.
         The error names the original switch row and endpoints; no partial
         normalized network is returned.
+
+        ``island_references="per_island"`` gives every island one reference
+        bus: an island that states none takes the bus of its largest ``pmax``
+        in-service generator, an island stating several keeps one, and an
+        island no in-service generator supplies is left out. The default
+        ``"stated"`` keeps the case's references and designates one only when
+        none survives.
         """
         if (
             not clamp_angle_bounds
             and angle_bound_pad is None
             and closed_switches == "merge"
+            and island_references == "stated"
         ):
             return BalancedNetwork(self._inner.to_normalized())
         return BalancedNetwork(
@@ -854,6 +865,7 @@ class BalancedNetwork:
                 clamp_angle_bounds=clamp_angle_bounds,
                 angle_bound_pad=angle_bound_pad,
                 closed_switches=closed_switches,
+                island_references=island_references,
             )
         )
 
@@ -1891,19 +1903,58 @@ def parse(
     *,
     format: Optional[str] = None,
     name: Optional[str] = None,
+    sincal_multiconductor: Optional[dist.SincalReadOptions] = None,
+    sincal_balanced: Optional[SincalBalancedReadOptions] = None,
+    acquisition_root: Optional[Any] = None,
+    named_buffers: Optional[Mapping[str, bytes]] = None,
 ) -> PioModule:
     """Parse a path, file object, or bytes-like source.
 
     A string is always a path. Pass raw text through ``io.StringIO`` or
-    another file object.
+    another file object. ``sincal_multiconductor`` requires explicit format
+    ``sincal-multiconductor``; ``sincal_balanced`` requires ``sincal-balanced``.
+    File companions stay beneath the file's parent,
+    or an explicitly selected ``acquisition_root``. Memory sources use only
+    ``named_buffers`` and never acquire companions from the filesystem.
     """
+    balanced_selection = None
+    if sincal_balanced is not None:
+        if not isinstance(sincal_balanced, SincalBalancedReadOptions):
+            raise TypeError("sincal_balanced must be SincalBalancedReadOptions")
+        balanced_selection = (sincal_balanced.variant, sincal_balanced.snapshot_hours, sincal_balanced.acquired_tables)
+    selection = None
+    if sincal_multiconductor is not None:
+        if not isinstance(sincal_multiconductor, dist.SincalReadOptions):
+            raise TypeError("sincal_multiconductor must be dist.SincalReadOptions")
+        selection = (
+            sincal_multiconductor.variant,
+            sincal_multiconductor.snapshot_hours,
+            sincal_multiconductor.acquired_tables,
+            sincal_multiconductor.assume_inactive_source_controls,
+        )
     path = _path_from_source(source)
     if path is not None:
         if name is not None:
             raise ValueError("name is only valid for memory and file object sources")
-        return PioModule(_powerio._PioModule._parse_path(path, format))
+        if named_buffers is not None:
+            raise ValueError("named_buffers applies only to memory and file object sources")
+        root = _path_from_source(acquisition_root) if acquisition_root is not None else None
+        if acquisition_root is not None and root is None:
+            raise TypeError("acquisition_root must be a path")
+        return PioModule(_powerio._PioModule._parse_path(path, format, selection, root, balanced_selection))
+    if acquisition_root is not None:
+        raise ValueError("acquisition_root applies only to path sources")
+    buffers = None
+    if named_buffers is not None:
+        if not isinstance(named_buffers, Mapping):
+            raise TypeError("named_buffers must map relative names to bytes-like data")
+        buffers = []
+        for buffer_name, buffer_data in named_buffers.items():
+            if not isinstance(buffer_name, str) or not isinstance(buffer_data, (bytes, bytearray, memoryview)):
+                raise TypeError("named_buffers must map relative names to bytes-like data")
+            buffers.append((buffer_name, bytes(buffer_data)))
     data, source_name = _memory_from_source(source, name)
-    return PioModule(_powerio._PioModule._parse_memory(data, source_name, format))
+    return PioModule(_powerio._PioModule._parse_memory(data, source_name, format, selection, buffers, balanced_selection))
 
 
 def _result_from_native(result: dict[str, Any]) -> EmitResult:

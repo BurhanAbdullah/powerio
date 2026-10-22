@@ -1429,6 +1429,9 @@ pub enum SourceFormat {
     /// writer, so writing goes through another format's writer.
     #[serde(rename = "ieee-cdf")]
     IeeeCdf,
+    /// A SINCAL project read using the explicitly selected balanced profile.
+    #[serde(rename = "sincal")]
+    Sincal,
 }
 
 impl SourceFormat {
@@ -1439,6 +1442,7 @@ impl SourceFormat {
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
+            SourceFormat::Sincal => "sincal",
             SourceFormat::Matpower => "matpower",
             SourceFormat::PowerModelsJson => "powermodels-json",
             SourceFormat::EgretJson => "egret-json",
@@ -2500,6 +2504,105 @@ pub struct Branch {
     pub extras: Extras,
 }
 
+/// The [`Branch::extras`] and [`Transformer3W::extras`] key behind
+/// [`Branch::impedance_correction`] and
+/// [`Transformer3W::winding_impedance_correction`].
+pub(crate) const IMPEDANCE_CORRECTION_EXTRA: &str = "impedance_correction";
+/// The extras key where [`BalancedNetwork::apply_impedance_correction`]
+/// records the nominal series impedance it scales.
+pub(crate) const IMPEDANCE_CORRECTION_NOMINAL_EXTRA: &str = "impedance_correction_nominal";
+
+/// A transformer impedance correction table: the factors by which a winding's
+/// nominal series impedance is multiplied, tabulated against the winding's
+/// off-nominal turns ratio or its phase shift. PSS/E states these as
+/// impedance correction tables that a transformer winding names through
+/// `TAB`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ImpedanceCorrection {
+    /// The source's table number (PSS/E `TAB`).
+    pub table: u32,
+    /// What the points are tabulated against.
+    pub variable: ImpedanceCorrectionVariable,
+    /// The points, in ascending order of [`value`](ImpedanceCorrectionPoint::value).
+    pub points: Vec<ImpedanceCorrectionPoint>,
+}
+
+/// The winding quantity an [`ImpedanceCorrection`] is tabulated against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ImpedanceCorrectionVariable {
+    /// The off-nominal turns ratio as the transformer's `tap` states it.
+    Ratio,
+    /// The phase shift, degrees.
+    Angle,
+}
+
+/// One point of an [`ImpedanceCorrection`]: the complex factor
+/// `factor_re + j·factor_im` that multiplies the nominal series impedance at
+/// `value`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ImpedanceCorrectionPoint {
+    /// Turns ratio (p.u.) or phase shift (degrees).
+    pub value: f64,
+    pub factor_re: f64,
+    pub factor_im: f64,
+}
+
+impl ImpedanceCorrectionPoint {
+    #[must_use]
+    pub fn new(value: f64, factor_re: f64, factor_im: f64) -> Self {
+        Self {
+            value,
+            factor_re,
+            factor_im,
+        }
+    }
+}
+
+impl ImpedanceCorrection {
+    #[must_use]
+    pub fn new(
+        table: u32,
+        variable: ImpedanceCorrectionVariable,
+        points: Vec<ImpedanceCorrectionPoint>,
+    ) -> Self {
+        Self {
+            table,
+            variable,
+            points,
+        }
+    }
+
+    /// The complex factor `(re, im)` at `value`, interpolated linearly
+    /// between the two points around it. Outside the tabulated range the
+    /// nearest end point applies, and one point applies everywhere. `None`
+    /// for a table with no points.
+    #[must_use]
+    pub fn calc_factor(&self, value: f64) -> Option<(f64, f64)> {
+        let mut points = self.points.clone();
+        points.sort_by(|a, b| a.value.total_cmp(&b.value));
+        let first = points.first()?;
+        let last = points.last()?;
+        if value <= first.value {
+            return Some((first.factor_re, first.factor_im));
+        }
+        if value >= last.value {
+            return Some((last.factor_re, last.factor_im));
+        }
+        let upper = points.iter().position(|point| point.value >= value)?;
+        let (a, b) = (points[upper - 1], points[upper]);
+        let weight = (value - a.value) / (b.value - a.value);
+        let lerp = |x: f64, y: f64| x + weight * (y - x);
+        Some((
+            lerp(a.factor_re, b.factor_re),
+            lerp(a.factor_im, b.factor_im),
+        ))
+    }
+}
+
 /// Extra branch MVA rating set beyond the canonical A/B/C columns.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -2765,6 +2868,34 @@ impl Branch {
     #[must_use]
     pub fn has_angle_limits(&self) -> bool {
         self.angmin > -360.0 || self.angmax < 360.0
+    }
+
+    /// The impedance correction table this transformer's series impedance
+    /// follows. It is kept under `extras["impedance_correction"]`; an absent
+    /// or malformed entry reads as none.
+    /// [`BalancedNetwork::apply_impedance_correction`] applies it.
+    #[must_use]
+    pub fn impedance_correction(&self) -> Option<ImpedanceCorrection> {
+        self.extras
+            .get(IMPEDANCE_CORRECTION_EXTRA)
+            .and_then(|value| ImpedanceCorrection::deserialize(value).ok())
+    }
+
+    /// Set or clear [`impedance_correction`](Self::impedance_correction).
+    pub fn set_impedance_correction(&mut self, correction: Option<ImpedanceCorrection>) {
+        set_impedance_correction_extra(&mut self.extras, correction);
+    }
+}
+
+fn set_impedance_correction_extra(extras: &mut Extras, correction: Option<ImpedanceCorrection>) {
+    match correction {
+        Some(correction) => {
+            let value = serde_json::to_value(correction).expect("a correction serializes to JSON");
+            extras.insert(IMPEDANCE_CORRECTION_EXTRA.to_owned(), value);
+        }
+        None => {
+            extras.remove(IMPEDANCE_CORRECTION_EXTRA);
+        }
     }
 }
 
@@ -3617,6 +3748,68 @@ impl Transformer3W {
         self.extras
             .get(WINDING_RATING_SETS_EXTRA)
             .and_then(|value| <[Vec<BranchRatingSet>; 3]>::deserialize(value).ok())
+            .unwrap_or_default()
+    }
+
+    /// The sole adjustable winding for PSS/E bus-to-bus correction. The
+    /// sign of COD enables regulation but does not change which winding the
+    /// tables describe: a disabled nonzero control remains adjustable.
+    pub(crate) fn impedance_correction_control_winding(&self) -> Option<usize> {
+        let mut adjustable = self
+            .windings
+            .iter()
+            .enumerate()
+            .filter(|(_, winding)| {
+                winding
+                    .control
+                    .as_ref()
+                    .is_some_and(|control| control.mode != TransformerControlMode::Fixed)
+            })
+            .map(|(index, _)| index);
+        let winding = adjustable.next()?;
+        adjustable.next().is_none().then_some(winding)
+    }
+
+    /// The impedance correction table winding `winding` (0, 1, or 2) follows:
+    /// it scales that winding's star impedance, except with PSS/E `ZCOD=1`,
+    /// where entries 0/1/2 scale Z12/Z23/Z31 at the sole adjustable winding.
+    /// The tables are kept under
+    /// `extras["impedance_correction"]` as three entries in winding order, each
+    /// a table or `null`; an absent or malformed entry reads as none.
+    ///
+    /// # Panics
+    /// If `winding` is 3 or more.
+    #[must_use]
+    pub fn winding_impedance_correction(&self, winding: usize) -> Option<ImpedanceCorrection> {
+        let mut corrections = self.stored_winding_impedance_corrections();
+        corrections[winding].take()
+    }
+
+    /// Set or clear [`winding_impedance_correction`](Self::winding_impedance_correction)
+    /// for one winding.
+    ///
+    /// # Panics
+    /// If `winding` is 3 or more.
+    pub fn set_winding_impedance_correction(
+        &mut self,
+        winding: usize,
+        correction: Option<ImpedanceCorrection>,
+    ) {
+        let mut corrections = self.stored_winding_impedance_corrections();
+        corrections[winding] = correction;
+        if corrections.iter().all(Option::is_none) {
+            self.extras.remove(IMPEDANCE_CORRECTION_EXTRA);
+        } else {
+            let value = serde_json::to_value(corrections).expect("corrections serialize to JSON");
+            self.extras
+                .insert(IMPEDANCE_CORRECTION_EXTRA.to_owned(), value);
+        }
+    }
+
+    fn stored_winding_impedance_corrections(&self) -> [Option<ImpedanceCorrection>; 3] {
+        self.extras
+            .get(IMPEDANCE_CORRECTION_EXTRA)
+            .and_then(|value| <[Option<ImpedanceCorrection>; 3]>::deserialize(value).ok())
             .unwrap_or_default()
     }
 
@@ -5768,6 +5961,7 @@ mod tests {
         // The exhaustive match keeps a new enum case from shipping with a serde
         // spelling that differs from name().
         let all = [
+            SourceFormat::Sincal,
             SourceFormat::Matpower,
             SourceFormat::PowerModelsJson,
             SourceFormat::EgretJson,
@@ -5812,7 +6006,8 @@ mod tests {
                 | SourceFormat::Jiidm
                 | SourceFormat::Cgmes
                 | SourceFormat::Ucte
-                | SourceFormat::IeeeCdf => {}
+                | SourceFormat::IeeeCdf
+                | SourceFormat::Sincal => {}
             }
             let token = serde_json::to_value(f).unwrap();
             assert_eq!(token, serde_json::Value::String(f.name().to_owned()));
@@ -6667,5 +6862,31 @@ mod tests {
         let error = calc_reactive_limits_at_active_power("generator 1", &limits, f64::NAN)
             .expect_err("NaN must not be used to index a capability curve");
         assert!(error.contains("nonfinite active power"), "{error}");
+    }
+    #[test]
+    fn impedance_correction_factor_interpolates_and_holds_the_end_points() {
+        let point = ImpedanceCorrectionPoint::new;
+        let table = ImpedanceCorrection::new(
+            1,
+            ImpedanceCorrectionVariable::Angle,
+            vec![
+                point(30.0, 1.2, -0.2),
+                point(-30.0, 1.2, 0.2),
+                point(0.0, 1.0, 0.0),
+            ],
+        );
+        assert_eq!(table.calc_factor(-45.0), Some((1.2, 0.2)));
+        assert_eq!(table.calc_factor(45.0), Some((1.2, -0.2)));
+        let (re, im) = table.calc_factor(15.0).unwrap();
+        close(re, 1.1);
+        close(im, -0.1);
+        let single = ImpedanceCorrection::new(
+            2,
+            ImpedanceCorrectionVariable::Ratio,
+            vec![point(1.0, 0.9, 0.0)],
+        );
+        assert_eq!(single.calc_factor(1.1), Some((0.9, 0.0)));
+        let empty = ImpedanceCorrection::new(3, ImpedanceCorrectionVariable::Ratio, Vec::new());
+        assert_eq!(empty.calc_factor(1.0), None);
     }
 }

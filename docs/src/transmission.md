@@ -99,5 +99,86 @@ powerio summary case.raw --merge-buses psse
 powerio convert case.raw --merge-buses psse=0.0001 --to matpower -o merged.m
 ```
 
+## Islands and reference buses
+
+A large case can hold several AC islands: systems joined only by HVDC,
+pockets behind an open breaker, and stranded equipment. `calc_islands`
+partitions the energized buses into islands joined by in-service branches,
+closed switches, and in-service three winding transformers. Buses typed
+isolated belong to no island, and HVDC lines do not join islands. Each island
+lists its buses, reference buses, in-service generators, and the in-service
+HVDC lines that tie it to another island, largest island first.
+
+`subset_buses(&buses)` returns a `BusSubset`: the cut `network` and a map for
+all eleven tables (buses, branches, switches, three winding transformers,
+generators, loads, shunts, SVCs, storage, HVDC lines, and areas). Each map has
+one entry per source row: `Some(row)` points into the result table and `None`
+means that row was excluded. IDs are preserved. For example,
+`cut.branch_rows[source_row]` locates a statement's branch in `cut.network`
+without reproducing the cut's filtering rules.
+
+A dead winding can bring its bus along as an isolated stub: its `bus_rows`
+entry is present, while injections excluded from that stub map to `None`.
+Detailed connectivity follows the cut, including calculated buses, topology
+connections, equipment metadata and remote regulation references. Unassigned
+source topology remains when no calculated bus identifies it as excluded.
+Empty voltage levels are pruned and nodes stranded by a cut retain explicit
+calculated-bus records so fresh XIIDM emission preserves the selected buses.
+The older selector-based `subset` shares this filtering but still returns a
+network directly.
+
+A power flow needs one reference bus per island, and an island with no source
+cannot be solved. `assign_island_references` with the per island policy gives
+each island exactly one:
+
+- an island that states one reference keeps it;
+- an island that states none takes the bus of its largest `pmax` in-service
+  generator;
+- an island that states several keeps the one hosting the most generation and
+  demotes the others;
+- an island with no in-service generator is de-energized: its buses are typed
+  isolated and the equipment on or touching them is taken out of service.
+  Three winding transformers lose only windings on those buses; the whole
+  transformer goes out when fewer than two live windings remain.
+  Supply counts in-service generators only, so an island that only an HVDC
+  line feeds is de-energized too, and the line with it. It gets its own code,
+  `CANONICALIZE.ISLAND.HVDC_FED_DE_ENERGIZED`, which names the lines and the
+  power they schedule into the island; model that infeed as a generator at
+  the converter bus to keep the island.
+
+Every change is reported under `CANONICALIZE.ISLAND`. Normalization applies
+the same rule when asked, and leaves the unsupplied islands out of the
+normalized network; by default it keeps the case's references and designates
+one only when none survives. `powerio summary` lists the islands under
+`topology.islands`.
+
+```python
+normalized = network.to_normalized(island_references="per_island")
+```
+
 Building matrices from a balanced network has its own chapter,
 [Matrices and graphs](matrices.md).
+
+### PSS/E impedance correction before topology reduction
+
+`BalancedNetwork::apply_impedance_correction()` applies retained PSS/E
+transformer correction tables at the present tap or phase shift. Call it
+before `merge_buses` or closed-switch normalization: a bypassed transformer
+becomes a shunt, whose admittance must include the correction. Reapply after
+editing tap or shift values while the transformer still exists; the nominal
+cache prevents repeated scaling.
+
+The original table range selects ratio or angle. Ratio tables use bus-base
+per-unit winding ratios regardless of the RAW `CW` setting. A branch table
+is mapped to its effective t1/t2 tap coordinates. Three-winding `ZCOD=0`
+scales star impedances; `ZCOD=1` scales Z12/Z23/Z31 at the one nonfixed
+control winding, even when automatic regulation is disabled. Ambiguous RAW
+`ZCOD=1` input is refused; an edited in-memory transformer with no unique
+controlling winding is skipped by correction application.
+
+Fresh RAW35 output states nominal impedances beside the tables and preserves
+their interpolation and angle/ratio classification. When winding 2 cannot
+be set to one without changing a ratio table's meaning, the writer chooses
+an equivalent nonunit ratio. RAW33/34 cannot state `ZCOD=1`; output freezes
+its present corrected pairwise impedances and reports the lost dependence
+on tap position. RAWX correction tables remain unsupported and are reported.

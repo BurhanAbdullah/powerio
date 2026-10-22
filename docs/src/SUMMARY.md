@@ -6,6 +6,7 @@
 - [Core concepts](concepts.md)
 - [Transmission networks](transmission.md)
 - [Distribution networks](distribution.md)
+- [PSS SINCAL](sincal.md)
 - [Time series and scenarios](time-series.md)
 - [Calculation instances and solutions](instances.md)
 - [Matrices and graphs](matrices.md)
@@ -29,3 +30,5 @@
   - [Corpus harness](corpus-harness.md)
   - [Performance](performance.md)
   - [Testing and release checks](contributor-workflow.md)
+
+- [Multiconductor IVR preparation](multiconductor-ivr.md)

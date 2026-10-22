@@ -333,7 +333,10 @@ the same charging, so the admittance survives a round trip through
 magnetizing admittance at its star bus. The reader converts `CW` 1/2/3, `CZ`
 1/2/3, and `CM` 1/2 into the neutral tap ratio, system base impedance, and
 magnetizing admittance, and fresh output uses the electrically equivalent
-canonical `CW = CZ = CM = 1` representation. A two
+canonical `CW = CZ = CM = 1` representation. Fresh two-winding output
+usually puts winding 2 at one; if that would change a retained correction
+table from ratio to angle, it writes equivalent nonunit winding ratios and
+impedance instead. A two
 winding transformer's branch tap is the winding 1 ratio over the winding 2
 ratio \\(t_1 / t_2\\), each in per unit of its bus base voltage, and its series
 impedance and tap control range are referred across \\(t_2\\): the impedance

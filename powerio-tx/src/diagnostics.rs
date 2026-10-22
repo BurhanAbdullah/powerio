@@ -185,6 +185,30 @@ pub mod codes {
     emit_family!(EMIT_UNSUPPORTED, "UNSUPPORTED", "a read only format");
 
     powerio_core::diagnostic_codes! {
+        REQUEST_SINCAL_PROFILE_REQUIRED = "REQUEST.SINCAL.PROFILE_REQUIRED", Error,
+            "SINCAL requires an explicit electrical profile", category = Request;
+        PARSE_SINCAL_MALFORMED = "PARSE.SINCAL.MALFORMED", Error,
+            "a required SINCAL record or electrical mode is invalid or unsupported", category = Parse;
+        READ_SINCAL_CONVERSION_BASE = "READ.SINCAL.CONVERSION_BASE", Remark,
+            "physical SINCAL quantities use a declared internal MVA conversion base";
+        READ_SINCAL_GEOMETRY = "READ.SINCAL.GEOMETRY", Warning,
+            "optional SINCAL drawing geometry retains native view metadata and reports mapping limits";
+        READ_SINCAL_VALUE_DEFAULTED = "READ.SINCAL.VALUE_DEFAULTED", Warning,
+            "a versioned SINCAL field default was applied";
+        READ_SINCAL_LIMITS_UNSPECIFIED = "READ.SINCAL.LIMITS_UNSPECIFIED", Remark,
+            "inactive native generator capability limits are represented as unbounded";
+        READ_SINCAL_RETAINED_SOURCE_ONLY = "READ.SINCAL.RETAINED_SOURCE_ONLY", Remark,
+            "native data outside the selected steady-state profile remains in retained source";
+        EMIT_SINCAL_RETAINED_SOURCE_OMITTED = "EMIT.SINCAL.RETAINED_SOURCE_OMITTED", Warning,
+            "native data retained only in SINCAL source is not included in cross-format output";
+        EMIT_SINCAL_EXPERIMENTAL_UNSUPPORTED = "EMIT.SINCAL.EXPERIMENTAL_UNSUPPORTED", Error,
+            "invalid or unsupported candidate SINCAL output", category = Output;
+        EMIT_SINCAL_EXPERIMENTAL_LOSS = "EMIT.SINCAL.EXPERIMENTAL_LOSS", Warning,
+            "candidate SINCAL output omits data outside its declared profile";
+        EMIT_SINCAL_EXPERIMENTAL = "EMIT.SINCAL.EXPERIMENTAL", Remark,
+            "candidate SINCAL output has not been validated in native SINCAL";
+        EMIT_SINCAL_FRESH_UNSUPPORTED = "EMIT.SINCAL.FRESH_UNSUPPORTED", Error,
+            "fresh SINCAL emission is not available through the universal emitter", category = Output;
         // PARSE: the source text could not be decoded as given.
         PARSE_MATPOWER_MALFORMED = "PARSE.MATPOWER.MALFORMED", Error,
             "a MATPOWER matrix is missing, short, unparseable, or unbalanced", category = Parse;
@@ -382,6 +406,21 @@ pub mod codes {
             "a normalize option is outside the range it is defined on", category = Data;
         CANONICALIZE_NORMALIZE_INVALID_BASE_MVA = "CANONICALIZE.NORMALIZE.INVALID_BASE_MVA", Error,
             "the case base MVA is not a positive finite number", category = Data;
+        CANONICALIZE_NORMALIZE_GENERATOR_BUS_RETYPED =
+            "CANONICALIZE.NORMALIZE.GENERATOR_BUS_RETYPED", Warning,
+            "PQ buses hosting an in-service generator were retyped PV, so the generator holds the bus voltage";
+
+        // CANONICALIZE.ISLAND: one reference bus per island.
+        CANONICALIZE_ISLAND_REFERENCE_DESIGNATED =
+            "CANONICALIZE.ISLAND.REFERENCE_DESIGNATED", Warning,
+            "an island stated no reference bus, so its largest generator's bus was designated";
+        CANONICALIZE_ISLAND_REFERENCE_DEMOTED = "CANONICALIZE.ISLAND.REFERENCE_DEMOTED", Warning,
+            "an island stated several reference buses; one was kept and the others demoted";
+        CANONICALIZE_ISLAND_DE_ENERGIZED = "CANONICALIZE.ISLAND.DE_ENERGIZED", Warning,
+            "an island no in-service generator supplies was de-energized";
+        CANONICALIZE_ISLAND_HVDC_FED_DE_ENERGIZED =
+            "CANONICALIZE.ISLAND.HVDC_FED_DE_ENERGIZED", Warning,
+            "an island fed only by HVDC, with no in-service generator, was de-energized with its HVDC lines";
 
         // CANONICALIZE.MERGE: the explicit bus merge.
         CANONICALIZE_MERGE_ZERO_IMPEDANCE = "CANONICALIZE.MERGE.ZERO_IMPEDANCE", Warning,

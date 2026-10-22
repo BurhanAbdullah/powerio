@@ -388,13 +388,37 @@ impl PyBalancedNetwork {
     }
 }
 
-/// The parse options a binding builds from its optional `format` argument.
-fn parse_options(format: Option<&str>) -> PyResult<powerio::ParseOptions> {
+/// Private transport for the Python SincalReadOptions fields.
+type SincalBalancedSelection = (Option<i64>, Option<f64>, Option<String>);
+type SincalSelection = (Option<i64>, Option<f64>, Option<String>, bool);
+
+fn parse_options(
+    format: Option<&str>,
+    sincal: Option<SincalSelection>,
+    balanced: Option<SincalBalancedSelection>,
+) -> PyResult<powerio::ParseOptions> {
     let mut options = powerio::ParseOptions::default();
     if let Some(format) = format {
         options = options
             .format(format)
             .map_err(|error| core_error_pyerr(&error))?;
+    }
+    if let Some((variant, snapshot_hours, acquired_tables, assume_inactive_source_controls)) =
+        sincal
+    {
+        let mut selection = powerio_dist::SincalReadOptions::default();
+        selection.variant = variant;
+        selection.snapshot_hours = snapshot_hours;
+        selection.acquired_tables = acquired_tables;
+        selection.assume_inactive_source_controls = assume_inactive_source_controls;
+        options.sincal_multiconductor = Some(selection);
+    }
+    if let Some((variant, snapshot_hours, acquired_tables)) = balanced {
+        let mut selection = powerio_tx::format::SincalBalancedReadOptions::default();
+        selection.variant = variant;
+        selection.snapshot_hours = snapshot_hours;
+        selection.acquired_tables = acquired_tables;
+        options.sincal_balanced = Some(selection);
     }
     Ok(options)
 }
@@ -950,12 +974,13 @@ impl PyBalancedNetwork {
         Ok(case_from_parts(normalized, self.diagnostics().to_vec()))
     }
 
-    #[pyo3(signature = (*, clamp_angle_bounds=false, angle_bound_pad=None, closed_switches="merge"))]
+    #[pyo3(signature = (*, clamp_angle_bounds=false, angle_bound_pad=None, closed_switches="merge", island_references="stated"))]
     fn to_normalized_with_options(
         &self,
         clamp_angle_bounds: bool,
         angle_bound_pad: Option<f64>,
         closed_switches: &str,
+        island_references: &str,
     ) -> PyResult<PyBalancedNetwork> {
         let closed_switches = match closed_switches {
             "merge" => powerio_tx::ClosedSwitchPolicy::Merge,
@@ -967,12 +992,22 @@ impl PyBalancedNetwork {
                 )));
             }
         };
+        let island_references = match island_references {
+            "stated" => powerio_tx::IslandReferencePolicy::Stated,
+            "per_island" => powerio_tx::IslandReferencePolicy::PerIsland,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown island_references policy {other:?}; expected \"stated\" or \"per_island\""
+                )));
+            }
+        };
         let options = NormalizeOptions {
             clamp_angle_bounds,
             angle_bound_pad: angle_bound_pad.unwrap_or(POWER_MODELS_ANGLE_BOUND_PAD),
         };
-        let settings =
-            powerio_tx::NormalizeSettings::new(options).with_closed_switches(closed_switches);
+        let settings = powerio_tx::NormalizeSettings::new(options)
+            .with_closed_switches(closed_switches)
+            .with_island_references(island_references);
         let (normalized, _) = self
             .inner()
             .to_normalized_with(&settings)
@@ -4180,11 +4215,19 @@ impl PyPioModule {
 
     /// Private path acquisition used by the public `parse` function.
     #[staticmethod]
-    #[pyo3(signature = (path, format=None))]
-    fn _parse_path(path: &str, format: Option<&str>) -> PyResult<Self> {
+    #[pyo3(signature = (path, format=None, sincal=None, acquisition_root=None, sincal_balanced=None))]
+    fn _parse_path(
+        path: &str,
+        format: Option<&str>,
+        sincal: Option<SincalSelection>,
+        acquisition_root: Option<&str>,
+        sincal_balanced: Option<SincalBalancedSelection>,
+    ) -> PyResult<Self> {
         let source = powerio_core::Source::open(Path::new(path))
             .map_err(|error| core_open_pyerr(Path::new(path), &error))?;
-        powerio::parse_with_options(source, &parse_options(format)?)
+        let mut options = parse_options(format, sincal, sincal_balanced)?;
+        options.acquisition_root = acquisition_root.map(std::path::PathBuf::from);
+        powerio::parse_with_options(source, &options)
             .map(|module| Self {
                 module: Some(module),
             })
@@ -4193,11 +4236,23 @@ impl PyPioModule {
 
     /// Private memory acquisition used for bytes-like and file-like sources.
     #[staticmethod]
-    #[pyo3(signature = (data, name, format=None))]
-    fn _parse_memory(data: &[u8], name: &str, format: Option<&str>) -> PyResult<Self> {
-        let source = powerio_core::Source::from_memory(name, data.to_vec())
+    #[pyo3(signature = (data, name, format=None, sincal=None, named_buffers=None, sincal_balanced=None))]
+    fn _parse_memory(
+        data: &[u8],
+        name: &str,
+        format: Option<&str>,
+        sincal: Option<SincalSelection>,
+        named_buffers: Option<Vec<(String, Vec<u8>)>>,
+        sincal_balanced: Option<SincalBalancedSelection>,
+    ) -> PyResult<Self> {
+        let mut source = powerio_core::Source::from_memory(name, data.to_vec())
             .map_err(|error| core_error_pyerr(&error))?;
-        powerio::parse_with_options(source, &parse_options(format)?)
+        for (name, bytes) in named_buffers.unwrap_or_default() {
+            source = source
+                .with_named_buffer(name, bytes)
+                .map_err(|error| core_error_pyerr(&error))?;
+        }
+        powerio::parse_with_options(source, &parse_options(format, sincal, sincal_balanced)?)
             .map(|module| Self {
                 module: Some(module),
             })
@@ -5078,6 +5133,57 @@ fn _powerio(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[cfg(test)]
 mod tests {
     use super::module_with_records;
+
+    #[test]
+    fn sincal_multiconductor_reaches_the_existing_python_module_type() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(include_str!(
+                "../../tests/data/sincal/synthetic-multiconductor.sql"
+            ))
+            .unwrap();
+        let native = connection.serialize("main").unwrap().to_vec();
+        let parsed = super::PyPioModule::_parse_memory(
+            &native,
+            "case.db",
+            Some("sincal-multiconductor"),
+            None,
+            None,
+        )
+        .unwrap();
+        let module = parsed.module().unwrap();
+        let powerio::PioValue::MulticonductorNetwork(network) = module.value() else {
+            panic!("wrong SINCAL family")
+        };
+        assert_eq!(network.loads()[0].p_nom, [2000.0, 4000.0, 6000.0]);
+        assert_eq!(
+            module.source().unwrap().primary_buffer().unwrap().bytes(),
+            native
+        );
+    }
+
+    #[test]
+    fn sincal_balanced_reaches_the_existing_python_module_type() {
+        const NATIVE: &[u8] = include_bytes!("../../tests/data/sincal/1-LV-rural1--0-sw.sinx");
+        let parsed = super::PyPioModule::_parse_memory(
+            NATIVE,
+            "case.sinx",
+            Some("sincal-balanced"),
+            None,
+            None,
+        )
+        .unwrap();
+        let module = parsed.module().unwrap();
+        let powerio::PioValue::BalancedNetwork(network) = module.value() else {
+            panic!("SINCAL balanced profile changed value family");
+        };
+        assert_eq!(network.buses().len(), 15);
+        assert_eq!(network.loads().len(), 13);
+        assert_eq!(
+            module.source().unwrap().primary_buffer().unwrap().bytes(),
+            NATIVE
+        );
+    }
 
     #[test]
     fn typed_module_copy_keeps_every_common_record_and_retained_source() {

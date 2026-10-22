@@ -20,6 +20,8 @@ from typing import (
     overload,
 )
 
+from ._sincal import SincalBalancedReadOptions as SincalBalancedReadOptions
+
 _T = TypeVar("_T")
 __all__ = [
     "AcOpfInstance",
@@ -1053,6 +1055,7 @@ class BalancedNetwork:
         clamp_angle_bounds: bool = ...,
         angle_bound_pad: Optional[float] = ...,
         closed_switches: Literal["merge", "refuse", "keep"] = ...,
+        island_references: Literal["stated", "per_island"] = ...,
     ) -> "BalancedNetwork": ...
     def to_ppc(self) -> Dict[str, Any]: ...
     def to_networkx(self) -> Any: ...
@@ -1301,7 +1304,11 @@ def apply_bus_load_active_power(
 ) -> UpdateReport: ...
 
 def parse(
-    source: Any, *, format: Optional[Format] = ..., name: Optional[str] = ...
+    source: Any, *, format: Optional[Format] = ..., name: Optional[str] = ...,
+    sincal_multiconductor: Optional[dist.SincalReadOptions] = ...,
+    sincal_balanced: Optional[SincalBalancedReadOptions] = ...,
+    acquisition_root: Optional[Any] = ...,
+    named_buffers: Optional[Mapping[str, bytes]] = ...,
 ) -> PioModule[Any]: ...
 def emit(
     module: PioModule[Any], format: Format, destination: Optional[Any] = ...
