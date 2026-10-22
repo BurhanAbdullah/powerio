@@ -1468,8 +1468,8 @@ fn monitored_four_value_voltage_range_rejects_invalid_bands() {
 /// Timings are reported for inspection, not asserted, so CI is not machine-speed dependent.
 #[test]
 fn kv_scope_scaling_probe() {
-    use std::time::Instant;
     use powerio_tx::network::{Bus, BusType};
+    use std::time::Instant;
 
     for size in [5_000usize, 10_000, 20_000] {
         let buses = (1..=size)
