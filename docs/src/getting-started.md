@@ -37,7 +37,7 @@ checked in header.
 ```sh
 git clone https://github.com/eigenergy/powerio
 cd powerio
-cargo build -p powerio-capi --release --features arrow,matrix,gridfm,dist,prob
+cargo build -p powerio-capi --release --features gridfm
 # target/release/libpowerio_capi.so (Linux), libpowerio_capi.dylib (macOS),
 # or powerio_capi.dll (Windows); header powerio-capi/include/powerio.h
 ```
