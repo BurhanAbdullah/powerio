@@ -1446,7 +1446,7 @@ fn monitored_four_value_voltage_range_round_trips_and_resolves() {
         resolution.voltage_ranges_with_pre[0].0.bus_rows,
         [0, 1].into_iter().collect()
     );
-    assert_eq!(resolution.voltage_ranges_with_pre[0].0.low, 0.9);
+    assert!((resolution.voltage_ranges_with_pre[0].0.low - 0.9).abs() < 1e-12);
     assert_eq!(resolution.voltage_ranges_with_pre[0].0.high, Some(1.05));
     assert_eq!(resolution.voltage_ranges_with_pre[0].1, (0.95, 1.05));
 }

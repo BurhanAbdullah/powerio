@@ -6,20 +6,89 @@ use std::path::Path;
 const SCHEMA_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/schema");
 const CURRENT_SCHEMA: &str = "pio-ir/2/0.11.6/schema.json";
 
+fn monitor_discriminator(value: &serde_json::Value) -> Option<(&str, &str)> {
+    if value["type"] != "object" {
+        return None;
+    }
+    let required = value["required"].as_array()?;
+    for name in ["kind", "type"] {
+        if required.iter().any(|field| field == name)
+            && let Some(tag) = value["properties"][name]["const"].as_str()
+        {
+            return Some((name, tag));
+        }
+    }
+    None
+}
+
+fn assert_monitor_properties_preserved(
+    published: &serde_json::Value,
+    current: &serde_json::Value,
+    required: Option<&Vec<serde_json::Value>>,
+    path: &str,
+) {
+    let old = published.as_object().expect("published properties object");
+    let new = current.as_object().expect("current properties object");
+    for (property, old_schema) in old {
+        let new_schema = new.get(property).unwrap_or_else(|| {
+            panic!("{path}.properties.{property}: published property was removed")
+        });
+        assert_monitor_schema_preserved(
+            old_schema,
+            new_schema,
+            &format!("{path}.properties.{property}"),
+        );
+    }
+    for property in new.keys().filter(|property| !old.contains_key(*property)) {
+        assert!(
+            !required.is_some_and(|fields| fields.iter().any(|field| field == property)),
+            "{path}.properties.{property}: additive property became required"
+        );
+    }
+}
+
+fn assert_monitor_alternatives_preserved(
+    old: &[serde_json::Value],
+    new: &[serde_json::Value],
+    path: &str,
+) {
+    let Some((tag_property, _)) = old.first().and_then(monitor_discriminator) else {
+        assert_eq!(old, new, "{path}: non-discriminated alternatives changed");
+        return;
+    };
+    let mut alternatives = std::collections::BTreeMap::new();
+    for item in new {
+        let (property, tag) = monitor_discriminator(item).unwrap_or_else(|| {
+            panic!("{path}: variant must require a constant kind/type tag on an object")
+        });
+        assert_eq!(
+            property, tag_property,
+            "{path}: discriminator property changed"
+        );
+        assert!(
+            alternatives.insert(tag, item).is_none(),
+            "{path}: duplicate discriminator {tag} overlaps oneOf alternatives"
+        );
+    }
+    for item in old {
+        let (property, tag) = monitor_discriminator(item).expect("tagged published variant");
+        assert_eq!(
+            property, tag_property,
+            "{path}: mixed published discriminators"
+        );
+        let matching = alternatives
+            .get(tag)
+            .unwrap_or_else(|| panic!("{path}: published variant {tag} was removed"));
+        assert_monitor_schema_preserved(item, matching, path);
+    }
+}
+
 fn assert_monitor_schema_preserved(
     published: &serde_json::Value,
     current: &serde_json::Value,
     path: &str,
 ) {
-    fn discriminator(value: &serde_json::Value) -> Option<&serde_json::Value> {
-        let kind = &value["properties"]["kind"]["const"];
-        if kind.is_string() {
-            return Some(kind);
-        }
-        let ty = &value["properties"]["type"]["const"];
-        ty.is_string().then_some(ty)
-    }
-
+    let keyword = path.rsplit('.').next();
     match (published, current) {
         (serde_json::Value::Object(old), serde_json::Value::Object(new)) => {
             for (name, value) in old {
@@ -27,32 +96,12 @@ fn assert_monitor_schema_preserved(
                     panic!("{path}.{name}: published schema member was removed")
                 });
                 if name == "properties" {
-                    let old_properties = value.as_object().expect("published properties object");
-                    let new_properties = current_value
-                        .as_object()
-                        .expect("current properties object");
-                    let required = current["required"].as_array();
-                    for (property, old_schema) in old_properties {
-                        let new_schema = new_properties.get(property).unwrap_or_else(|| {
-                            panic!("{path}.properties.{property}: published property was removed")
-                        });
-                        assert_monitor_schema_preserved(
-                            old_schema,
-                            new_schema,
-                            &format!("{path}.properties.{property}"),
-                        );
-                    }
-                    for property in new_properties.keys() {
-                        if !old_properties.contains_key(property) {
-                            assert!(
-                                !required.is_some_and(|fields| fields
-                                    .iter()
-                                    .any(|field| field == property)),
-                                "{path}.properties.{property}: additive property became required"
-                            );
-                            // A new optional property is backward compatible.
-                        }
-                    }
+                    assert_monitor_properties_preserved(
+                        value,
+                        current_value,
+                        current["required"].as_array(),
+                        path,
+                    );
                 } else {
                     assert_monitor_schema_preserved(
                         value,
@@ -61,50 +110,30 @@ fn assert_monitor_schema_preserved(
                     );
                 }
             }
-            for name in new.keys() {
-                if !old.contains_key(name) {
-                    assert!(
-                        matches!(
-                            name.as_str(),
-                            "description"
-                                | "title"
-                                | "examples"
-                                | "default"
-                                | "deprecated"
-                                | "readOnly"
-                                | "writeOnly"
-                                | "$comment"
-                        ),
-                        "{path}.{name}: unapproved schema keyword was added"
-                    );
-                }
+            for name in new.keys().filter(|name| !old.contains_key(*name)) {
+                assert!(
+                    matches!(
+                        name.as_str(),
+                        "description"
+                            | "title"
+                            | "examples"
+                            | "default"
+                            | "deprecated"
+                            | "readOnly"
+                            | "writeOnly"
+                            | "$comment"
+                    ),
+                    "{path}.{name}: unapproved schema keyword was added"
+                );
             }
         }
         (serde_json::Value::Array(old), serde_json::Value::Array(new))
-            if path.ends_with(".oneOf") || path.ends_with(".anyOf") =>
+            if matches!(keyword, Some("oneOf" | "anyOf")) =>
         {
-            let is_tagged = !old.is_empty() && old.iter().all(|item| discriminator(item).is_some());
-            if is_tagged {
-                for item in old {
-                    let key = discriminator(item).expect("tagged published variant");
-                    let matching = new
-                        .iter()
-                        .find(|candidate| discriminator(candidate) == Some(key))
-                        .unwrap_or_else(|| panic!("{path}: published variant {key} was removed"));
-                    assert_monitor_schema_preserved(item, matching, path);
-                }
-                for item in new {
-                    assert!(
-                        discriminator(item).is_some(),
-                        "{path}: additive variant must have a kind/type discriminator"
-                    );
-                }
-            } else {
-                assert_eq!(old, new, "{path}: non-discriminated alternatives changed");
-            }
+            assert_monitor_alternatives_preserved(old, new, path);
         }
         (serde_json::Value::Array(old), serde_json::Value::Array(new))
-            if path.ends_with(".enum") =>
+            if keyword == Some("enum") =>
         {
             for value in old {
                 assert!(
@@ -457,4 +486,52 @@ fn every_powerio_ir_property_is_typed() {
     let mut bad = Vec::new();
     walk(&schema, "$", &mut bad);
     assert!(bad.is_empty(), "untyped properties: {bad:?}");
+}
+
+fn tagged_monitor_variant(property: &str, tag: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {property: {"const": tag, "type": "string"}},
+        "required": [property]
+    })
+}
+
+#[test]
+fn monitor_guard_rejects_overlapping_tagged_variants() {
+    let variant = tagged_monitor_variant("kind", "old");
+    let old = serde_json::json!({"oneOf": [variant.clone()]});
+    let mut optional_tag = tagged_monitor_variant("kind", "new");
+    optional_tag["required"] = serde_json::json!([]);
+    let mut non_object = tagged_monitor_variant("kind", "new");
+    non_object.as_object_mut().unwrap().remove("type");
+    // Duplicates match the old object twice, and different discriminator
+    // properties can both be present. Require one shared mandatory tag and
+    // object shape so disjointness stays explicit for every added variant.
+    for addition in [
+        variant.clone(),
+        tagged_monitor_variant("type", "new"),
+        optional_tag,
+        non_object,
+    ] {
+        let overlapping = serde_json::json!({"oneOf": [variant.clone(), addition]});
+        assert!(
+            std::panic::catch_unwind(|| {
+                assert_monitor_schema_preserved(&old, &overlapping, "probe");
+            })
+            .is_err(),
+            "potentially overlapping alternatives must not pass the compatibility guard"
+        );
+    }
+}
+
+#[test]
+fn monitor_guard_allows_disjoint_tags_and_reordering() {
+    for property in ["kind", "type"] {
+        let first = tagged_monitor_variant(property, "first");
+        let second = tagged_monitor_variant(property, "second");
+        let new = tagged_monitor_variant(property, "new");
+        let old = serde_json::json!({"oneOf": [first.clone(), second.clone()]});
+        let extended = serde_json::json!({"oneOf": [new, second, first]});
+        assert_monitor_schema_preserved(&old, &extended, "probe");
+    }
 }
