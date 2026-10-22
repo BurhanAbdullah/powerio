@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Apply bounded MATPOWER post-literal demand and impedance conversions, fixing
+  case33bw's kW-to-MW and ohm-to-per-unit interpretation. Unsupported or ambiguous
+  blocks keep literal values with source-span warnings; unchanged source echo
+  stays byte exact and canonical/cross-format output uses converted values.
+
 - Parse caller-supplied file trees entirely in memory, including PyPSA folders
   and OpenDSS projects with nested references.
 - Keep included files and their original paths when copying unchanged OpenDSS
