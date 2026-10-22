@@ -1462,3 +1462,41 @@ fn monitored_four_value_voltage_range_rejects_invalid_bands() {
         assert_eq!(parsed.set.retained.len(), 1);
     }
 }
+
+/// Manual scaling probe for indexed kV resolution. Run with
+/// `cargo test -p powerio-tx --test contingency_sub_mon kv_scope_scaling_probe -- --nocapture`.
+/// Timings are reported for inspection, not asserted, so CI is not machine-speed dependent.
+#[test]
+fn kv_scope_scaling_probe() {
+    use std::time::Instant;
+    use powerio_tx::network::{Bus, BusType};
+
+    for size in [5_000usize, 10_000, 20_000] {
+        let buses = (1..=size)
+            .map(|id| Bus::new(BusId(id), BusType::Ref, 230.0))
+            .collect();
+        let net = BalancedNetwork::in_memory("kv-scaling", 100.0, buses, Vec::new());
+        let subsystems = SubsystemSet::parse("SUBSYSTEM 'ALL'\nAREA 1\nEND\n")
+            .expect("parse synthetic subsystem")
+            .set;
+        let monitored = MonitoredSet {
+            statements: vec![MonitorStatement::VoltageRange {
+                scope: MonitorScope::SubsystemKv {
+                    name: "ALL".to_owned(),
+                    kv: 230.0,
+                },
+                vmin: 0.9,
+                vmax: 1.1,
+            }],
+            ..Default::default()
+        };
+        let started = Instant::now();
+        let resolved = monitored.resolve(&net, &subsystems);
+        let elapsed = started.elapsed();
+        assert_eq!(resolved.voltage_ranges.len(), 1);
+        assert_eq!(resolved.voltage_ranges[0].bus_rows.len(), size);
+        // Keep this as a manual scaling probe: no wall-clock threshold is used.
+        eprintln!("subsystem-kV resolution: buses={size}, elapsed={elapsed:?}");
+    }
+}
+

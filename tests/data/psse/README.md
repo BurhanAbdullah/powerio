@@ -24,6 +24,11 @@ archive IEEE 30 bus test case as PSS/E writes it at revision 32.
 
 ## Original to this repository
 
+`merge_v35.raw` is a synthetic five bus revision 35 case written by the
+PowerIO PSS/E writer for the bus merge: a chain of two zero impedance lines
+(`R = 0`, `X = 5e-5`) under `THRSHZ = 0.0001` and one closed system switching
+device.
+
 Every other file here is original to this repository: `case5.raw`,
 `case14.raw`, `case3_3w_v33.raw`, and `case7_v32.raw` are hand written
 minimal cases whose title lines say what each exercises, and `case14_v34.raw`

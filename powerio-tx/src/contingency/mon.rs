@@ -1040,7 +1040,7 @@ fn resolve_statement(
             out,
         ),
         MonitorStatement::TiesFromSubsystem { subsystem } => {
-            resolve_ties_from_subsystem(statement, subsystem, None, net, subsystems, out);
+            resolve_ties_from_subsystem(statement, subsystem, None, net, subsystems, index, out);
         }
         MonitorStatement::TiesFromSubsystemKvRange {
             subsystem,
@@ -1052,6 +1052,7 @@ fn resolve_statement(
                 Some(*kv_range),
                 net,
                 subsystems,
+                index,
                 out,
             );
         }
@@ -1154,7 +1155,8 @@ fn resolve_branches_in_subsystem(
         if buses.contains(&branch.from)
             && buses.contains(&branch.to)
             && kv_range.is_none_or(|(lo, hi)| {
-                bus_in_kv_range(net, branch.from, lo, hi) && bus_in_kv_range(net, branch.to, lo, hi)
+                bus_in_kv_range(index, branch.from, lo, hi)
+                    && bus_in_kv_range(index, branch.to, lo, hi)
             })
         {
             out.branch_rows.insert(row);
@@ -1164,7 +1166,7 @@ fn resolve_branches_in_subsystem(
         for (row, transformer) in net.transformers_3w().iter().enumerate() {
             let low_bus = low_voltage_bus(net, index, transformer);
             if buses.contains(&low_bus)
-                && kv_range.is_none_or(|(lo, hi)| bus_in_kv_range(net, low_bus, lo, hi))
+                && kv_range.is_none_or(|(lo, hi)| bus_in_kv_range(index, low_bus, lo, hi))
             {
                 out.transformer_3w_rows.insert(row);
             }
@@ -1178,6 +1180,7 @@ fn resolve_ties_from_subsystem(
     kv_range: Option<(f64, f64)>,
     net: &BalancedNetwork,
     subsystems: &SubsystemSet,
+    index: &PsseEquipmentIndex,
     out: &mut MonitoredResolution,
 ) {
     let Some(buses) = select(subsystems, subsystem, net) else {
@@ -1188,8 +1191,8 @@ fn resolve_ties_from_subsystem(
         let from_inside = buses.contains(&branch.from);
         let to_inside = buses.contains(&branch.to);
         let in_scope = match (from_inside, to_inside, kv_range) {
-            (true, false, Some((lo, hi))) => bus_in_kv_range(net, branch.from, lo, hi),
-            (false, true, Some((lo, hi))) => bus_in_kv_range(net, branch.to, lo, hi),
+            (true, false, Some((lo, hi))) => bus_in_kv_range(index, branch.from, lo, hi),
+            (false, true, Some((lo, hi))) => bus_in_kv_range(index, branch.to, lo, hi),
             (true, false, None) | (false, true, None) => true,
             _ => false,
         };
@@ -1210,13 +1213,11 @@ fn select(subsystems: &SubsystemSet, name: &str, net: &BalancedNetwork) -> Optio
     Some(subsystems.get(name)?.select_buses(net))
 }
 
-fn bus_in_kv_range(net: &BalancedNetwork, bus: BusId, lo: f64, hi: f64) -> bool {
-    net.buses()
-        .iter()
-        .find(|candidate| candidate.id == bus)
-        .is_some_and(|candidate| {
-            candidate.base_kv >= lo - KV_TOLERANCE && candidate.base_kv <= hi + KV_TOLERANCE
-        })
+fn bus_in_kv_range(index: &PsseEquipmentIndex<'_>, bus: BusId, lo: f64, hi: f64) -> bool {
+    index.bus_row(bus).is_some_and(|row| {
+        let kv = index.network().buses()[row].base_kv;
+        kv >= lo - KV_TOLERANCE && kv <= hi + KV_TOLERANCE
+    })
 }
 
 /// One bound branch with its orientation against the stored row. A statement
@@ -1274,7 +1275,7 @@ fn scope_rows(
         MonitorScope::Subsystem { name } => rows_of(&select(subsystems, name, net)?),
         MonitorScope::SubsystemKv { name, kv } => select(subsystems, name, net)?
             .into_iter()
-            .filter(|bus| bus_in_kv_range(net, *bus, *kv, *kv))
+            .filter(|bus| bus_in_kv_range(index, *bus, *kv, *kv))
             .filter_map(|bus| index.bus_row(bus))
             .collect(),
         MonitorScope::Bus { bus } => index.bus_row(*bus).into_iter().collect(),
