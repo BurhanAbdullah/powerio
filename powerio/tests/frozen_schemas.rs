@@ -45,7 +45,9 @@ fn assert_monitor_schema_preserved(
                     for property in new_properties.keys() {
                         if !old_properties.contains_key(property) {
                             assert!(
-                                !required.is_some_and(|fields| fields.iter().any(|field| field == property)),
+                                !required.is_some_and(|fields| fields
+                                    .iter()
+                                    .any(|field| field == property)),
                                 "{path}.properties.{property}: additive property became required"
                             );
                             // A new optional property is backward compatible.
@@ -64,8 +66,14 @@ fn assert_monitor_schema_preserved(
                     assert!(
                         matches!(
                             name.as_str(),
-                            "description" | "title" | "examples" | "default" | "deprecated"
-                                | "readOnly" | "writeOnly" | "$comment"
+                            "description"
+                                | "title"
+                                | "examples"
+                                | "default"
+                                | "deprecated"
+                                | "readOnly"
+                                | "writeOnly"
+                                | "$comment"
                         ),
                         "{path}.{name}: unapproved schema keyword was added"
                     );
@@ -79,7 +87,9 @@ fn assert_monitor_schema_preserved(
             if is_tagged {
                 for item in old {
                     let key = discriminator(item).expect("tagged published variant");
-                    let matching = new.iter().find(|candidate| discriminator(candidate) == Some(key))
+                    let matching = new
+                        .iter()
+                        .find(|candidate| discriminator(candidate) == Some(key))
                         .unwrap_or_else(|| panic!("{path}: published variant {key} was removed"));
                     assert_monitor_schema_preserved(item, matching, path);
                 }
@@ -97,7 +107,10 @@ fn assert_monitor_schema_preserved(
             if path.ends_with(".enum") =>
         {
             for value in old {
-                assert!(new.contains(value), "{path}: published enum value {value} was removed");
+                assert!(
+                    new.contains(value),
+                    "{path}: published enum value {value} was removed"
+                );
             }
         }
         _ => assert_eq!(published, current, "{path}: published schema changed"),
@@ -340,11 +353,7 @@ fn monitor_schema_additions_preserve_published_variants() {
     let current: serde_json::Value =
         serde_json::from_str(&read_schema_file(CURRENT_SCHEMA)).unwrap();
     for name in ["MonitorScope", "MonitorStatement"] {
-        assert_monitor_schema_preserved(
-            &published["$defs"][name],
-            &current["$defs"][name],
-            name,
-        );
+        assert_monitor_schema_preserved(&published["$defs"][name], &current["$defs"][name], name);
     }
 }
 
