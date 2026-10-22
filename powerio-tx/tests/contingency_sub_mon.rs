@@ -1476,7 +1476,7 @@ fn kv_scope_scaling_probe() {
             .map(|id| Bus::new(BusId(id), BusType::Ref, 230.0))
             .collect();
         let net = BalancedNetwork::in_memory("kv-scaling", 100.0, buses, Vec::new());
-        let subsystems = SubsystemSet::parse("SUBSYSTEM 'ALL'\\nAREA 1\\nEND\\n")
+        let subsystems = SubsystemSet::parse("SUBSYSTEM 'ALL'\nAREA 1\nEND\n")
             .expect("parse synthetic subsystem")
             .set;
         let monitored = MonitoredSet {
@@ -1495,6 +1495,7 @@ fn kv_scope_scaling_probe() {
         let elapsed = started.elapsed();
         assert_eq!(resolved.voltage_ranges.len(), 1);
         assert_eq!(resolved.voltage_ranges[0].bus_rows.len(), size);
+        // Keep this as a manual scaling probe: no wall-clock threshold is used.
         eprintln!("subsystem-kV resolution: buses={size}, elapsed={elapsed:?}");
     }
 }
