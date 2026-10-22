@@ -16,27 +16,12 @@ representations to an incomplete dynamic-model schema.
 
 ## Parse and pair
 
+The example below is compiled as the `dynamic_study` Cargo example. Run it in
+a directory containing `case.raw` and `case.dyr` with
+`cargo run -p powerio --example dynamic_study`.
+
 ```rust,ignore
-use powerio::{parse, parse_dyr, DynamicStudy, PioValue};
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let raw = parse("case.raw")?;
-    let PioValue::BalancedNetwork(network) = raw.value() else {
-        return Err("case.raw did not produce a balanced network".into());
-    };
-
-    let dyr_text = std::fs::read_to_string("case.dyr")?;
-    let dynamics = parse_dyr(&dyr_text)?;
-    let study = DynamicStudy::new(network.clone(), dynamics);
-
-    for unresolved in study.unresolved_buses() {
-        eprintln!(
-            "line {}: {} references missing bus {}",
-            unresolved.line, unresolved.model_name, unresolved.bus_id
-        );
-    }
-    Ok(())
-}
+{{#include ../../powerio/examples/dynamic_study.rs}}
 ```
 
 `DynamicCase::records()` returns records in source order. Each record exposes
