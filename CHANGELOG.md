@@ -71,6 +71,21 @@
   `can_emit=false`. Native desktop acceptance and writer binding options remain
   separate work.
 
+- Native SINCAL support, which compiles SQLite, is the `sincal` cargo feature,
+  on by default in `powerio`, `powerio-tx` and `powerio-dist`. Default builds,
+  the CLI, the Python wheel, the C ABI and the browser binding include it. A
+  consumer that sets `default-features = false` on the facade builds without
+  `powerio-sincal` and SQLite, so a `wasm32-unknown-unknown` build needs no C
+  compiler. Such a build lists no SINCAL format in `grid_formats`, has no
+  SINCAL field on `ParseOptions` or `EmitOptions`, and refuses a SINCAL source
+  or target with `REQUEST.SINCAL.FEATURE_DISABLED`; `powerio-dist` used
+  directly reports `REQUEST.DIST_FORMAT.SINCAL_FEATURE_DISABLED`.
+  `resolve_format` still describes the SINCAL tokens. The model-neutral
+  retention inventory helper is `powerio_core::attach_retention_details`,
+  which `powerio-sincal` re-exports. CI builds the facade for
+  `wasm32-unknown-unknown` without the feature and fails if SQLite reaches
+  that dependency graph.
+
 - Add solver-independent AC multiconductor IVR preparation in `powerio-matrix`,
   including explicit terminal/coil axes, bases, selected bounds, winding-current
   transformer descriptors and supported nonlinear load/IBR controls. Unsupported
