@@ -186,6 +186,12 @@ dielectric losses, parallel counts, rating factors, rated frequency and active
 temperature coefficients. Required impedances and sequence declarations remain
 strict. Ideal connections record their applied defaults as well.
 
+Every SINCAL parse shares a fixed budget of SQLite work. The multiconductor
+reader still scans the terminal table for each element, so in this release it
+reads feeders of up to roughly 450 lines on a native-width schema; a larger
+project fails with a message saying it exceeds the reader's bounded query work,
+never with partial output. Indexing terminals once per parse is planned.
+
 Access MDB inputs use the core primary-file limit, which defaults to 1 GiB;
 `POWERIO_MAX_PRIMARY_BYTES` can set an explicit bound. CSIRO09 is 69,181,440
 bytes, and its validation uses that exact, tighter bound. Native SQLite/`.sinx`
@@ -196,6 +202,11 @@ limits. These are distinct limits; the library does not silently raise them.
 
 In the balanced profile, native physical quantities use a declared 100 MVA
 internal conversion base. The multiconductor model uses its usual SI units.
+Both readers correct cable resistance for the voltage-level temperature in
+every schema. The balanced reader refuses a line built from `LineSeg`
+sections, as the multiconductor reader does, and admits only `Line.fr = 1`:
+the multiconductor reader treats `fr` as a factor on the thermal rating, and
+that meaning is not yet verified for the balanced profile.
 Disabled native generator capability limits become unbounded typed limits,
 not zero capability. Diagnostics identify this and data outside the chosen
 snapshot. Disabled modern profile references do not replace static powers.

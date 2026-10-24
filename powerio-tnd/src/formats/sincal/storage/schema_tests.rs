@@ -107,6 +107,34 @@ fn schema_and_identity_failures_do_not_admit_partial_snapshots() {
 }
 
 #[test]
+fn a_spent_query_budget_says_the_project_is_too_large() {
+    let connection = Connection::open_in_memory().unwrap();
+    connection.progress_handler(1, Some(|| true)).unwrap();
+    let interrupted = connection
+        .query_row("SELECT 1", [], |row| row.get::<_, i64>(0))
+        .unwrap_err();
+    let message = crate::formats::sincal::storage::failure_message(&interrupted);
+    assert!(message.contains("bounded query work"), "{message}");
+    let other = crate::formats::sincal::storage::failure_message(&"missing Node");
+    assert_eq!(other, "missing Node");
+}
+
+#[test]
+fn columns_computed_on_read_are_refused_before_any_table_is_read() {
+    // Each read would recompute this value, so a small file could return far
+    // more than its input bound. Stored generated values stay admissible.
+    let computed =
+        snapshot("ALTER TABLE Node ADD COLUMN Pad TEXT AS (hex(zeroblob(1000))) VIRTUAL");
+    let error = DatabaseSnapshot::decode(&computed, None)
+        .err()
+        .expect("a computed column is refused")
+        .to_string();
+    assert!(error.contains("Node: a column computed on read"), "{error}");
+    let stored = snapshot("CREATE TABLE Extra (a INTEGER, b INTEGER AS (a + 1) STORED)");
+    assert!(DatabaseSnapshot::decode(&stored, None).is_ok());
+}
+
+#[test]
 fn observed_modern_sqlite_schemas_share_identity_columns_but_unknown_versions_fail() {
     for version in [15.0, 15.5, 16.0] {
         let db = DatabaseSnapshot::decode(

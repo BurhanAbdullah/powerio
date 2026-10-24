@@ -47,6 +47,64 @@ fn complete_authentic_simbench_case_preserves_every_element() {
 }
 
 #[test]
+fn modern_schemas_apply_the_voltage_level_line_temperature() {
+    // The 2014 line equations state no schema limit, and the multiconductor
+    // reader applies them in every schema; a 14.8 cable at 70 C is warmer.
+    let cool = read_balanced_snapshot(&native(""), "20C").unwrap();
+    let warm = read_balanced_snapshot(
+        &native("UPDATE VoltageLevel SET Temp_Cable=70; UPDATE Line SET alpha=0.004"),
+        "70C",
+    )
+    .unwrap();
+    let mut lines = 0;
+    for (row, (a, b)) in cool.branches().iter().zip(warm.branches()).enumerate() {
+        if a.uid.as_deref() != Some("sincal:element:19") {
+            assert!((b.r / a.r - 1.2).abs() < 1e-12, "branch row {row}");
+            lines += 1;
+        }
+    }
+    assert!(lines > 0);
+    for edit in [
+        "UPDATE CalcParameter SET Temp_Cond=80",
+        "UPDATE VoltageLevel SET Temp_Cable=NULL",
+    ] {
+        assert!(
+            read_balanced_snapshot(&native(edit), "x").is_err(),
+            "{edit}"
+        );
+    }
+}
+
+#[test]
+fn a_line_factor_other_than_one_is_refused_until_its_meaning_is_verified() {
+    let error = read_balanced_snapshot(&native("UPDATE Line SET fr=0.8"), "fr")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains(".fr:"), "{error}");
+}
+
+#[test]
+fn line_sections_are_refused_rather_than_read_from_the_line_row() {
+    let error = read_balanced_snapshot(
+        &native(
+            "INSERT INTO LineSeg (LineSeg_ID, Line_ID, Variant_ID) \
+             SELECT 1, Element_ID, Variant_ID FROM Line ORDER BY Element_ID LIMIT 1",
+        ),
+        "segmented",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("line segments require explicit assembly"),
+        "{error}"
+    );
+    // Legacy rename leaves the project's own views untouched.
+    let view = "PRAGMA legacy_alter_table=ON; ALTER TABLE LineSeg RENAME TO Stored; \
+                CREATE VIEW LineSeg AS SELECT * FROM Stored";
+    assert!(read_balanced_snapshot(&native(view), "view").is_err());
+}
+
+#[test]
 fn errors_identify_required_input_instead_of_returning_partial_networks() {
     for (sql, field) in [
         (
