@@ -14,6 +14,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 REPO = "eigenergy/powerio"
 JULIA_REPO = "eigenergy/PowerIO.jl"
@@ -32,11 +33,14 @@ MAIN_WORKFLOWS = {
     "converter.yml",
     "powsybl.yml",
 }
+# The account that owns every published PowerIO crate. A crate name that
+# exists under another owner was claimed by someone else.
+CRATE_OWNER = "samtalki"
 CRATES = (
     "powerio-core",
-    "powerio-sincal",
     "powerio-tx",
     "powerio-dist",
+    "powerio-tnd",
     "powerio-prob",
     "powerio-matrix",
     "powerio",
@@ -316,8 +320,112 @@ def julia_registered_release(version, tag, julia_candidate):
     return True
 
 
-def follow_publication(candidate, julia_candidate, version, tag, deadline):
+def require_clean_candidate(candidate):
+    """Local first publication must use the exact reviewed source tree."""
+    root = Path(__file__).resolve().parent.parent
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    require(
+        head == candidate and not status,
+        "First publication requires a clean local checkout of the exact candidate.",
+    )
+    return root
+
+
+def require_crate_ownership():
+    """Refuse a release whose crate names someone else has claimed.
+
+    Run before the tag and again before the draft is published, so a
+    squatted new name stops the release before any crate is published.
+    """
+    for crate in CRATES:
+        owners = public_json(f"https://crates.io/api/v1/crates/{crate}/owners")
+        if owners is None:
+            continue
+        logins = {user.get("login") for user in owners.get("users", [])}
+        require(
+            CRATE_OWNER in logins,
+            f"{crate} on crates.io is not owned by {CRATE_OWNER}; refusing to publish under a claimed name.",
+        )
+
+
+def bootstrap_first_missing(candidate, version, allowed):
+    """Publish only an explicitly named, unclaimed crate after its dependencies."""
+    already_bootstrapped = False
+    for crate in CRATES:
+        if published_crate_version(
+            public_json(f"https://crates.io/api/v1/crates/{crate}/{version}"), version
+        ):
+            already_bootstrapped = already_bootstrapped or crate in allowed
+            continue
+        if crate not in allowed:
+            require(
+                already_bootstrapped,
+                f"Predecessor {crate} {version} is not live; inspect the protected publishing job.",
+            )
+            return False
+        require(
+            public_json(f"https://crates.io/api/v1/crates/{crate}") is None,
+            f"{crate} already exists; refusing local publication of an existing crate.",
+        )
+        root = require_clean_candidate(candidate)
+        subprocess.run(
+            # Every feature compiles from the packaged tarball before the
+            # new name is permanent on crates.io.
+            ["cargo", "publish", "--locked", "--all-features", "-p", crate],
+            cwd=root,
+            check=True,
+        )
+        require(
+            published_crate_version(
+                public_json(f"https://crates.io/api/v1/crates/{crate}/{version}"),
+                version,
+            ),
+            f"First publication of {crate} was not verified in the registry.",
+        )
+        print(
+            f"Published {crate} {version}. For future releases, configure its crates.io "
+            "trusted publisher: owner eigenergy, repository powerio, workflow crates.yml, "
+            "environment crates-io.",
+            flush=True,
+        )
+        return True
+    return False
+
+
+def bootstrap_after_approved_failure(run, jobs, candidate, version, allowed):
+    """Reaching the publish step proves protected approval and archive gates ran."""
+    require(
+        run.get("conclusion") == "failure"
+        and any(
+            step.get("name") == "Publish in dependency order"
+            and step.get("conclusion") == "failure"
+            for job in jobs
+            for step in job.get("steps", [])
+        ),
+        "First publication requires a failure in the approved crates publishing step.",
+    )
+    return bootstrap_first_missing(candidate, version, allowed)
+
+
+def follow_publication(
+    candidate, julia_candidate, version, tag, deadline, bootstrap=()
+):
     """Stop truthfully at required human approvals, never approve them ourselves."""
+    retried = set()
+    no_publish_retry = set()
     while True:
         ready = True
         for workflow in ("crates.yml", "python.yml"):
@@ -339,7 +447,7 @@ def follow_publication(candidate, julia_candidate, version, tag, deadline):
                 continue
             run = max(runs, key=lambda value: value["id"])
             report_run(run)
-            report_jobs(run)
+            jobs = report_jobs(run)
             pending = api(f"repos/{REPO}/actions/runs/{run['id']}/pending_deployments")
             if pending:
                 names = ", ".join(item["environment"]["name"] for item in pending)
@@ -352,11 +460,27 @@ def follow_publication(candidate, julia_candidate, version, tag, deadline):
                 return 3
             if run["status"] != "completed":
                 ready = False
-            else:
+            elif run["conclusion"] != "success":
+                key = (run["id"], run.get("run_attempt", 1))
+                if key in retried:
+                    ready = False
+                    continue
                 require(
-                    run["conclusion"] == "success",
+                    workflow == "crates.yml" and bootstrap,
                     f"GitHub release is published, but package publication failed: {run['html_url']}",
                 )
+                published = bootstrap_after_approved_failure(
+                    run, jobs, candidate, version, bootstrap
+                )
+                require(
+                    published or run["id"] not in no_publish_retry,
+                    f"Package publication still fails after bootstrap; inspect {run['html_url']}",
+                )
+                if not published:
+                    no_publish_retry.add(run["id"])
+                api(f"repos/{REPO}/actions/runs/{run['id']}/rerun-failed-jobs", "POST")
+                retried.add(key)
+                ready = False
         if ready:
             registries = published_pypi_version(
                 public_json(f"https://pypi.org/pypi/powerio/{version}/json"), version
@@ -404,6 +528,13 @@ def main(argv=None):
     )
     parser.add_argument(
         "--timeout", type=int, default=10800, help="Total wait seconds; reruns are safe"
+    )
+    parser.add_argument(
+        "--bootstrap-crate",
+        action="append",
+        default=[],
+        choices=CRATES,
+        help="First-publish this new crate using existing local Cargo authentication after protected release gates",
     )
     args = parser.parse_args(argv)
     require(
@@ -473,6 +604,18 @@ def main(argv=None):
         ),
         args.candidate,
     )
+    if args.bootstrap_crate:
+        require_clean_candidate(args.candidate)
+    missing = [
+        crate
+        for crate in CRATES
+        if public_json(f"https://crates.io/api/v1/crates/{crate}") is None
+    ]
+    require(
+        set(missing) <= set(args.bootstrap_crate),
+        f"New crates require explicit --bootstrap-crate flags: {missing}",
+    )
+    require_crate_ownership()
     tag = f"v{args.version}"
     print(
         f"Phase 2: reconcile annotated tag {tag}; never move an existing tag.",
@@ -529,6 +672,7 @@ def main(argv=None):
     )
     print("Phase 4: reconcile draft and publish only after verified gates.", flush=True)
     if release["draft"]:
+        require_crate_ownership()
         current_run = api(f"repos/{REPO}/actions/runs/{run['id']}")
         require(
             current_run["run_attempt"] == run["run_attempt"]
@@ -561,7 +705,12 @@ def main(argv=None):
         flush=True,
     )
     return follow_publication(
-        args.candidate, args.julia_candidate, args.version, tag, deadline
+        args.candidate,
+        args.julia_candidate,
+        args.version,
+        tag,
+        deadline,
+        args.bootstrap_crate,
     )
 
 
@@ -575,6 +724,7 @@ if __name__ == "__main__":
         KeyError,
         IndexError,
         subprocess.TimeoutExpired,
+        subprocess.CalledProcessError,
     ) as error:
         print(f"STOP: {error}", file=sys.stderr)
         sys.exit(1)

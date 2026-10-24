@@ -263,5 +263,219 @@ class ReleaseSafety(unittest.TestCase):
             helper.wait_pause(0, "pending gate")
 
 
+class FirstPublication(unittest.TestCase):
+    def registry(self, published=False, claim=False, missing_predecessor=False):
+        def lookup(url):
+            crate = url.split("/crates/")[1].split("/")[0]
+            if url.endswith("/0.11.6"):
+                if (crate == "powerio-tnd" and not published) or (
+                    missing_predecessor and crate == "powerio-tx"
+                ):
+                    return None
+                return {"version": {"num": "0.11.6", "yanked": False}}
+            return {"crate": {"name": crate}} if claim else None
+
+        return lookup
+
+    def test_only_named_new_crate_publishes_after_predecessors(self):
+        lookup = self.registry()
+
+        def publish(*args, **kwargs):
+            nonlocal lookup
+            lookup = self.registry(published=True)
+
+        with (
+            patch.object(
+                helper,
+                "public_json",
+                side_effect=lambda u: lookup(u),  # noqa: PLW0108 -- lookup changes after the mocked publish
+            ),
+            patch.object(helper, "require_clean_candidate", return_value=Path("/repo")),
+            patch.object(helper.subprocess, "run", side_effect=publish) as run,
+        ):
+            self.assertTrue(
+                helper.bootstrap_first_missing(SHA, "0.11.6", ["powerio-tnd"])
+            )
+            run.assert_called_once_with(
+                ["cargo", "publish", "--locked", "--all-features", "-p", "powerio-tnd"],
+                cwd=Path("/repo"),
+                check=True,
+            )
+
+    def test_missing_predecessor_blocks_local_publish(self):
+        with (
+            patch.object(
+                helper,
+                "public_json",
+                side_effect=self.registry(missing_predecessor=True),
+            ),
+            patch.object(helper.subprocess, "run") as run,
+        ):
+            with self.assertRaises(helper.ReleaseError):
+                helper.bootstrap_first_missing(SHA, "0.11.6", ["powerio-tnd"])
+            run.assert_not_called()
+
+    def test_existing_name_cannot_be_bootstrapped(self):
+        with (
+            patch.object(helper, "public_json", side_effect=self.registry(claim=True)),
+            patch.object(helper.subprocess, "run") as run,
+        ):
+            with self.assertRaises(helper.ReleaseError):
+                helper.bootstrap_first_missing(SHA, "0.11.6", ["powerio-tnd"])
+            run.assert_not_called()
+
+    def test_exact_clean_checkout_required(self):
+        for head, status in (
+            (SHA, " M Cargo.toml"),
+            ("b" * 40, ""),
+            (SHA, "?? extra.rs"),
+        ):
+            with (
+                patch.object(
+                    helper.subprocess,
+                    "run",
+                    side_effect=[
+                        subprocess.CompletedProcess([], 0, stdout=head),
+                        subprocess.CompletedProcess([], 0, stdout=status),
+                    ],
+                ),
+                self.assertRaises(helper.ReleaseError),
+            ):
+                helper.require_clean_candidate(SHA)
+
+    def test_registry_readback_required(self):
+        with (
+            patch.object(helper, "public_json", side_effect=self.registry()),
+            patch.object(helper, "require_clean_candidate", return_value=Path("/repo")),
+            patch.object(helper.subprocess, "run"),
+        ):
+            with self.assertRaises(helper.ReleaseError):
+                helper.bootstrap_first_missing(SHA, "0.11.6", ["powerio-tnd"])
+
+    def test_only_failed_publish_step_permits_bootstrap(self):
+        with patch.object(
+            helper, "bootstrap_first_missing", return_value=True
+        ) as bootstrap:
+            for jobs in ([], [{"steps": [{"name": "Audit", "conclusion": "failure"}]}]):
+                with self.assertRaises(helper.ReleaseError):
+                    helper.bootstrap_after_approved_failure(
+                        {"conclusion": "failure"}, jobs, SHA, "0.11.6", ["powerio-tnd"]
+                    )
+            bootstrap.assert_not_called()
+            jobs = [
+                {
+                    "steps": [
+                        {"name": "Publish in dependency order", "conclusion": "failure"}
+                    ]
+                }
+            ]
+            self.assertTrue(
+                helper.bootstrap_after_approved_failure(
+                    {"conclusion": "failure"}, jobs, SHA, "0.11.6", ["powerio-tnd"]
+                )
+            )
+
+    def test_resume_never_republishes_live_version(self):
+        with (
+            patch.object(
+                helper, "public_json", side_effect=self.registry(published=True)
+            ),
+            patch.object(helper.subprocess, "run") as run,
+        ):
+            self.assertFalse(
+                helper.bootstrap_first_missing(SHA, "0.11.6", ["powerio-tnd"])
+            )
+            run.assert_not_called()
+
+    def test_a_name_owned_by_someone_else_stops_the_release(self):
+        def owners(login):
+            return lambda url: (
+                {"users": [{"login": login}]} if url.endswith("/powerio-tnd/owners") else None
+            )
+
+        with patch.object(helper, "public_json", side_effect=owners("squatter")):
+            with self.assertRaises(helper.ReleaseError):
+                helper.require_crate_ownership()
+        with patch.object(helper, "public_json", side_effect=owners(helper.CRATE_OWNER)):
+            helper.require_crate_ownership()
+        # An absent name is the first-publication case, not a claim.
+        with patch.object(helper, "public_json", return_value=None):
+            helper.require_crate_ownership()
+
+    def test_failed_publish_step_bootstraps_then_reruns_the_job_once(self):
+        run = source_run(
+            "crates.yml", event="release", display_title="PowerIO crates.io v0.11.6"
+        )
+        run.update(conclusion="failure", id=7, run_attempt=1)
+        calls = []
+
+        def api(path, method="GET", data=None, missing_ok=False):
+            calls.append((path, method))
+            return [] if path.endswith("/pending_deployments") else None
+
+        class Done(Exception):
+            pass
+
+        with (
+            patch.object(helper, "collection", side_effect=lambda *a: [run] if "crates.yml" in a[0] else []),
+            patch.object(helper, "report_jobs", return_value=[]),
+            patch.object(helper, "api", side_effect=api),
+            patch.object(helper, "bootstrap_after_approved_failure", return_value=True) as boot,
+            patch.object(helper, "wait_pause", side_effect=Done),
+        ):
+            with self.assertRaises(Done):
+                helper.follow_publication(SHA, "b" * 40, "0.11.6", "v0.11.6", 0, ["powerio-tnd"])
+        boot.assert_called_once()
+        self.assertIn(
+            (f"repos/{helper.REPO}/actions/runs/7/rerun-failed-jobs", "POST"), calls
+        )
+
+    def test_a_failure_without_bootstrap_is_not_retried_twice(self):
+        run = source_run(
+            "crates.yml", event="release", display_title="PowerIO crates.io v0.11.6"
+        )
+        run.update(conclusion="failure", id=7, run_attempt=1)
+        attempts = iter([1, 2])
+
+        def collection(endpoint, key):
+            if "crates.yml" not in endpoint:
+                return []
+            return [dict(run, run_attempt=next(attempts, 2))]
+
+        with (
+            patch.object(helper, "collection", side_effect=collection),
+            patch.object(helper, "report_jobs", return_value=[]),
+            patch.object(
+                helper,
+                "api",
+                side_effect=lambda path, *a, **k: [] if path.endswith("/pending_deployments") else None,
+            ),
+            patch.object(helper, "bootstrap_after_approved_failure", return_value=False),
+            patch.object(helper, "wait_pause"),
+        ):
+            with self.assertRaises(helper.ReleaseError):
+                helper.follow_publication(SHA, "b" * 40, "0.11.6", "v0.11.6", 0, ["powerio-tnd"])
+
+    def test_pending_protection_prevents_local_publication(self):
+        run = source_run(
+            "crates.yml", event="release", display_title="PowerIO crates.io v0.11.6"
+        )
+        with (
+            patch.object(helper, "collection", return_value=[run]),
+            patch.object(helper, "report_jobs", return_value=[]),
+            patch.object(
+                helper, "api", return_value=[{"environment": {"name": "crates-io"}}]
+            ),
+            patch.object(helper, "bootstrap_first_missing") as bootstrap,
+        ):
+            self.assertEqual(
+                helper.follow_publication(
+                    SHA, "b" * 40, "0.11.6", "v0.11.6", 0, ["powerio-tnd"]
+                ),
+                3,
+            )
+            bootstrap.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
