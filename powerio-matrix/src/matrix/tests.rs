@@ -990,8 +990,16 @@ fn per_island_ptdf_returns_local_matrices_and_source_index_mappings() {
                         .get(local_row, local_col)
                         .copied()
                         .unwrap_or(0.0);
+                    // The global PTDF's rows are compacted by the incidence
+                    // builder, whereas source_branch is an index into the original
+                    // network. The inactive branch and self-loop above are filtered.
+                    let global_row = match source_branch {
+                        0 => 0,
+                        3 => 1,
+                        other => panic!("unexpected source branch index {other}"),
+                    };
                     let global_value = global
-                        .get(source_branch, source_bus)
+                        .get(global_row, source_bus)
                         .copied()
                         .unwrap_or(0.0);
                     assert_relative_eq!(local, global_value, epsilon = 1e-12);
