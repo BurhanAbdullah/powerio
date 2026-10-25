@@ -1009,7 +1009,6 @@ fn per_island_ptdf_returns_local_matrices_and_source_index_mappings() {
     }
 }
 
-
 #[test]
 fn per_island_ptdf_refuses_unmerged_closed_switches() {
     use crate::network::Switch;
@@ -1041,7 +1040,10 @@ fn per_island_ptdf_preserves_empty_and_fully_grounded_network_behavior() {
         &empty_view,
         &crate::matrix::SensitivityOptions::default(),
     );
-    assert!(empty_result.is_ok(), "empty network behavior changed: {empty_result:?}");
+    assert!(
+        empty_result.is_ok(),
+        "empty network behavior changed: {empty_result:?}"
+    );
 
     let grounded = BalancedNetwork::in_memory(
         "fully-grounded-ptdf-islands",
@@ -1054,10 +1056,12 @@ fn per_island_ptdf_preserves_empty_and_fully_grounded_network_behavior() {
         &grounded_view,
         &crate::matrix::SensitivityOptions::default(),
     );
-    assert!(grounded_result.is_ok(), "fully grounded network behavior changed: {grounded_result:?}");
+    assert!(
+        grounded_result.is_ok(),
+        "fully grounded network behavior changed: {grounded_result:?}"
+    );
     assert_eq!(grounded_result.unwrap().len(), 2);
 }
-
 
 #[test]
 fn per_island_ptdf_maps_star_lowered_three_winding_transformer_axes() {
@@ -1084,11 +1088,9 @@ Q
     let view = IndexedNetwork::new(&net);
     assert_eq!(view.n(), 4, "three buses plus the synthetic star point");
 
-    let islands = crate::matrix::calc_ptdf_by_island(
-        &view,
-        &crate::matrix::SensitivityOptions::default(),
-    )
-    .expect("star-lowered transformer network should build");
+    let islands =
+        crate::matrix::calc_ptdf_by_island(&view, &crate::matrix::SensitivityOptions::default())
+            .expect("star-lowered transformer network should build");
     assert_eq!(islands.len(), 1);
     assert_eq!(islands[0].bus_indices, vec![0, 1, 2, 3]);
     assert_eq!(islands[0].branch_indices.len(), 3);
@@ -1097,12 +1099,15 @@ Q
         assert!(source_branch < view.branches().len());
         for (local_col, &source_bus) in islands[0].bus_indices.iter().enumerate() {
             assert!(source_bus < view.n());
-            let value = islands[0].ptdf.get(local_row, local_col).copied().unwrap_or(0.0);
+            let value = islands[0]
+                .ptdf
+                .get(local_row, local_col)
+                .copied()
+                .unwrap_or(0.0);
             assert!(value.is_finite());
         }
     }
 }
-
 
 #[test]
 fn per_island_ptdf_keeps_open_and_self_switches_compatible() {
@@ -1115,8 +1120,12 @@ fn per_island_ptdf_keeps_open_and_self_switches_compatible() {
         vec![br(1, 2, 0.0, 0.1, 0.0)],
     );
     let mut switched = base.clone();
-    switched.switches_mut().push(Switch::new(BusId(1), BusId(2), false));
-    switched.switches_mut().push(Switch::new(BusId(1), BusId(1), true));
+    switched
+        .switches_mut()
+        .push(Switch::new(BusId(1), BusId(2), false));
+    switched
+        .switches_mut()
+        .push(Switch::new(BusId(1), BusId(1), true));
 
     let base_view = IndexedNetwork::new(&base);
     let switched_view = IndexedNetwork::new(&switched);
