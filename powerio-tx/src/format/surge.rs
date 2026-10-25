@@ -25,6 +25,16 @@ const FORMAT_VALUE: &str = "surge-json";
 const SCHEMA_VERSION: &str = "0.1.0";
 const EPS: f64 = 1e-12;
 
+fn three_winding_transformer_identity(
+    name: Option<&str>,
+    uid: Option<&str>,
+    ordinal: usize,
+) -> String {
+    name.filter(|value| !value.is_empty())
+        .or_else(|| uid.filter(|value| !value.is_empty()))
+        .map_or_else(|| format!("transformer {ordinal}"), str::to_owned)
+}
+
 #[must_use]
 pub fn write_surge_json(net: &BalancedNetwork) -> TextEmission {
     let mut warnings = Diagnostics::new();
@@ -60,12 +70,11 @@ pub fn write_surge_json(net: &BalancedNetwork) -> TextEmission {
             .iter()
             .enumerate()
             .map(|(index, transformer)| {
-                let identity = transformer
-                    .name
-                    .as_deref()
-                    .filter(|name| !name.is_empty())
-                    .or(transformer.uid.as_deref())
-                    .map_or_else(|| format!("transformer {}", index + 1), str::to_owned);
+                let identity = three_winding_transformer_identity(
+                    transformer.name.as_deref(),
+                    transformer.uid.as_deref(),
+                    index + 1,
+                );
                 format!(
                     "{identity} (buses {}, {}, {})",
                     transformer.windings[0].bus,
@@ -1674,6 +1683,13 @@ mod tests {
         assert!((charging.b_fr - 0.2).abs() < EPS);
         assert!((charging.g_to - 0.3).abs() < EPS);
         assert!((charging.b_to - 0.4).abs() < EPS);
+    }
+
+    #[test]
+    fn three_winding_transformer_identity_skips_empty_name_and_uid() {
+        assert_eq!(three_winding_transformer_identity(Some(""), Some(""), 1), "transformer 1");
+        assert_eq!(three_winding_transformer_identity(None, Some(""), 2), "transformer 2");
+        assert_eq!(three_winding_transformer_identity(Some(""), Some("UID-3W"), 3), "UID-3W");
     }
 
     #[test]
