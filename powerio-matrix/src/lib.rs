@@ -41,9 +41,9 @@
 // the top level facade. `Error` and `Result` are this crate's own: the variants
 // below are raised here and nowhere in the hub.
 pub use powerio_tx::{
-    BalancedNetwork, Branch, Bus, BusId, BusType, ConnectivityReport, Extras, GenCost, Generator,
-    Hvdc, IndexCore, IndexedNetwork, Load, POWER_MODELS_ANGLE_BOUND_PAD, Shunt, SourceFormat,
-    Storage,
+    AngleDifferenceBounds, BalancedNetwork, Branch, Bus, BusId, BusType, ConnectivityReport,
+    Extras, GenCost, Generator, Hvdc, IndexCore, IndexedNetwork, Load,
+    POWER_MODELS_ANGLE_BOUND_PAD, Shunt, SourceFormat, Storage,
 };
 
 // Internal compatibility paths used throughout the matrix implementation.
@@ -58,6 +58,13 @@ pub type SparseMatrix = sprs::CsMat<f64>;
 
 mod ac_jacobian;
 mod acopf;
+mod mcopf;
+pub use mcopf::{
+    McAcOpfAssemblyOptions, McAcOpfPreparation, McOpfAngleLimit, McOpfBranch, McOpfCoil,
+    McOpfComplexRow, McOpfDevice, McOpfDeviceKind, McOpfDroop, McOpfLoadLaw, McOpfShunt,
+    McOpfTerminal, McOpfTransformer, McOpfTransformerCoil, McOpfTransformerPort, McOpfVoltageLimit,
+    build_mc_ac_opf_preparation,
+};
 mod dc_operators;
 mod dcopf;
 pub mod io;
@@ -69,9 +76,7 @@ mod lindist3flow_standard;
 pub mod matrix;
 mod opf;
 pub mod pipeline;
-// Preserve the original public module path; new code can depend on `powerio-synth` directly.
-// Preserve `powerio_matrix::synth` as a compatibility facade; new generator
-// users should depend on the topology-only powerio-synth crate directly.
+// Historical compatibility facade; new consumers can depend on powerio-synth directly.
 pub mod synth;
 
 pub use ac_jacobian::{PowerFlowJacobian, VoltageCoordinates, calc_power_flow_jacobian};
