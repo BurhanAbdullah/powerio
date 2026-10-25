@@ -406,6 +406,7 @@ struct SelectedSolve {
 impl SelectedSolve {
     fn new(case: &IndexedNetwork, options: &SensitivityOptions) -> Result<Self> {
         options.validate()?;
+        case.check_closed_switches()?;
         case.check_reference_coverage()?;
         let refs = case.reference_bus_indices();
         let inc = build_incidence(case, options.formula, &BuildOptions::default())?;
@@ -468,6 +469,7 @@ fn build_parts(
     want: Want,
 ) -> Result<BuiltParts> {
     options.validate()?;
+    case.check_closed_switches()?;
     case.check_reference_coverage()?;
     let refs = case.reference_bus_indices();
     let inc = build_incidence(case, options.formula, &BuildOptions::default())?;
@@ -547,6 +549,7 @@ pub(crate) fn for_each_ptdf_lodf_entry(
     mut lodf_entry: impl FnMut(usize, usize, f64) -> Result<()>,
 ) -> Result<SensitivityMetadata> {
     options.validate()?;
+    case.check_closed_switches()?;
     case.check_reference_coverage()?;
     let refs = case.reference_bus_indices();
     let inc = build_incidence(case, options.formula, &BuildOptions::default())?;
@@ -1693,5 +1696,86 @@ mod auto_policy_tests {
             ),
             SensitivitySolver::Sparse
         );
+    }
+}
+
+
+#[cfg(test)]
+mod closed_switch_tests {
+    use super::{
+        SensitivityOptions, calc_lodf, calc_lodf_columns, calc_ptdf, calc_ptdf_columns,
+        calc_ptdf_lodf, calc_ptdf_lodf_with_options, calc_ptdf_rows, for_each_ptdf_lodf_entry,
+    };
+    use crate::indexed::IndexedNetwork;
+    use crate::matrix::BranchSusceptanceFormula;
+    use crate::network::{BalancedNetwork, Branch, Bus, BusId, BusType, Switch};
+
+    fn network_with_unmerged_closed_switch() -> BalancedNetwork {
+        let mut network = BalancedNetwork::in_memory(
+            "closed-switch-sensitivity",
+            100.0,
+            vec![
+                Bus::new(BusId(1), BusType::Ref, 230.0),
+                Bus::new(BusId(2), BusType::Pq, 230.0),
+                Bus::new(BusId(3), BusType::Pq, 230.0),
+            ],
+            vec![
+                Branch::new(BusId(1), BusId(2), 0.0, 0.1),
+                Branch::new(BusId(2), BusId(3), 0.0, 0.2),
+            ],
+        );
+        network
+            .switches_mut()
+            .push(Switch::new(BusId(1), BusId(2), true));
+        network
+    }
+
+    #[test]
+    fn every_sensitivity_builder_refuses_unmerged_closed_switches() {
+        let network = network_with_unmerged_closed_switch();
+        let view = IndexedNetwork::new(&network);
+        let formula = BranchSusceptanceFormula::default();
+        let options = SensitivityOptions::default();
+
+        let results = [
+            calc_ptdf(&view, formula).map(|_| ()),
+            calc_lodf(&view, formula).map(|_| ()),
+            calc_ptdf_lodf(&view, formula).map(|_| ()),
+            calc_ptdf_lodf_with_options(&view, &options).map(|_| ()),
+            calc_ptdf_rows(&view, &options, &[0]).map(|_| ()),
+            calc_ptdf_columns(&view, &options, &[0]).map(|_| ()),
+            calc_lodf_columns(&view, &options, &[0]).map(|_| ()),
+        ];
+
+        for result in results {
+            let error = result.expect_err("closed switches must not be silently omitted");
+            assert_eq!(error.code().code, "BUILD.SWITCH.CLOSED");
+        }
+    }
+
+    #[test]
+    fn streaming_builder_refuses_before_emitting_entries() {
+        let network = network_with_unmerged_closed_switch();
+        let view = IndexedNetwork::new(&network);
+        let mut ptdf_entries = 0;
+        let mut lodf_entries = 0;
+
+        let error = for_each_ptdf_lodf_entry(
+            &view,
+            &SensitivityOptions::default(),
+            |_, _, _| {
+                ptdf_entries += 1;
+                Ok(())
+            },
+            |_, _, _| {
+                lodf_entries += 1;
+                Ok(())
+            },
+        )
+        .expect_err("closed switches must be rejected before streaming matrix entries");
+
+        assert_eq!(error.code().code, "BUILD.SWITCH.CLOSED");
+        assert_eq!(ptdf_entries, 0);
+        assert_eq!(lodf_entries, 0);
     }
 }
