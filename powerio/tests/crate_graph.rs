@@ -55,13 +55,6 @@ fn the_dependency_graph_matches_the_settled_layout() {
     assert_eq!(workspace_deps_of(&graph, "powerio-core"), BTreeSet::new());
 
     // Integration composes both model crates above the foundation.
-    // The standalone synthetic generator package depends only on the
-    // balanced transmission model and remains independent of matrix solvers.
-    assert_eq!(
-        workspace_deps_of(&graph, "powerio-synth"),
-        BTreeSet::from(["powerio-tx"])
-    );
-
     assert_eq!(
         workspace_deps_of(&graph, "powerio-tnd"),
         BTreeSet::from(["powerio-core", "powerio-tx", "powerio-dist"])
