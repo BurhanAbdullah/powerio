@@ -220,21 +220,16 @@ fn selected_rows_and_columns_are_slices_of_the_full_matrices() {
 #[test]
 fn empty_grounded_system_is_valid_for_full_and_selected_builders() {
     let case = net(
-        &[
-            (1, BusType::Ref),
-            (2, BusType::Ref),
-            (3, BusType::Ref),
-        ],
+        &[(1, BusType::Ref), (2, BusType::Ref), (3, BusType::Ref)],
         &[(1, 2, 0.1), (2, 3, 0.2), (1, 3, 0.3)],
     );
     let view = IndexedNetwork::new(&case);
     let mut full_matrices = Vec::new();
 
     for solver in [SensitivitySolver::Dense, SensitivitySolver::Sparse] {
-        let full =
-            calc_ptdf_lodf_with_options(&view, &options(solver)).unwrap_or_else(|error| {
-                panic!("{solver:?} must accept the valid 0×0 grounded system: {error}")
-            });
+        let full = calc_ptdf_lodf_with_options(&view, &options(solver)).unwrap_or_else(|error| {
+            panic!("{solver:?} must accept the valid 0×0 grounded system: {error}")
+        });
         assert_eq!(full.ptdf.shape(), (case.branches().len(), view.n()));
         assert!(full.ptdf.data().iter().all(|value| *value == 0.0));
         assert_eq!(
@@ -249,8 +244,7 @@ fn empty_grounded_system_is_valid_for_full_and_selected_builders() {
         assert_eq!(columns.shape(), (case.branches().len(), 2));
         assert!(columns.data().iter().all(|value| *value == 0.0));
 
-        let lodf_columns =
-            calc_lodf_columns(&view, &options(solver), &[2, 0]).unwrap();
+        let lodf_columns = calc_lodf_columns(&view, &options(solver), &[2, 0]).unwrap();
         assert_eq!(lodf_columns.shape(), (case.branches().len(), 2));
         assert_close(
             &lodf_columns,
