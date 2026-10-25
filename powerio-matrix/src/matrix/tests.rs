@@ -941,7 +941,16 @@ fn per_island_ptdf_returns_local_matrices_and_source_index_mappings() {
             bus(30, BusType::Ref),
             bus(40, BusType::Pq),
         ],
-        vec![br(10, 20, 0.0, 0.1, 0.0), br(30, 40, 0.0, 0.2, 0.0)],
+        vec![
+            br(10, 20, 0.0, 0.1, 0.0),
+            {
+                let mut inactive = br(10, 20, 0.0, 0.15, 0.0);
+                inactive.in_service = false;
+                inactive
+            },
+            br(10, 10, 0.0, 0.05, 0.0),
+            br(30, 40, 0.0, 0.2, 0.0),
+        ],
     );
     let view = IndexedNetwork::new(&net);
     let formula = BranchSusceptanceFormula::ReactanceOnly;
@@ -968,7 +977,7 @@ fn per_island_ptdf_returns_local_matrices_and_source_index_mappings() {
         assert_eq!(islands[0].ptdf.shape(), (1, 2));
         assert_eq!(islands[1].island_label, 2);
         assert_eq!(islands[1].bus_indices, vec![2, 3]);
-        assert_eq!(islands[1].branch_indices, vec![1]);
+        assert_eq!(islands[1].branch_indices, vec![3]);
         assert_eq!(islands[1].ptdf.shape(), (1, 2));
 
         // Local rows/columns are the corresponding global entries, while the
@@ -990,4 +999,53 @@ fn per_island_ptdf_returns_local_matrices_and_source_index_mappings() {
             }
         }
     }
+}
+
+
+#[test]
+fn per_island_ptdf_refuses_unmerged_closed_switches() {
+    use crate::network::Switch;
+
+    let mut net = BalancedNetwork::in_memory(
+        "closed-switch-per-island-ptdf",
+        100.0,
+        vec![bus(1, BusType::Ref), bus(2, BusType::Pq), bus(3, BusType::Pq)],
+        vec![br(1, 2, 0.0, 0.1, 0.0), br(2, 3, 0.0, 0.2, 0.0)],
+    );
+    net.switches_mut().push(Switch::new(crate::network::BusId(1), crate::network::BusId(2), true));
+    let view = IndexedNetwork::new(&net);
+
+    let error = crate::matrix::calc_ptdf_by_island(
+        &view,
+        &crate::matrix::SensitivityOptions::default(),
+    )
+    .expect_err("unmerged closed switches must be rejected");
+    assert_eq!(error.code().code, "BUILD.SWITCH.CLOSED");
+}
+
+#[test]
+fn per_island_ptdf_preserves_empty_and_fully_grounded_network_behavior() {
+    use crate::network::BalancedNetwork;
+
+    let empty = BalancedNetwork::in_memory("empty-ptdf-island", 100.0, vec![], vec![]);
+    let empty_view = IndexedNetwork::new(&empty);
+    let empty_result = crate::matrix::calc_ptdf_by_island(
+        &empty_view,
+        &crate::matrix::SensitivityOptions::default(),
+    );
+    assert!(empty_result.is_ok(), "empty network behavior changed: {empty_result:?}");
+
+    let grounded = BalancedNetwork::in_memory(
+        "fully-grounded-ptdf-islands",
+        100.0,
+        vec![bus(1, BusType::Ref), bus(2, BusType::Ref)],
+        vec![],
+    );
+    let grounded_view = IndexedNetwork::new(&grounded);
+    let grounded_result = crate::matrix::calc_ptdf_by_island(
+        &grounded_view,
+        &crate::matrix::SensitivityOptions::default(),
+    );
+    assert!(grounded_result.is_ok(), "fully grounded network behavior changed: {grounded_result:?}");
+    assert_eq!(grounded_result.unwrap().len(), 2);
 }
