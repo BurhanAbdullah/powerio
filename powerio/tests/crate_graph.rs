@@ -85,7 +85,13 @@ fn the_dependency_graph_matches_the_settled_layout() {
     // Matrix construction sits above the models, problem data, and generators.
     assert_eq!(
         workspace_deps_of(&graph, "powerio-matrix"),
-        BTreeSet::from(["powerio-core", "powerio-tx", "powerio-dist", "powerio-prob", "powerio-synth"])
+        BTreeSet::from([
+            "powerio-core",
+            "powerio-tx",
+            "powerio-dist",
+            "powerio-prob",
+            "powerio-synth",
+        ])
     );
 
     // The facade pulls the component crates; matrix functionality is its
