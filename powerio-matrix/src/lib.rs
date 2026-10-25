@@ -70,6 +70,8 @@ pub mod matrix;
 mod opf;
 pub mod pipeline;
 // Preserve the original public module path; new code can depend on `powerio-synth` directly.
+// Preserve `powerio_matrix::synth` as a compatibility facade; new generator
+// users should depend on the topology-only powerio-synth crate directly.
 pub mod synth;
 
 pub use ac_jacobian::{PowerFlowJacobian, VoltageCoordinates, calc_power_flow_jacobian};
