@@ -70,7 +70,7 @@ fn six_figure_record_counts_decode_within_the_ceiling() {
     // Keep a generous ceiling for shared CI runners; this still catches the
     // quadratic regression this six-figure fixture is designed to detect.
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
+        elapsed < std::time::Duration::from_secs(5),
         "decode took {elapsed:?}"
     );
 }
@@ -543,7 +543,7 @@ fn six_figure_unidentified_diagnostics_encode_within_the_ceiling() {
     // Keep the matching encode check resilient to shared-runner variance while
     // still catching non-linear behavior at this input size.
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
+        elapsed < std::time::Duration::from_secs(5),
         "encode took {elapsed:?}"
     );
     let back = deserialize_module_text(&text).unwrap();
