@@ -31,7 +31,6 @@ powerio-core = { workspace = true }
 # feature. SINCAL lives in powerio-tnd, which this crate does not use.
 powerio-dist = { workspace = true, default-features = false }
 powerio-prob.workspace = true
-# Seeded generators are topology-only and keep OS randomness out of wasm builds.
 powerio-synth.workspace = true
 powerio-tx = { workspace = true, default-features = false }
 thiserror = "2"
@@ -40,6 +39,10 @@ faer.workspace = true
 num-complex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# Deterministic seeded generation only: default features off keeps the OS
+# randomness backend out, so the crate builds on wasm32 targets.
+rand = { version = "0.10", default-features = false, features = ["std"] }
+rand_chacha = { version = "0.10", default-features = false, features = ["std"] }
 sha2 = "0.11"
 rustc-hash = "2"
 # arrow and parquet release in lockstep and share `RecordBatch`; keep both on the
@@ -50,8 +53,7 @@ parquet = { version = "60", default-features = false, features = ["arrow", "snap
 [dev-dependencies]
 approx = "0.5"
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
-powerio-synth.workspace = true
-powerio-tx.workspace = true
+powerio-dist.workspace = true
 tempfile = "3"
 
 [[bench]]
