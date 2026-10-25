@@ -1699,7 +1699,6 @@ mod auto_policy_tests {
     }
 }
 
-
 #[cfg(test)]
 mod closed_switch_tests {
     use super::{
