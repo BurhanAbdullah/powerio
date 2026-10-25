@@ -1016,17 +1016,23 @@ fn per_island_ptdf_refuses_unmerged_closed_switches() {
     let mut net = BalancedNetwork::in_memory(
         "closed-switch-per-island-ptdf",
         100.0,
-        vec![bus(1, BusType::Ref), bus(2, BusType::Pq), bus(3, BusType::Pq)],
+        vec![
+            bus(1, BusType::Ref),
+            bus(2, BusType::Pq),
+            bus(3, BusType::Pq),
+        ],
         vec![br(1, 2, 0.0, 0.1, 0.0), br(2, 3, 0.0, 0.2, 0.0)],
     );
-    net.switches_mut().push(Switch::new(crate::network::BusId(1), crate::network::BusId(2), true));
+    net.switches_mut().push(Switch::new(
+        crate::network::BusId(1),
+        crate::network::BusId(2),
+        true,
+    ));
     let view = IndexedNetwork::new(&net);
 
-    let error = crate::matrix::calc_ptdf_by_island(
-        &view,
-        &crate::matrix::SensitivityOptions::default(),
-    )
-    .expect_err("unmerged closed switches must be rejected");
+    let error =
+        crate::matrix::calc_ptdf_by_island(&view, &crate::matrix::SensitivityOptions::default())
+            .expect_err("unmerged closed switches must be rejected");
     assert_eq!(error.code().code, "BUILD.SWITCH.CLOSED");
 }
 
