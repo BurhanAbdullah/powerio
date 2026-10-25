@@ -49,6 +49,7 @@ digraph powerio_architecture {
     "powerio-matrix" -> "powerio-tx";
     "powerio-matrix" -> "powerio-dist";
     "powerio-matrix" -> "powerio-prob";
+    "powerio-matrix" -> "powerio-synth";
     powerio -> "powerio-core";
     powerio -> "powerio-tnd";
     powerio -> "powerio-tx";
