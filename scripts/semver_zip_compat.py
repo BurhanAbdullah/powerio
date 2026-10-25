@@ -2,7 +2,7 @@
 """Prepare isolated source trees for cargo-semver-checks across the ZIP 9 upgrade.
 
 The historical baseline may still use yanked ZIP 8.6 and its old reader API;
-the current tree may already use ZIP 9.0.5. Only recognized old anchors are
+the current tree may already use ZIP 9.0.3. Only recognized old anchors are
 rewritten. A tree with an unknown dependency or source shape fails closed.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ import sys
 import tempfile
 
 OLD_ZIP = "zip = { version = \"8.6\", default-features = false, features = [\"deflate-flate2-zlib-rs\"] }"
-NEW_ZIP = "zip = { version = \"9.0.5\", default-features = false, features = [\"deflate-flate2-zlib-rs\"] }"
+NEW_ZIP = "zip = { version = \"9.0.3\", default-features = false, features = [\"deflate-flate2-zlib-rs\"] }"
 REPLACEMENTS = [
     [
         "let raw_name = file.name().to_string();",
@@ -49,7 +49,7 @@ def patch_root(root: pathlib.Path) -> None:
     else:
         raise SystemExit(
             f"unsupported ZIP dependency in {root}: {zip_lines[0]!r}; "
-            "expected ZIP 8.6 or ZIP 9.0.5"
+            "expected ZIP 8.6 or ZIP 9.0.3"
         )
 
     source = root / "powerio-tx/src/format/cgmes/mod.rs"
