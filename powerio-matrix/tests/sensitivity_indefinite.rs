@@ -235,3 +235,53 @@ fn a_selection_outside_the_network_is_refused() {
         (0, view.n())
     );
 }
+
+
+/// Grounding an all-reference network leaves a valid 0x0 system. Sparse full
+/// and selected builders must preserve the dense path's zero-PTDF behavior.
+#[test]
+fn all_reference_triangle_accepts_empty_grounded_system_on_both_solvers() {
+    let case = net(
+        &[
+            (1, BusType::Ref),
+            (2, BusType::Ref),
+            (3, BusType::Ref),
+        ],
+        &[(1, 2, 0.1), (2, 3, 0.2), (1, 3, 0.3)],
+    );
+    let view = IndexedNetwork::new(&case);
+    let branches = [2, 0, 1];
+    let buses = [2, 0, 1];
+
+    let dense_full =
+        calc_ptdf_lodf_with_options(&view, &options(SensitivitySolver::Dense)).unwrap();
+    assert_eq!(dense_full.ptdf.shape(), (3, 3));
+    assert!(dense(&dense_full.ptdf).iter().flatten().all(|v| *v == 0.0));
+
+    for solver in [SensitivitySolver::Dense, SensitivitySolver::Sparse] {
+        let opts = options(solver);
+        let full = calc_ptdf_lodf_with_options(&view, &opts).unwrap();
+        assert_close(&full.ptdf, &dense_full.ptdf, 1e-12, "all-reference PTDF");
+        assert_close(&full.lodf, &dense_full.lodf, 1e-12, "all-reference LODF");
+
+        let rows = calc_ptdf_rows(&view, &opts, &branches).unwrap();
+        assert_close(&rows, &rows_of(&full.ptdf, &branches), 1e-12, "all-reference rows");
+        let columns = calc_ptdf_columns(&view, &opts, &buses).unwrap();
+        assert_close(
+            &columns,
+            &cols_of(&full.ptdf, &buses),
+            1e-12,
+            "all-reference columns",
+        );
+        let lodf_columns = calc_lodf_columns(&view, &opts, &branches).unwrap();
+        assert_close(
+            &lodf_columns,
+            &cols_of(&full.lodf, &branches),
+            1e-12,
+            "all-reference LODF columns",
+        );
+    }
+
+    let sparse = calc_ptdf_lodf_with_options(&view, &options(SensitivitySolver::Sparse)).unwrap();
+    assert_eq!(sparse.metadata.solver_path, SensitivitySolverPath::SparseEmpty);
+}
