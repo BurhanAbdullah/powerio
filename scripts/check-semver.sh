@@ -96,14 +96,29 @@ for old, new in replacements:
 source.write_text(text)
 PY
 
-# powerio-py and powerio-capi are publish = false; name them anyway so the
-# crate set reads the same as the msrv and archive jobs. A newly introduced
-# publishable crate has no baseline package to compare until its first release;
-# exclude it only while the selected baseline truly predates that crate.
+# powerio-py and powerio-capi are publish = false; name them explicitly
+# and retain current main's compatibility helpers for ZIP and T&D.
 excludes=(--exclude powerio-py --exclude powerio-capi)
-if ! git cat-file -e "$baseline:powerio-synth/Cargo.toml" 2>/dev/null; then
+if [ -f powerio-tnd/Cargo.toml ] \
+    && ! git cat-file -e "$baseline:powerio-tnd/Cargo.toml" 2>/dev/null; then
+    echo "powerio-tnd is new since $baseline; no previous API to compare"
+    excludes+=(--exclude powerio-tnd)
+fi
+if [ -f powerio-synth/Cargo.toml ] \
+    && ! git cat-file -e "$baseline:powerio-synth/Cargo.toml" 2>/dev/null; then
+    echo "powerio-synth is new since $baseline; no previous API to compare"
     excludes+=(--exclude powerio-synth)
 fi
+baseline_root=$(mktemp -d)
+current_root=$(mktemp -d)
+trap 'rm -rf "$baseline_root" "$current_root"' EXIT
+git archive "$baseline" | tar -x -C "$baseline_root"
+git archive HEAD | tar -x -C "$current_root"
+python3 scripts/semver_zip_compat.py --self-test
+python3 scripts/semver_zip_compat.py "$baseline_root" "$current_root"
+python3 scripts/semver_tnd_compat.py --self-test
+python3 scripts/semver_tnd_compat.py "$baseline_root" "$current_root"
+cd "$current_root"
 cargo semver-checks check-release --workspace \
     "${excludes[@]}" \
     --baseline-root "$baseline_root" "$@"
