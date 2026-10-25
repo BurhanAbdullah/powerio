@@ -124,7 +124,7 @@ fn every_topology_obeys_structural_invariants() {
 #[test]
 fn identical_specs_produce_identical_networks() {
     for topology in [Topology::Tree, Topology::Lattice2D, Topology::PegaseLike] {
-        let spec = spec(topology, 17, 0xA11C_E55);
+        let spec = spec(topology, 17, 0x0A11_CE55);
         let first = generate(&spec);
         let second = generate(&spec);
 
