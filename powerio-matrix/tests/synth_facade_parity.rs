@@ -2,7 +2,7 @@
 
 use powerio_matrix::synth as legacy;
 use powerio_synth as standalone;
-use powerio_tx::{BalancedNetwork, Branch, Bus, BusId, BusType};
+use powerio_tx::BalancedNetwork;
 
 fn standalone_spec(spec: &legacy::SynthSpec) -> standalone::SynthSpec {
     standalone::SynthSpec {
@@ -19,6 +19,8 @@ fn standalone_spec(spec: &legacy::SynthSpec) -> standalone::SynthSpec {
 }
 
 fn same_network(a: &BalancedNetwork, b: &BalancedNetwork) {
+    // Comparing their canonical public fields avoids requiring private model
+    // identity to be shared between the legacy and standalone API types.
     assert_eq!(a.name(), b.name());
     assert_eq!(a.base_mva(), b.base_mva());
     assert_eq!(a.buses(), b.buses());
@@ -77,18 +79,4 @@ fn facade_defaults_serde_and_all_generators_match_standalone() {
             }),
         );
     }
-}
-
-// Keep imports in this integration test representative of old downstream use:
-#[allow(dead_code)]
-fn old_construction_style() -> BalancedNetwork {
-    BalancedNetwork::in_memory(
-        "compat",
-        100.0,
-        vec![
-            Bus::new(BusId(1), BusType::Ref, 345.0),
-            Bus::new(BusId(2), BusType::Pq, 345.0),
-        ],
-        vec![Branch::new(BusId(1), BusId(2), 0.01, 0.1)],
-    )
 }
