@@ -1,5 +1,5 @@
 //! The canonical (no-source-document) writer path, exercised through a synth
-//! case. Lives in powerio-matrix because it needs the `synth` generators.
+//! case. Lives in powerio-matrix to cover canonical emission of a standalone synth case.
 mod helpers;
 #[allow(unused_imports)]
 use helpers::*;
