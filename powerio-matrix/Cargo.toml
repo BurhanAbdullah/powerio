@@ -51,6 +51,8 @@ approx = "0.5"
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 powerio-dist.workspace = true
 tempfile = "3"
+powerio-synth.workspace = true
+powerio-tx.workspace = true
 
 [[bench]]
 name = "matrix"
