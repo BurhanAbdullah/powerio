@@ -935,6 +935,12 @@ impl<'a> Probe<'a> {
     /// `‖x̂ − x‖∞ / ‖x‖∞` within [`FORWARD_ERROR_TRUST`].
     fn trusts(&self, factor: &SparseFactor) -> bool {
         let n = self.b.len();
+        // A 0×0 grounded system has no unknown angles to solve. It is a valid
+        // fully grounded network, not a singular system; there is no probe
+        // norm to normalize in this case.
+        if n == 0 {
+            return true;
+        }
         let mut rhs = faer::Mat::<f64>::from_fn(n, 1, |i, _| self.b[i]);
         factor.solve_block(rhs.as_mut());
         let x: Vec<f64> = (0..n).map(|i| rhs[(i, 0)]).collect();
