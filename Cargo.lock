@@ -2411,7 +2411,7 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
 name = "powerio"
-version = "0.11.5"
+version = "0.11.6"
 dependencies = [
  "arrow",
  "bytes",
@@ -2421,7 +2421,9 @@ dependencies = [
  "powerio-dist",
  "powerio-matrix",
  "powerio-prob",
+ "powerio-tnd",
  "powerio-tx",
+ "rusqlite",
  "schemars",
  "serde",
  "serde_json",
@@ -2431,21 +2433,24 @@ dependencies = [
 
 [[package]]
 name = "powerio-capi"
-version = "0.11.5"
+version = "0.11.6"
 dependencies = [
  "powerio",
  "powerio-core",
  "powerio-dist",
  "powerio-matrix",
  "powerio-prob",
+ "powerio-tnd",
  "powerio-tx",
+ "rusqlite",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
 ]
 
 [[package]]
 name = "powerio-cli"
-version = "0.11.5"
+version = "0.11.6"
 dependencies = [
  "anyhow",
  "clap",
@@ -2458,6 +2463,7 @@ dependencies = [
  "powerio-synth",
  "powerio-tx",
  "ratatui",
+ "rusqlite",
  "schemars",
  "serde",
  "serde_json",
@@ -2470,7 +2476,7 @@ dependencies = [
 
 [[package]]
 name = "powerio-core"
-version = "0.11.5"
+version = "0.11.6"
 dependencies = [
  "errno",
  "libc",
@@ -2481,22 +2487,27 @@ dependencies = [
 
 [[package]]
 name = "powerio-dist"
-version = "0.11.5"
+version = "0.11.6"
 dependencies = [
  "jsonschema",
  "libc",
+ "memchr",
  "num-complex",
  "powerio-core",
+ "quick-xml",
  "schemars",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.21",
+ "uuid",
+ "zip",
 ]
 
 [[package]]
 name = "powerio-matrix"
-version = "0.11.5"
+version = "0.11.6"
 dependencies = [
  "approx",
  "arrow",
@@ -2514,7 +2525,7 @@ dependencies = [
  "rustc-hash",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "sprs",
  "tempfile",
  "thiserror 2.0.21",
@@ -2522,7 +2533,7 @@ dependencies = [
 
 [[package]]
 name = "powerio-prob"
-version = "0.11.5"
+version = "0.11.6"
 dependencies = [
  "powerio-core",
  "powerio-dist",
@@ -2535,7 +2546,7 @@ dependencies = [
 
 [[package]]
 name = "powerio-py"
-version = "0.11.5"
+version = "0.11.6"
 dependencies = [
  "mimalloc",
  "powerio",
@@ -2543,8 +2554,10 @@ dependencies = [
  "powerio-dist",
  "powerio-matrix",
  "powerio-prob",
+ "powerio-tnd",
  "powerio-tx",
  "pyo3",
+ "rusqlite",
  "serde_json",
  "sprs",
 ]
@@ -2568,7 +2581,7 @@ dependencies = [
 
 [[package]]
 name = "powerio-synth"
-version = "0.11.5"
+version = "0.11.6"
 dependencies = [
  "powerio-tx",
  "rand 0.10.3",
@@ -2578,7 +2591,7 @@ dependencies = [
 
 [[package]]
 name = "powerio-tx"
-version = "0.11.5"
+version = "0.11.6"
 dependencies = [
  "criterion",
  "lexical-core",
