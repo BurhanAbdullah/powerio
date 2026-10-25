@@ -2,20 +2,6 @@
 //! edit that reverses an edge or couples the sibling model crates fails here
 //! rather than in review.
 //!
-//! The graph under test:
-//!
-//! ```text
-//! powerio-core
-//! ├── powerio-tx
-//! └── powerio-dist
-//!
-//! powerio-prob   -> powerio-core + powerio-tx + powerio-dist
-//! powerio-synth  -> powerio-tx
-//! powerio-matrix -> powerio-core + powerio-tx + powerio-dist + powerio-prob + powerio-synth
-//! powerio        -> powerio-core + powerio-tx + powerio-dist + powerio-prob
-//! powerio        -> powerio-matrix when the matrix feature is enabled
-//! ```
-
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Normal-dependency names per workspace crate, from `cargo metadata`.
@@ -68,6 +54,19 @@ fn the_dependency_graph_matches_the_settled_layout() {
     // The foundation depends on no workspace crate.
     assert_eq!(workspace_deps_of(&graph, "powerio-core"), BTreeSet::new());
 
+    // Integration composes both model crates above the foundation.
+    // The standalone synthetic generator package depends only on the
+    // balanced transmission model and remains independent of matrix solvers.
+    assert_eq!(
+        workspace_deps_of(&graph, "powerio-synth"),
+        BTreeSet::from(["powerio-tx"])
+    );
+
+    assert_eq!(
+        workspace_deps_of(&graph, "powerio-tnd"),
+        BTreeSet::from(["powerio-core", "powerio-tx", "powerio-dist"])
+    );
+
     // The two model crates are independent siblings over the foundation.
     assert_eq!(
         workspace_deps_of(&graph, "powerio-tx"),
@@ -84,25 +83,11 @@ fn the_dependency_graph_matches_the_settled_layout() {
         BTreeSet::from(["powerio-core", "powerio-tx", "powerio-dist"])
     );
 
-    // Synthetic network generation is a standalone layer over the balanced
-    // transmission model; matrix construction consumes it alongside the
-    // models and problem data, never through the facade.
-    assert_eq!(
-        workspace_deps_of(&graph, "powerio-synth"),
-        BTreeSet::from(["powerio-tx"])
-    );
-
-    // Matrix construction sits above the models, problem data, and synthetic
-    // generators, never on or through the facade.
+    // Matrix construction sits above the models and problem data, never on
+    // or through the facade.
     assert_eq!(
         workspace_deps_of(&graph, "powerio-matrix"),
-        BTreeSet::from([
-            "powerio-core",
-            "powerio-tx",
-            "powerio-dist",
-            "powerio-prob",
-            "powerio-synth",
-        ])
+        BTreeSet::from(["powerio-core", "powerio-tx", "powerio-dist", "powerio-prob"])
     );
 
     // The facade pulls the component crates; matrix functionality is its
@@ -118,8 +103,9 @@ fn the_dependency_graph_matches_the_settled_layout() {
     );
 }
 
-#[test]
-fn the_facade_matrix_dependency_is_optional() {
+/// The normal dependency `dependency` of workspace `package`, from `cargo
+/// metadata`, so a test can read its `optional` flag.
+fn normal_dependency(package: &str, dependency: &str) -> serde_json::Value {
     let cargo = std::env::var_os("CARGO").expect("cargo sets CARGO for test runs");
     let output = std::process::Command::new(cargo)
         .args(["metadata", "--no-deps", "--format-version", "1"])
@@ -128,17 +114,41 @@ fn the_facade_matrix_dependency_is_optional() {
         .expect("cargo metadata runs");
     let metadata: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("cargo metadata emits JSON");
-    let facade = metadata["packages"]
+    metadata["packages"]
         .as_array()
         .expect("packages")
         .iter()
-        .find(|package| package["name"] == "powerio")
-        .expect("facade package");
-    let matrix_dep = facade["dependencies"]
+        .find(|entry| entry["name"] == package)
+        .unwrap_or_else(|| panic!("{package} is a workspace package"))["dependencies"]
         .as_array()
         .expect("dependencies")
         .iter()
-        .find(|dep| dep["name"] == "powerio-matrix" && dep["kind"].is_null())
-        .expect("facade names powerio-matrix");
+        .find(|dep| dep["name"] == dependency && dep["kind"].is_null())
+        .unwrap_or_else(|| panic!("{package} names {dependency}"))
+        .clone()
+}
+
+#[test]
+fn the_facade_matrix_dependency_is_optional() {
+    let matrix_dep = normal_dependency("powerio", "powerio-matrix");
     assert_eq!(matrix_dep["optional"], true, "matrix must be feature gated");
+}
+
+/// Integration is available without enabling SQLite adapters.
+#[test]
+fn sincal_storage_dependencies_are_optional() {
+    for dependency in ["rusqlite", "zip", "sha2"] {
+        assert_eq!(
+            normal_dependency("powerio-tnd", dependency)["optional"],
+            true
+        );
+    }
+    assert_eq!(
+        normal_dependency("powerio", "powerio-tnd")["optional"],
+        false
+    );
+    assert_eq!(
+        normal_dependency("powerio", "powerio-tnd")["uses_default_features"],
+        false
+    );
 }
