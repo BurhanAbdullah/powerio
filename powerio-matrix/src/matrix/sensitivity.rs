@@ -92,6 +92,8 @@ pub enum SensitivitySolverPath {
     SparseLdlt,
     /// Sparse LU with partial pivoting, when `LDLᵀ` fails or loses accuracy.
     SparseLu,
+    /// Sparse solver selected for a valid zero-dimensional grounded system.
+    SparseEmpty,
 }
 
 impl SensitivitySolverPath {
@@ -103,6 +105,7 @@ impl SensitivitySolverPath {
             Self::SparseCholesky => "sparse_cholesky",
             Self::SparseLdlt => "sparse_ldlt",
             Self::SparseLu => "sparse_lu",
+            Self::SparseEmpty => "sparse_empty",
         }
     }
 }
@@ -786,6 +789,8 @@ type FactorAttempt = fn(&faer::sparse::SparseColMat<usize, f64>) -> Option<Spars
 /// result, and a forward error below [`FORWARD_ERROR_TRUST`]. The matrix is
 /// refused as singular only when every one fails.
 enum SparseFactor {
+    /// No unknown angles remain after grounding; every solve is the empty solve.
+    Empty,
     Llt(faer::sparse::linalg::solvers::Llt<usize, f64>),
     Ldlt {
         symbolic: faer::sparse::linalg::cholesky::SymbolicCholesky<usize>,
@@ -803,6 +808,11 @@ impl SparseFactor {
                 expected: nr,
                 got: lr.cols(),
             });
+        }
+        // All buses may be references, leaving no unknown angles. This is a
+        // valid zero-dimensional solve, not a singular network.
+        if nr == 0 {
+            return Ok(Self::Empty);
         }
         // A nonfinite entry is NaN or infinity poisoning, not a property of
         // the network; refuse it before any factorization runs.
@@ -873,6 +883,7 @@ impl SparseFactor {
 
     fn path(&self) -> SensitivitySolverPath {
         match self {
+            Self::Empty => SensitivitySolverPath::SparseEmpty,
             Self::Llt(_) => SensitivitySolverPath::SparseCholesky,
             Self::Ldlt { .. } => SensitivitySolverPath::SparseLdlt,
             Self::Lu(_) => SensitivitySolverPath::SparseLu,
@@ -883,6 +894,7 @@ impl SparseFactor {
     fn solve_block(&self, mut rhs: faer::MatMut<'_, f64>) {
         use faer::linalg::solvers::Solve;
         match self {
+            Self::Empty => {}
             Self::Llt(llt) => llt.solve_in_place(rhs),
             Self::Lu(lu) => lu.solve_in_place(rhs),
             Self::Ldlt { symbolic, values } => {
