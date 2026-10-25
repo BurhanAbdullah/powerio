@@ -294,7 +294,7 @@ class FirstPublication(unittest.TestCase):
             patch.object(helper.subprocess, "run", side_effect=publish) as run,
         ):
             self.assertTrue(
-                helper.bootstrap_first_missing(SHA, "0.11.6", ["powerio-tnd"])
+                helper.bootstrap_first_missing(SHA, "0.11.6", ["powerio-tnd", "powerio-synth"])
             )
             run.assert_called_once_with(
                 ["cargo", "publish", "--locked", "--all-features", "-p", "powerio-tnd"],
@@ -312,7 +312,7 @@ class FirstPublication(unittest.TestCase):
             patch.object(helper.subprocess, "run") as run,
         ):
             with self.assertRaises(helper.ReleaseError):
-                helper.bootstrap_first_missing(SHA, "0.11.6", ["powerio-tnd"])
+                helper.bootstrap_first_missing(SHA, "0.11.6", ["powerio-tnd", "powerio-synth"])
             run.assert_not_called()
 
     def test_existing_name_cannot_be_bootstrapped(self):
@@ -321,7 +321,7 @@ class FirstPublication(unittest.TestCase):
             patch.object(helper.subprocess, "run") as run,
         ):
             with self.assertRaises(helper.ReleaseError):
-                helper.bootstrap_first_missing(SHA, "0.11.6", ["powerio-tnd"])
+                helper.bootstrap_first_missing(SHA, "0.11.6", ["powerio-tnd", "powerio-synth"])
             run.assert_not_called()
 
     def test_exact_clean_checkout_required(self):
@@ -350,7 +350,7 @@ class FirstPublication(unittest.TestCase):
             patch.object(helper.subprocess, "run"),
         ):
             with self.assertRaises(helper.ReleaseError):
-                helper.bootstrap_first_missing(SHA, "0.11.6", ["powerio-tnd"])
+                helper.bootstrap_first_missing(SHA, "0.11.6", ["powerio-tnd", "powerio-synth"])
 
     def test_only_failed_publish_step_permits_bootstrap(self):
         with patch.object(
@@ -359,7 +359,7 @@ class FirstPublication(unittest.TestCase):
             for jobs in ([], [{"steps": [{"name": "Audit", "conclusion": "failure"}]}]):
                 with self.assertRaises(helper.ReleaseError):
                     helper.bootstrap_after_approved_failure(
-                        {"conclusion": "failure"}, jobs, SHA, "0.11.6", ["powerio-tnd"]
+                        {"conclusion": "failure"}, jobs, SHA, "0.11.6", ["powerio-tnd", "powerio-synth"]
                     )
             bootstrap.assert_not_called()
             jobs = [
@@ -371,7 +371,7 @@ class FirstPublication(unittest.TestCase):
             ]
             self.assertTrue(
                 helper.bootstrap_after_approved_failure(
-                    {"conclusion": "failure"}, jobs, SHA, "0.11.6", ["powerio-tnd"]
+                    {"conclusion": "failure"}, jobs, SHA, "0.11.6", ["powerio-tnd", "powerio-synth"]
                 )
             )
 
@@ -383,14 +383,14 @@ class FirstPublication(unittest.TestCase):
             patch.object(helper.subprocess, "run") as run,
         ):
             self.assertFalse(
-                helper.bootstrap_first_missing(SHA, "0.11.6", ["powerio-tnd"])
+                helper.bootstrap_first_missing(SHA, "0.11.6", ["powerio-tnd", "powerio-synth"])
             )
             run.assert_not_called()
 
     def test_a_name_owned_by_someone_else_stops_the_release(self):
         def owners(login):
             return lambda url: (
-                {"users": [{"login": login}]} if url.endswith("/powerio-tnd/owners") else None
+                {"users": [{"login": login}]} if url.endswith("/powerio-tnd/owners") or url.endswith("/powerio-synth/owners") else None
             )
 
         with patch.object(helper, "public_json", side_effect=owners("squatter")):
@@ -424,7 +424,7 @@ class FirstPublication(unittest.TestCase):
             patch.object(helper, "wait_pause", side_effect=Done),
         ):
             with self.assertRaises(Done):
-                helper.follow_publication(SHA, "b" * 40, "0.11.6", "v0.11.6", 0, ["powerio-tnd"])
+                helper.follow_publication(SHA, "b" * 40, "0.11.6", "v0.11.6", 0, ["powerio-tnd", "powerio-synth"])
         boot.assert_called_once()
         self.assertIn(
             (f"repos/{helper.REPO}/actions/runs/7/rerun-failed-jobs", "POST"), calls
@@ -454,7 +454,7 @@ class FirstPublication(unittest.TestCase):
             patch.object(helper, "wait_pause"),
         ):
             with self.assertRaises(helper.ReleaseError):
-                helper.follow_publication(SHA, "b" * 40, "0.11.6", "v0.11.6", 0, ["powerio-tnd"])
+                helper.follow_publication(SHA, "b" * 40, "0.11.6", "v0.11.6", 0, ["powerio-tnd", "powerio-synth"])
 
     def test_pending_protection_prevents_local_publication(self):
         run = source_run(
@@ -470,7 +470,7 @@ class FirstPublication(unittest.TestCase):
         ):
             self.assertEqual(
                 helper.follow_publication(
-                    SHA, "b" * 40, "0.11.6", "v0.11.6", 0, ["powerio-tnd"]
+                    SHA, "b" * 40, "0.11.6", "v0.11.6", 0, ["powerio-tnd", "powerio-synth"]
                 ),
                 3,
             )
