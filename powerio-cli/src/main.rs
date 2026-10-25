@@ -16,11 +16,11 @@ use powerio_core::ErrorCategory;
 use powerio_matrix::io::gridfm::{GridfmOptions, emit_gridfm_batch, number_snapshots};
 use powerio_matrix::matrix::{BranchSusceptanceFormula, BuildOptions, Scheme, check_sddm};
 use powerio_matrix::pipeline::{MatrixKind, Pipeline, RhsKind};
-use powerio_synth::{SynthSpec, Topology};
 use powerio_matrix::{
     DcOpfAssemblyOptions, DcOpfBundleMetadata, DcOpfBundleOptions, Units, emit_dcopf_bundle,
 };
 use powerio_matrix::{SensitivityOptions, SensitivitySolver};
+use powerio_synth::{SynthSpec, Topology};
 use powerio_tx::{AngleDifferenceBounds, EmitOptions, MissingGenCostPolicy};
 use serde_json::json;
 mod cases;
