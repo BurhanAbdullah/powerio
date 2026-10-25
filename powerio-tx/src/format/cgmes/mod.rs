@@ -272,7 +272,12 @@ fn push_zip(
         if file.is_dir() {
             continue;
         }
-        let raw_name = file.name().to_string();
+        let raw_name = file
+            .name()
+            .map_err(|error| {
+                format_error(format!("cannot read entry name in {archive_name}: {error}"))
+            })?
+            .into_owned();
         let path = strict_archive_path(&raw_name)?;
         if file
             .unix_mode()
