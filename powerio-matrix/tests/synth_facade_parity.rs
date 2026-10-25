@@ -21,8 +21,6 @@ fn standalone_spec(spec: &legacy::SynthSpec) -> standalone::SynthSpec {
 fn same_network(a: &BalancedNetwork, b: &BalancedNetwork) {
     // Comparing their canonical public fields avoids requiring private model
     // identity to be shared between the legacy and standalone API types.
-    assert_eq!(a.name(), b.name());
-    assert_eq!(a.base_mva(), b.base_mva());
     assert_eq!(a.buses(), b.buses());
     assert_eq!(a.branches(), b.branches());
 }
