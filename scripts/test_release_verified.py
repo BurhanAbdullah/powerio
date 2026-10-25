@@ -302,6 +302,38 @@ class FirstPublication(unittest.TestCase):
                 check=True,
             )
 
+    def test_new_synth_bootstraps_after_current_published_predecessors(self):
+        published = False
+
+        def lookup(url):
+            nonlocal published
+            crate = url.split("/crates/")[1].split("/")[0]
+            if url.endswith("/0.11.6"):
+                if crate == "powerio-synth" and not published:
+                    return None
+                return {"version": {"num": "0.11.6", "yanked": False}}
+            if crate == "powerio-synth":
+                return None
+            return {"crate": {"name": crate}}
+
+        def publish(*args, **kwargs):
+            nonlocal published
+            published = True
+
+        with (
+            patch.object(helper, "public_json", side_effect=lookup),
+            patch.object(helper, "require_clean_candidate", return_value=Path("/repo")),
+            patch.object(helper.subprocess, "run", side_effect=publish) as run,
+        ):
+            self.assertTrue(
+                helper.bootstrap_first_missing(SHA, "0.11.6", ["powerio-synth"])
+            )
+            run.assert_called_once_with(
+                ["cargo", "publish", "--locked", "--all-features", "-p", "powerio-synth"],
+                cwd=Path("/repo"),
+                check=True,
+            )
+
     def test_missing_predecessor_blocks_local_publish(self):
         with (
             patch.object(

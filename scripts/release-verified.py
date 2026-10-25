@@ -42,6 +42,7 @@ CRATES = (
     "powerio-dist",
     "powerio-tnd",
     "powerio-prob",
+    "powerio-synth",
     "powerio-matrix",
     "powerio",
     "powerio-cli",
