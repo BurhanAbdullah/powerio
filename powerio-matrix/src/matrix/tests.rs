@@ -1102,3 +1102,44 @@ Q
         }
     }
 }
+
+
+#[test]
+fn per_island_ptdf_keeps_open_and_self_switches_compatible() {
+    use crate::network::{BusId, Switch};
+
+    let base = BalancedNetwork::in_memory(
+        "switch-free-ptdf-island",
+        100.0,
+        vec![bus(1, BusType::Ref), bus(2, BusType::Pq)],
+        vec![br(1, 2, 0.0, 0.1, 0.0)],
+    );
+    let mut switched = base.clone();
+    switched.switches_mut().push(Switch::new(BusId(1), BusId(2), false));
+    switched.switches_mut().push(Switch::new(BusId(1), BusId(1), true));
+
+    let base_view = IndexedNetwork::new(&base);
+    let switched_view = IndexedNetwork::new(&switched);
+    let options = crate::matrix::SensitivityOptions::default();
+    let expected = crate::matrix::calc_ptdf_by_island(&base_view, &options)
+        .expect("base network should build");
+    let actual = crate::matrix::calc_ptdf_by_island(&switched_view, &options)
+        .expect("open and self switches must not change the DC branch model");
+
+    assert_eq!(actual.len(), expected.len());
+    for (actual_island, expected_island) in actual.iter().zip(&expected) {
+        assert_eq!(actual_island.island_label, expected_island.island_label);
+        assert_eq!(actual_island.bus_indices, expected_island.bus_indices);
+        assert_eq!(actual_island.branch_indices, expected_island.branch_indices);
+        assert_eq!(actual_island.ptdf.shape(), expected_island.ptdf.shape());
+        for row in 0..actual_island.ptdf.rows() {
+            for col in 0..actual_island.ptdf.cols() {
+                assert_relative_eq!(
+                    actual_island.ptdf.get(row, col).copied().unwrap_or(0.0),
+                    expected_island.ptdf.get(row, col).copied().unwrap_or(0.0),
+                    epsilon = 1e-12
+                );
+            }
+        }
+    }
+}
