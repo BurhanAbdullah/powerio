@@ -86,9 +86,8 @@ jobs:
       if: steps.powerio-jl.outputs.available == 'true'
     - name: Build powerio-capi
       if: steps.powerio-jl.outputs.available == 'true'
-      # Match the release feature tuple. Only gridfm enables code; ABI 7
-      # exposes the same typed symbol set with or without these feature names.
-      run: cargo build -p powerio-capi --release --features matrix,gridfm,dist,prob
+      # Match the release feature tuple in .github/release-features.
+      run: cargo build -p powerio-capi --release --features arrow,matrix,gridfm,dist,prob
     - name: Read pinned PowerIO.jl companion
       id: powerio-jl-pin
       if: steps.powerio-jl.outputs.available == 'true'
