@@ -1049,3 +1049,48 @@ fn per_island_ptdf_preserves_empty_and_fully_grounded_network_behavior() {
     assert!(grounded_result.is_ok(), "fully grounded network behavior changed: {grounded_result:?}");
     assert_eq!(grounded_result.unwrap().len(), 2);
 }
+
+
+#[test]
+fn per_island_ptdf_maps_star_lowered_three_winding_transformer_axes() {
+    let raw = r"0, 100.00, 33, 0, 0, 60.00 / x
+CASE
+COMMENT
+1,'B1          ', 230.0,3,1,1,1,1.00000,0.0,1.1,0.9,1.1,0.9
+2,'B2          ', 138.0,1,1,1,1,1.00000,0.0,1.1,0.9,1.1,0.9
+3,'B3          ', 13.8,1,1,1,1,1.00000,0.0,1.1,0.9,1.1,0.9
+0 / END OF BUS DATA, BEGIN LOAD DATA
+0 / END OF LOAD DATA, BEGIN FIXED SHUNT DATA
+0 / END OF FIXED SHUNT DATA, BEGIN GENERATOR DATA
+0 / END OF GENERATOR DATA, BEGIN BRANCH DATA
+0 / END OF BRANCH DATA, BEGIN TRANSFORMER DATA
+1, 2, 3, '1', 1, 1, 1, 0.0, 0.0, 2, 'T3W         ', 1, 1, 1, 0, 1, 0, 1, 0, 1, '            '
+0.01, 0.10, 100.0, 0.02, 0.20, 100.0, 0.03, 0.30, 100.0, 0.98, -1.5
+1.0, 230.0, 0.0, 100.0, 90.0, 80.0, 0, 0, 1.1, 0.9, 1.1, 0.9, 33, 0, 0, 0, 0
+1.025, 138.0, 0.0, 110.0, 0, 0, 0, 0, 1.1, 0.9, 1.1, 0.9, 33, 0, 0, 0, 0
+0.95, 13.8, 30.0, 50.0, 0, 0, 0, 0, 1.1, 0.9, 1.1, 0.9, 33, 0, 0, 0, 0
+0 / END OF TRANSFORMER DATA, BEGIN AREA DATA
+Q
+";
+    let net = parse_psse(raw).unwrap();
+    let view = IndexedNetwork::new(&net);
+    assert_eq!(view.n(), 4, "three buses plus the synthetic star point");
+
+    let islands = crate::matrix::calc_ptdf_by_island(
+        &view,
+        &crate::matrix::SensitivityOptions::default(),
+    )
+    .expect("star-lowered transformer network should build");
+    assert_eq!(islands.len(), 1);
+    assert_eq!(islands[0].bus_indices, vec![0, 1, 2, 3]);
+    assert_eq!(islands[0].branch_indices.len(), 3);
+    assert_eq!(islands[0].ptdf.shape(), (3, 4));
+    for (local_row, &source_branch) in islands[0].branch_indices.iter().enumerate() {
+        assert!(source_branch < view.branches().len());
+        for (local_col, &source_bus) in islands[0].bus_indices.iter().enumerate() {
+            assert!(source_bus < view.n());
+            let value = islands[0].ptdf.get(local_row, local_col).copied().unwrap_or(0.0);
+            assert!(value.is_finite());
+        }
+    }
+}
