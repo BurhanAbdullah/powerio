@@ -214,6 +214,67 @@ fn selected_rows_and_columns_are_slices_of_the_full_matrices() {
     }
 }
 
+/// A fully grounded network has no unknown voltage angles, so its grounded
+/// matrix is 0×0 and its PTDF is validly all zero. Preserve parity for the full
+/// and selected builders across the dense and sparse solver paths.
+#[test]
+fn empty_grounded_system_is_valid_for_full_and_selected_builders() {
+    let case = net(
+        &[
+            (1, BusType::Ref),
+            (2, BusType::Ref),
+            (3, BusType::Ref),
+        ],
+        &[(1, 2, 0.1), (2, 3, 0.2), (1, 3, 0.3)],
+    );
+    let view = IndexedNetwork::new(&case);
+    let mut full_matrices = Vec::new();
+
+    for solver in [SensitivitySolver::Dense, SensitivitySolver::Sparse] {
+        let full =
+            calc_ptdf_lodf_with_options(&view, &options(solver)).unwrap_or_else(|error| {
+                panic!("{solver:?} must accept the valid 0×0 grounded system: {error}")
+            });
+        assert_eq!(full.ptdf.shape(), (case.branches().len(), view.n()));
+        assert!(full.ptdf.data().iter().all(|value| *value == 0.0));
+        assert_eq!(
+            calc_ptdf_rows(&view, &options(solver), &[2, 0])
+                .unwrap()
+                .shape(),
+            (2, view.n())
+        );
+        let rows = calc_ptdf_rows(&view, &options(solver), &[2, 0]).unwrap();
+        assert!(rows.data().iter().all(|value| *value == 0.0));
+        let columns = calc_ptdf_columns(&view, &options(solver), &[2, 0]).unwrap();
+        assert_eq!(columns.shape(), (case.branches().len(), 2));
+        assert!(columns.data().iter().all(|value| *value == 0.0));
+
+        let lodf_columns =
+            calc_lodf_columns(&view, &options(solver), &[2, 0]).unwrap();
+        assert_eq!(lodf_columns.shape(), (case.branches().len(), 2));
+        assert_close(
+            &lodf_columns,
+            &cols_of(&full.lodf, &[2, 0]),
+            1e-12,
+            "empty grounded selected LODF",
+        );
+        full_matrices.push(full);
+    }
+
+    assert_close(
+        &full_matrices[0].ptdf,
+        &full_matrices[1].ptdf,
+        1e-12,
+        "empty grounded PTDF Dense/Sparse parity",
+    );
+    assert_close(
+        &full_matrices[0].lodf,
+        &full_matrices[1].lodf,
+        1e-12,
+        "empty grounded LODF Dense/Sparse parity",
+    );
+}
+
 #[test]
 fn a_selection_outside_the_network_is_refused() {
     let case = series_capacitor_case();
