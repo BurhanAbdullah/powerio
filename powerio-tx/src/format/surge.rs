@@ -1687,9 +1687,18 @@ mod tests {
 
     #[test]
     fn three_winding_transformer_identity_skips_empty_name_and_uid() {
-        assert_eq!(three_winding_transformer_identity(Some(""), Some(""), 1), "transformer 1");
-        assert_eq!(three_winding_transformer_identity(None, Some(""), 2), "transformer 2");
-        assert_eq!(three_winding_transformer_identity(Some(""), Some("UID-3W"), 3), "UID-3W");
+        assert_eq!(
+            three_winding_transformer_identity(Some(""), Some(""), 1),
+            "transformer 1"
+        );
+        assert_eq!(
+            three_winding_transformer_identity(None, Some(""), 2),
+            "transformer 2"
+        );
+        assert_eq!(
+            three_winding_transformer_identity(Some(""), Some("UID-3W"), 3),
+            "UID-3W"
+        );
     }
 
     #[test]
