@@ -998,10 +998,7 @@ fn per_island_ptdf_returns_local_matrices_and_source_index_mappings() {
                         3 => 1,
                         other => panic!("unexpected source branch index {other}"),
                     };
-                    let global_value = global
-                        .get(global_row, source_bus)
-                        .copied()
-                        .unwrap_or(0.0);
+                    let global_value = global.get(global_row, source_bus).copied().unwrap_or(0.0);
                     assert_relative_eq!(local, global_value, epsilon = 1e-12);
                 }
             }
