@@ -2460,6 +2460,7 @@ dependencies = [
  "powerio-dist",
  "powerio-matrix",
  "powerio-prob",
+ "powerio-synth",
  "powerio-tx",
  "ratatui",
  "rusqlite",
@@ -2517,6 +2518,7 @@ dependencies = [
  "powerio-core",
  "powerio-dist",
  "powerio-prob",
+ "powerio-synth",
  "powerio-tx",
  "rand 0.10.3",
  "rand_chacha",
@@ -2575,6 +2577,16 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "zip",
+]
+
+[[package]]
+name = "powerio-synth"
+version = "0.11.6"
+dependencies = [
+ "powerio-tx",
+ "rand 0.10.3",
+ "rand_chacha",
+ "serde",
 ]
 
 [[package]]
