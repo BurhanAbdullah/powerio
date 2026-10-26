@@ -461,7 +461,6 @@ fn an_out_of_service_switch_is_preserved_as_open() {
     );
 }
 
-
 /// A directory case is its top level `.xml` documents: a copy under a
 /// subdirectory is not merged in, and a directory whose documents sit only
 /// in a subdirectory is not a case.
