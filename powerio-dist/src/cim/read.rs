@@ -492,9 +492,10 @@ fn read_documents(
     }
 
     let mut mapper = Mapper::new(&store, diags);
+    mapper.validate_electrical_state()?;
     let (line_codes, lines) = mapper.lines();
     let loads = mapper.loads();
-    let shunts = mapper.shunts();
+    let shunts = mapper.shunts()?;
     let switches = mapper.switches();
     let transformers = mapper.transformers();
     let sources = mapper.sources();
@@ -681,18 +682,6 @@ impl<'a> Mapper<'a> {
                 .f(&id, "ACDCTerminal.sequenceNumber")
                 .or_else(|| self.store.f(&id, "Terminal.sequenceNumber"))
                 .unwrap_or(1.0);
-            if self.store.boolean(&id, "ACDCTerminal.connected") == Some(false) {
-                let label = self.label(&id);
-                self.note(
-                    &C::READ_CIM_DIST_VALUE_UNSUPPORTED,
-                    "Terminal",
-                    &id,
-                    format!(
-                        "Terminal {label}: ACDCTerminal.connected is false; the model has no \
-                         terminal connection state, so the terminal is read as connected"
-                    ),
-                );
-            }
             if let Some(eq) = self.target("Terminal", &id, "Terminal.ConductingEquipment") {
                 of_equipment.entry(eq).or_default().push((seq, id.clone()));
             }
@@ -930,7 +919,7 @@ impl<'a> Mapper<'a> {
                 );
                 1.0
             };
-            self.check_in_service("ACLineSegment", &id);
+
             let name = self.unique_name("line", "ACLineSegment", &id);
             let (code, resolved) = self.line_code_for(
                 &id,
@@ -1402,23 +1391,57 @@ impl<'a> Mapper<'a> {
         Some((r, x, g, b))
     }
 
-    /// Report `Equipment.inService = false` (or `normallyInService`): the
-    /// model has no service state, so the element is carried in service.
-    fn check_in_service(&mut self, class: &str, id: &str) {
-        let in_service = self.store.boolean(id, "Equipment.inService");
-        let normally = self.store.boolean(id, "Equipment.normallyInService");
-        if in_service == Some(false) || (in_service.is_none() && normally == Some(false)) {
-            let label = self.label(id);
-            self.note(
-                &C::READ_CIM_DIST_VALUE_UNSUPPORTED,
-                class,
-                id,
-                format!(
-                    "{class} {label}: is out of service; the model has no service state, so it is \
-                     carried in service"
-                ),
-            );
+    /// Refuse states the fixed 0.11 model cannot represent before constructing
+    /// any electrically active records. Switches have an explicit open state.
+    fn validate_electrical_state(&self) -> Result<()> {
+        for class in [
+            "ACLineSegment",
+            "EnergyConsumer",
+            "LinearShuntCompensator",
+            "PowerTransformer",
+            "EnergySource",
+        ] {
+            for id in self.store.ids_of(class) {
+                self.ensure_in_service(class, &id)?;
+                for terminal in self.terminals(&id) {
+                    self.ensure_connected_terminal(&terminal)?;
+                }
+            }
         }
+        // End-to-terminal associations also wire transformers directly; they
+        // need not be found through Terminal.ConductingEquipment.
+        for end in self.store.ids_of("PowerTransformerEnd") {
+            if let Some(terminal) = self.store.refv(&end, "TransformerEnd.Terminal") {
+                self.ensure_connected_terminal(terminal)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn out_of_service(&self, id: &str) -> bool {
+        let actual = self.store.boolean(id, "Equipment.inService");
+        let normal = self.store.boolean(id, "Equipment.normallyInService");
+        actual == Some(false) || (actual.is_none() && normal == Some(false))
+    }
+
+    fn ensure_in_service(&self, class: &str, id: &str) -> Result<()> {
+        if self.out_of_service(id) {
+            return Err(format_error(format!(
+                "{class} {}: out-of-service equipment cannot be represented; electrical conversion refused",
+                self.label(id)
+            )));
+        }
+        Ok(())
+    }
+
+    fn ensure_connected_terminal(&self, id: &str) -> Result<()> {
+        if self.store.boolean(id, "ACDCTerminal.connected") == Some(false) {
+            return Err(format_error(format!(
+                "Terminal {}: ACDCTerminal.connected is false; electrical conversion refused",
+                self.label(id)
+            )));
+        }
+        Ok(())
     }
 
     // -- loads -------------------------------------------------------------
@@ -1493,7 +1516,7 @@ impl<'a> Mapper<'a> {
                     ),
                 );
             }
-            self.check_in_service("EnergyConsumer", &id);
+
             // The dss reader's shapes: one phase to neutral, or one phase to
             // phase, is single phase; two or more phases to a star point is
             // wye.
@@ -1638,7 +1661,7 @@ impl<'a> Mapper<'a> {
     // -- shunts ------------------------------------------------------------
 
     #[allow(clippy::too_many_lines)] // one compensator shape per branch
-    fn shunts(&mut self) -> Vec<DistShunt> {
+    fn shunts(&mut self) -> Result<Vec<DistShunt>> {
         let mut phase_children = self.children_of(
             "LinearShuntCompensatorPhase",
             "ShuntCompensatorPhase.ShuntCompensator",
@@ -1670,16 +1693,10 @@ impl<'a> Mapper<'a> {
             let parent_sections = self.sections(&id, "ShuntCompensator", None);
             let children = phase_children.get(&id).cloned().unwrap_or_default();
             if configuration == Configuration::Delta && !children.is_empty() {
-                let label = self.label(&id);
-                self.note(
-                    &C::READ_CIM_DIST_VALUE_UNSUPPORTED,
-                    "LinearShuntCompensator",
-                    &id,
-                    format!(
-                        "LinearShuntCompensator {label}: a delta connected compensator with per \
-                         phase records is read as phase to ground admittance"
-                    ),
-                );
+                return Err(format_error(format!(
+                    "LinearShuntCompensator {}: per-phase delta compensators are not supported; electrical conversion refused",
+                    self.label(&id)
+                )));
             }
             let (map, g_diag, b_diag) = if children.is_empty() {
                 let map: Vec<String> = self
@@ -1701,7 +1718,7 @@ impl<'a> Mapper<'a> {
                     // A balanced delta bank: bPerSection is the positive
                     // sequence (star equivalent) susceptance, three times
                     // each branch's, so each branch carries a third.
-                    self.check_in_service("LinearShuntCompensator", &id);
+
                     let name = self.unique_name("shunt", "LinearShuntCompensator", &id);
                     let mut shunt = DistShunt::new(
                         name,
@@ -1715,17 +1732,11 @@ impl<'a> Mapper<'a> {
                     continue;
                 }
                 if configuration == Configuration::Delta {
-                    let label = self.label(&id);
-                    self.note(
-                        &C::READ_CIM_DIST_VALUE_UNSUPPORTED,
-                        "LinearShuntCompensator",
-                        &id,
-                        format!(
-                            "LinearShuntCompensator {label}: a delta connected compensator on \
-                             {} phases is read as phase to ground admittance",
-                            map.len()
-                        ),
-                    );
+                    return Err(format_error(format!(
+                        "LinearShuntCompensator {}: delta compensator on {} phases is not supported; electrical conversion refused",
+                        self.label(&id),
+                        map.len()
+                    )));
                 }
                 let n = map.len();
                 (map, vec![g * sections; n], vec![b * sections; n])
@@ -1775,13 +1786,13 @@ impl<'a> Mapper<'a> {
                 self.drop_record("LinearShuntCompensator", &id, "no readable phase");
                 continue;
             }
-            self.check_in_service("LinearShuntCompensator", &id);
+
             let name = self.unique_name("shunt", "LinearShuntCompensator", &id);
             let mut shunt = DistShunt::new(name, bus, map, diagonal(&g_diag), diagonal(&b_diag));
             shunt.extras.insert("cim_mrid".into(), id.clone().into());
             shunts.push(shunt);
         }
-        shunts
+        Ok(shunts)
     }
 
     /// The energized section count: `sections`, else `normalSections`, else
@@ -1815,10 +1826,10 @@ impl<'a> Mapper<'a> {
                     self.drop_record(class, &id, "it needs two terminals on connectivity nodes");
                     continue;
                 };
-                let in_service = self.store.boolean(&id, "Equipment.inService");
-                let normally_in_service = self.store.boolean(&id, "Equipment.normallyInService");
-                let out_of_service = in_service == Some(false)
-                    || (in_service.is_none() && normally_in_service == Some(false));
+                let out_of_service = self.out_of_service(&id);
+                let disconnected = self.terminals(&id).iter().any(|terminal| {
+                    self.store.boolean(terminal, "ACDCTerminal.connected") == Some(false)
+                });
                 let open_now = self.store.boolean(&id, "Switch.open");
                 let normal = self.store.boolean(&id, "Switch.normalOpen");
                 let stated_open = match (open_now, normal) {
@@ -1853,7 +1864,7 @@ impl<'a> Mapper<'a> {
                 // CIM has an equipment service state but the distribution model
                 // has only a switch's open/closed state. Preserve the source
                 // topology by representing an out-of-service switch as open.
-                let open = stated_open || out_of_service;
+                let open = stated_open || out_of_service || disconnected;
                 let children = phase_children.get(&id).cloned().unwrap_or_default();
                 let (map_from, map_to) = if children.is_empty() {
                     let map = self.fallback_map(class, &id);
@@ -1868,14 +1879,19 @@ impl<'a> Mapper<'a> {
                     self.drop_record(class, &id, "no readable phase");
                     continue;
                 }
-                if out_of_service {
+                if out_of_service || disconnected {
+                    let reason = if out_of_service {
+                        "is out of service"
+                    } else {
+                        "has a disconnected terminal"
+                    };
                     let label = self.label(&id);
                     self.note(
                         &C::READ_CIM_DIST_VALUE_UNSUPPORTED,
                         class,
                         &id,
                         format!(
-                            "{class} {label}: is out of service; represented as an open switch to preserve topology"
+                            "{class} {label}: {reason}; represented as an open switch to preserve topology"
                         ),
                     );
                 }
@@ -2027,7 +2043,7 @@ impl<'a> Mapper<'a> {
                 }
             }
             let xsc = self.short_circuit_pct(&id, &ends, &windings, &meshes_of);
-            self.check_in_service("PowerTransformer", &id);
+
             let name = self.unique_name("transformer", "PowerTransformer", &id);
             let mut transformer = DistTransformer::new(name, windings, xsc, phases);
             transformer
@@ -2363,7 +2379,7 @@ impl<'a> Mapper<'a> {
                     serde_json::json!({"r": r1, "x": x1, "r0": r0.unwrap_or(r1), "x0": x0.unwrap_or(x1)}),
                 );
             }
-            self.check_in_service("EnergySource", &id);
+
             source.extras.insert("cim_mrid".into(), id.clone().into());
             sources.push(source);
         }

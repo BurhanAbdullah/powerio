@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Distribution CIM opens switches with disconnected terminals and refuses
+  inactive/disconnected non-switch equipment and unsupported delta compensators,
+  instead of constructing an energized or phase-to-ground equivalent (#687).
+
 - TARA contingency statements are read at analysis time. The readers keep
   them as text, as before, because the contingency, subsystem, and monitored
   set layouts are fixed within PowerIO IR 2; the new views read that text.

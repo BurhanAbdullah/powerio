@@ -142,6 +142,13 @@ line code has zero impedance, which would be a short circuit between its
 buses. OpenDSS geometry lines are refused for the same reason;
 [Electrical readiness](electrical-readiness.md) describes both checks.
 
+Disconnected or out-of-service switches read as open, preserving connectivity.
+For other mapped equipment, the reader refuses an out-of-service state or a
+disconnected terminal because the 0.11 model cannot represent that electrical
+status. `inService` takes precedence over `normallyInService`. Per-phase delta
+compensators and incomplete-phase delta banks are refused rather than converted
+to phase-to-ground admittances; balanced three-phase delta banks remain supported.
+
 A network read from distribution CIM records `cim-dist` as its source format.
 A same format write of a single document returns its bytes. Canonical output is
 one CIM100 document with no `md:FullModel` header. Imported mRIDs pass through
