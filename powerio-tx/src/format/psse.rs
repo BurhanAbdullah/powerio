@@ -6014,25 +6014,34 @@ fn read_impedance_correction(
                 points.push(ImpedanceCorrectionPoint::new(value, factor, 0.0));
             }
         }
-        return Ok((table, points));
+        return Ok(finish_impedance_correction_table(table, points, warnings));
     }
     let mut values = numbers(f, 1)?;
+    // RAW continuation lines continue one flat stream of T, FRE, FIM values;
+    // a point is allowed to straddle a physical line boundary. Keep the
+    // incomplete suffix until the next line rather than dropping it with
+    // `as_chunks`, which only yields complete triples.
+    let mut pending = Vec::new();
     loop {
-        for &[value, factor_re, factor_im] in values.as_chunks::<3>().0 {
+        pending.extend(values);
+        let complete_len = pending.len() / 3 * 3;
+        for &[value, factor_re, factor_im] in pending[..complete_len].as_chunks::<3>().0 {
             if value == 0.0 && factor_re == 0.0 && factor_im == 0.0 {
-                return Ok((table, points));
+                return Ok(finish_impedance_correction_table(table, points, warnings));
             }
             points.push(ImpedanceCorrectionPoint::new(value, factor_re, factor_im));
         }
+        pending.drain(..complete_len);
         let Some(line) = next_open_continuation_line(lines, warnings) else {
             warnings.push(
                 &codes::READ_PSSE_VALUE_SUBSTITUTED,
                 format!(
-                    "PSS/E impedance correction table {table} ends without its 0.0, 0.0, 0.0 point; read the {} point(s) it states",
-                    points.len()
+                    "PSS/E impedance correction table {table} ends without its 0.0, 0.0, 0.0 point; read the {} point(s) it states and discarded {} trailing field(s)",
+                    points.len(),
+                    pending.len()
                 ),
             );
-            return Ok((table, points));
+            return Ok(finish_impedance_correction_table(table, points, warnings));
         };
         values = numbers(&fields(line), 0)?;
     }
@@ -6051,7 +6060,7 @@ fn next_open_continuation_line<'a>(
         if line.is_empty() || is_comment(line) {
             continue;
         }
-        if line.eq_ignore_ascii_case("q") || is_terminator(line) {
+        if line.eq_ignore_ascii_case("q") || is_impedance_correction_terminator(line) {
             return None;
         }
         *lines = ahead;
@@ -6060,6 +6069,41 @@ fn next_open_continuation_line<'a>(
         return Some(line);
     }
     None
+}
+
+/// An open impedance-correction table ends only on a bare zero or a
+/// section marker. A continuation may legitimately start with zero when the
+/// previous physical line ended partway through a T, FRE, FIM triple.
+fn is_impedance_correction_terminator(line: &str) -> bool {
+    if line.trim() == "0" {
+        return true;
+    }
+    line.split_once('/').is_some_and(|(record, comment)| {
+        record.trim() == "0"
+            && comment
+                .trim_start()
+                .to_ascii_uppercase()
+                .starts_with("END OF")
+    })
+}
+
+/// Warn when source points are not strictly ascending, then normalize their
+/// order explicitly so classification and interpolation see the same table.
+fn finish_impedance_correction_table(
+    table: u32,
+    mut points: Vec<ImpedanceCorrectionPoint>,
+    warnings: &mut Diagnostics,
+) -> (u32, Vec<ImpedanceCorrectionPoint>) {
+    if points.windows(2).any(|pair| pair[0].value >= pair[1].value) {
+        warnings.push(
+            &codes::READ_PSSE_VALUE_SUBSTITUTED,
+            format!(
+                "PSS/E impedance correction table {table} has non-ascending T values; points were sorted by T"
+            ),
+        );
+        points.sort_by(|a, b| a.value.total_cmp(&b.value));
+    }
+    (table, points)
 }
 
 /// Give each transformer winding that names an impedance correction table the
@@ -12661,5 +12705,76 @@ Q
                     .contains("exactly one nonzero winding COD")
             );
         }
+    }
+
+    #[test]
+    fn impedance_correction_continuation_can_start_with_zero() {
+        // The leading zero completes the previous line's first point; it is
+        // not a section terminator while the table record is still open.
+        let first = fields("7, 0.5, 1.1");
+        let mut lines = RawLines::new(concat!(
+            "0, 1.0, 1.05, 0.0, 0.0, 0.0\n",
+            "0 / END OF IMPEDANCE CORRECTION DATA\n",
+            "Q\n"
+        ));
+        let mut warnings = Diagnostics::new();
+        let (table, points) =
+            read_impedance_correction(&first, 35, &mut lines, &mut warnings).unwrap();
+
+        assert_eq!(table, 7);
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[0].value, 0.5);
+        assert_eq!(points[0].factor_re, 1.1);
+        assert_eq!(points[0].factor_im, 0.0);
+        assert_eq!(points[1].value, 1.0);
+        assert_eq!(points[1].factor_re, 1.05);
+        assert_eq!(points[1].factor_im, 0.0);
+    }
+
+    #[test]
+    fn impedance_correction_non_ascending_points_warn_and_sort() {
+        let first = fields("7, 30, 1.1, 0.0, -30, 1.2, 0.0, 0.0, 0.0, 0.0");
+        let mut lines = RawLines::new("Q\n");
+        let mut warnings = Diagnostics::new();
+        let (table, points) =
+            read_impedance_correction(&first, 35, &mut lines, &mut warnings).unwrap();
+
+        assert_eq!(table, 7);
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[0].value, -30.0);
+        assert_eq!(points[1].value, 30.0);
+        assert!(
+            warnings
+                .lines()
+                .iter()
+                .any(|line| line.contains("non-ascending T values"))
+        );
+        assert_eq!(
+            impedance_table_variable(&points),
+            ImpedanceCorrectionVariable::Angle
+        );
+    }
+
+    #[test]
+    fn impedance_correction_point_can_straddle_raw_continuation_lines() {
+        // The first line ends after T and FRE; FIM starts the continuation.
+        // The final all-zero triple is the table terminator, not a data point.
+        let first = fields("7, 0.5, 1.1");
+        let mut lines = RawLines::new("1.2, 1.0, 0.0, 1.5, 1.2, 0.0, 0.0, 0.0, 0.0\nQ\n");
+        let mut warnings = Diagnostics::new();
+        let (table, points) =
+            read_impedance_correction(&first, 35, &mut lines, &mut warnings).unwrap();
+
+        assert_eq!(table, 7);
+        assert_eq!(points.len(), 3);
+        assert_eq!(points[0].value, 0.5);
+        assert_eq!(points[0].factor_re, 1.1);
+        assert_eq!(points[0].factor_im, 1.2);
+        assert_eq!(points[1].value, 1.0);
+        assert_eq!(points[1].factor_re, 0.0);
+        assert_eq!(points[1].factor_im, 1.5);
+        assert_eq!(points[2].value, 1.2);
+        assert_eq!(points[2].factor_re, 0.0);
+        assert_eq!(points[2].factor_im, 0.0);
     }
 }
