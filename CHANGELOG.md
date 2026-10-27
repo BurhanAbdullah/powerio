@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- OpenDSS static imports now carry full source impedances and ordered effective
+  line matrices in the typed network. Canonical DSS output preserves independent
+  phase voltages and floating source returns with exact equivalent circuits;
+  PMD output no longer invents a second source impedance. Source replay remains
+  byte exact. Load voltage-band transitions, deferred geometry and several
+  static device states remain compatibility gaps documented in the guide.
+
+- OpenDSS switch semantics change. A line with `switch=y` now reads as a closed
+  1 mOhm line. A SwtControl's `Action` and `Normal` are controller settings:
+  they are excluded from the fixed circuit with a `READ.DSS.RETAINED_SOURCE_ONLY`
+  warning, and `net.switches()` is empty for such files. An explicit `State=` on
+  a SwtControl, or an `Open` or `Close` command, is refused with
+  `READ.DSS.LINE_UNRESOLVED`. Before, SwtControl state produced typed open and
+  closed switches.
+
 - Distribution CIM tank imports refuse unsupported phase clocks and inactive
   or disconnected tank/parent/end states. Fresh tank output writes standard
   impedance magnitudes and clocks derived from the current winding layout;

@@ -511,8 +511,10 @@ pub(crate) fn emit_text_with_options(
         TextEmission::faithful(text)
     } else {
         crate::readiness::require_resolved_geometry(module.value())?;
-        crate::readiness::require_earth_referenced_sources(module.value())?;
-        emit_value_text_with_options(module.value(), format, options)
+        if format != DistTargetFormat::Dss {
+            crate::readiness::require_earth_referenced_sources(module.value())?;
+        }
+        emit_value_text_with_options(module.value(), format, options)?
     };
     powerio_core::attach_retention_details(
         module.diagnostics(),
@@ -549,9 +551,12 @@ pub(crate) fn emit_value_text_with_options(
     net: &MulticonductorNetwork,
     format: DistTargetFormat,
     options: &EmitOptions,
-) -> TextEmission {
+) -> Result<TextEmission, powerio_core::Error> {
     let mut conv = match format {
-        DistTargetFormat::Dss => crate::dss::emit_dss_text_with_options(net, &options.dss),
+        DistTargetFormat::Dss => {
+            crate::dss::validate_emission(net)?;
+            crate::dss::emit_dss_text_with_options(net, &options.dss)
+        }
         DistTargetFormat::BmopfJson => {
             crate::bmopf::emit_bmopf_json_text_with_options(net, options.bmopf)
         }
@@ -580,7 +585,7 @@ pub(crate) fn emit_value_text_with_options(
             ),
         );
     }
-    conv
+    Ok(conv)
 }
 
 #[cfg(test)]
@@ -589,6 +594,7 @@ pub(crate) fn emit_value_text(
     format: DistTargetFormat,
 ) -> TextEmission {
     emit_value_text_with_options(net, format, &EmitOptions::default())
+        .expect("test network is emittable")
 }
 
 /// Emit a parsed module to `format` through a destination.

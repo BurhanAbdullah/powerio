@@ -6,11 +6,18 @@
 //! and the TRPNCalc expression calculator.
 
 pub mod defaults;
+mod frequency;
 pub mod lex;
+mod line;
+mod line_history;
+mod linecode;
+mod primitive;
 pub mod prop;
 pub mod raw;
 pub mod read;
 mod rpn;
+mod solution_mode;
+mod source;
 mod write;
 
 pub use lex::{BusSpec, Param, Scanner, Value, VarMap};
@@ -20,4 +27,4 @@ pub use raw::{BusCoord, RawCommand, RawDss, RawObject, RawProp};
 pub use raw::{__parse_raw_file, __parse_raw_with};
 pub use read::to_network_from_raw;
 pub use write::{DssEmitOptions, DssLoadVoltageBounds};
-pub(crate) use write::{dss_value_out, emit_dss_text_with_options};
+pub(crate) use write::{dss_value_out, emit_dss_text_with_options, validate_emission};
