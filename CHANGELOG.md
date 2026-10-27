@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- GLM project replay copies only referenced files, retaining unrelated supplied
+  buffers on the source module. NR delta-grounded-wye imports and canonical
+  output refuse the known unqualified fixed-source zero-sequence profile;
+  balanced source edits and the FBS reader retain their existing behavior.
+
+- Add complete borrowed C views for bounded distribution load laws and PF
+  prescribed loads without changing ABI 7 layouts. Python parse errors retain
+  structured component diagnostics, including refused includes.
+
 - CLI text failures show the retained component diagnostics, including OpenDSS
   include refusals and unresolved line definitions. Invalid static snapshots
   fail before electrical conversion or IR output; read errors retain their

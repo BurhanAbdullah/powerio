@@ -216,7 +216,6 @@ pub fn to_balanced_network_report(
             format!("{} component geographic point(s) are omitted by this balanced projection; the original network retains them", net.component_locations().len()),
         ));
     }
-
     report
 }
 
@@ -2168,7 +2167,6 @@ fn check_untyped_objects(net: &MulticonductorNetwork, report: &mut Multiconducto
             ).with_severity(DiagnosticSeverity::Remark).with_value_target(format!("/untyped/{i}")));
             continue;
         }
-
         report.diagnostics.push(
             Diagnostic::of(
                 &codes::TRANSFORM_MULTI_TO_BALANCED_UNSUPPORTED_OBJECT,

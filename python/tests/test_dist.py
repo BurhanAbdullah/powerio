@@ -412,8 +412,13 @@ def _split_case(tmp_path):
 def test_parse_confines_includes_to_the_case_directory(tmp_path):
     root = _split_case(tmp_path)
     deck = root / "feeder" / "f.dss"
-    with pytest.raises(powerio.PowerIOParseError, match="PARSE.DIST.SOURCE_MALFORMED"):
+    with pytest.raises(powerio.PowerIOParseError) as refused:
         powerio.parse(deck)
+    assert refused.value.code == "PARSE.DIST.SOURCE_MALFORMED"
+    assert any(
+        "escapes the case directory" in diagnostic.message
+        for diagnostic in refused.value.diagnostics
+    )
     assert "include_root" not in inspect.signature(powerio.parse).parameters
 
 

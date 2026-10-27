@@ -2627,6 +2627,13 @@ fn convert_multiconductor_module(
     to: FormatArg,
     output: Option<&Path>,
 ) -> anyhow::Result<()> {
+    if matches!(to, FormatArg::Gridlabd | FormatArg::GridlabdArras) {
+        return convert_typed_module(
+            &module.clone().map_value(powerio::PioValue::from),
+            to,
+            output,
+        );
+    }
     if to == FormatArg::SincalMulticonductor {
         let Some(output) = output.filter(|p| p.as_os_str() != "-") else {
             fail_with!(
@@ -2636,13 +2643,6 @@ fn convert_multiconductor_module(
         };
         let result = powerio::emit(module, to.name(), powerio::Destination::path(output))?;
         return finish_path_emission(module.diagnostics(), &result, output);
-    }
-    if matches!(to, FormatArg::Gridlabd | FormatArg::GridlabdArras) {
-        return convert_typed_module(
-            &module.clone().map_value(powerio::PioValue::from),
-            to,
-            output,
-        );
     }
     let target = to.distribution().ok_or_else(|| {
         failure!(
