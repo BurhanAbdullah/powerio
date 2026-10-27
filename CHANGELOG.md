@@ -2,6 +2,9 @@
 
 ## 0.11.6
 
+- Preserve CIM distribution topology by mapping an out-of-service switch to an
+  open switch, with an explicit diagnostic instead of importing it closed.
+
 - Fix multiconductor admittance for two-terminal DELTA capacitor banks: the
   rated reactive power is assigned to the single stamped phase-to-phase coil
   instead of being incorrectly halved by the terminal count. Full multi-coil
