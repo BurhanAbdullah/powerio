@@ -55,6 +55,7 @@ pub mod bmopf;
 pub mod cim;
 mod collect;
 pub mod convert;
+mod current_form;
 pub mod diagnostics;
 pub mod dss;
 pub mod error;

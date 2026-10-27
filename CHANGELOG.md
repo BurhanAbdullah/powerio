@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- CLI text failures show the retained component diagnostics, including OpenDSS
+  include refusals and unresolved line definitions. Invalid static snapshots
+  fail before electrical conversion or IR output; read errors retain their
+  original source and diagnostic records.
+
 - Read fixed wye GridLAB-D capacitor coils and emit their current shunt values.
   Qualify IEEE34 and IEEE123 NR feeders, retain unused equipment library entries
   without instantiating devices, and prevent OpenDSS low-voltage defaults from
