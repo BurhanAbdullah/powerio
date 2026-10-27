@@ -11752,7 +11752,11 @@ Q
         // The leading zero completes the previous line's first point; it is
         // not a section terminator while the table record is still open.
         let first = fields("7, 0.5, 1.1");
-        let mut lines = RawLines::new("0, 1.0, 1.05, 0.0, 0.0, 0.0\n0 / END OF IMPEDANCE CORRECTION DATA\nQ\n");
+        let mut lines = RawLines::new(concat!(
+            "0, 1.0, 1.05, 0.0, 0.0, 0.0\n",
+            "0 / END OF IMPEDANCE CORRECTION DATA\n",
+            "Q\n"
+        ));
         let mut warnings = Diagnostics::new();
         let (table, points) =
             read_impedance_correction(&first, 35, &mut lines, &mut warnings).unwrap();
@@ -11779,7 +11783,12 @@ Q
         assert_eq!(points.len(), 2);
         assert_eq!(points[0].value, -30.0);
         assert_eq!(points[1].value, 30.0);
-        assert!(warnings.lines().iter().any(|line| line.contains("non-ascending T values")));
+        assert!(
+            warnings
+                .lines()
+                .iter()
+                .any(|line| line.contains("non-ascending T values"))
+        );
         assert_eq!(impedance_table_variable(&points), ImpedanceCorrectionVariable::Angle);
     }
 
