@@ -955,28 +955,39 @@ fn bounded_load_laws_are_not_silently_projected_by_ivr_preparation() {
     use powerio_dist::DistLoadVoltageModel as Law;
     let instance = McAcOpfInstance::from_network(network()).unwrap();
     assert!(build_mc_ac_opf_preparation(&instance, &McAcOpfAssemblyOptions::default()).is_ok());
-    let law = Law::BoundedZip {
-        v_nom: vec![230.0],
-        alpha_z: vec![0.0],
-        alpha_i: vec![0.0],
-        alpha_p: vec![1.0],
-        beta_z: vec![0.0],
-        beta_i: vec![0.0],
-        beta_p: vec![1.0],
-        v_low_pu: 0.5,
-        v_min_pu: 0.95,
-        v_max_pu: 1.05,
-        cutoff_pu: 0.0,
-    };
-    let mut net = network();
-    net.loads_mut()[0].voltage_model = law;
-    let instance = McAcOpfInstance::from_network(net).unwrap();
-    let error =
-        build_mc_ac_opf_preparation(&instance, &McAcOpfAssemblyOptions::default()).unwrap_err();
-    assert!(
-        error.to_string().contains("piecewise IVR equations"),
-        "{error}"
-    );
+    for law in [
+        Law::BoundedZip {
+            v_nom: vec![230.0],
+            alpha_z: vec![0.0],
+            alpha_i: vec![0.0],
+            alpha_p: vec![1.0],
+            beta_z: vec![0.0],
+            beta_i: vec![0.0],
+            beta_p: vec![1.0],
+            v_low_pu: 0.5,
+            v_min_pu: 0.95,
+            v_max_pu: 1.05,
+            cutoff_pu: 0.0,
+        },
+        Law::BoundedExponential {
+            v_nom: vec![230.0],
+            gamma_p: vec![1.0],
+            gamma_q: vec![2.0],
+            v_low_pu: 0.5,
+            v_min_pu: 0.95,
+            v_max_pu: 1.05,
+        },
+    ] {
+        let mut net = network();
+        net.loads_mut()[0].voltage_model = law;
+        let instance = McAcOpfInstance::from_network(net).unwrap();
+        let error =
+            build_mc_ac_opf_preparation(&instance, &McAcOpfAssemblyOptions::default()).unwrap_err();
+        assert!(
+            error.to_string().contains("piecewise IVR equations"),
+            "{error}"
+        );
+    }
 }
 
 #[test]
@@ -1038,6 +1049,28 @@ fn projecting_bounded_load_laws_is_an_explicit_opt_in_with_one_diagnostic_per_lo
         .find(|d| d.kind == McOpfDeviceKind::Load)
         .unwrap();
     assert!(load.coils.iter().all(|coil| coil.load_law.is_some()));
+
+    // OpenDSS models 3 and 4 read as a bounded exponential law.
+    let mut net = network();
+    net.loads_mut()[0].voltage_model = Law::BoundedExponential {
+        v_nom: vec![230.0],
+        gamma_p: vec![0.0],
+        gamma_q: vec![2.0],
+        v_low_pu: 0.5,
+        v_min_pu: 0.95,
+        v_max_pu: 1.05,
+    };
+    let instance = McAcOpfInstance::from_network(net).unwrap();
+    assert!(build_mc_ac_opf_preparation(&instance, &McAcOpfAssemblyOptions::default()).is_err());
+    let prepared = build_mc_ac_opf_preparation(&instance, &opt_in).unwrap();
+    assert_eq!(
+        prepared.load_law_projections[0].source_model,
+        "bounded_exponential"
+    );
+    assert_eq!(
+        prepared.load_law_projections[0].projected_model,
+        "exponential"
+    );
 
     // Loads that carry no bounded law are not touched.
     let instance = McAcOpfInstance::from_network(network()).unwrap();
