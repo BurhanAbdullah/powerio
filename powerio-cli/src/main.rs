@@ -192,11 +192,29 @@ enum Command {
         kind: MatrixKindArg,
         #[arg(long, value_enum, default_value = "bx")]
         scheme: SchemeArg,
+        /// Instead of a matrix check, evaluate every bus's AC balance at the
+        /// voltages the case stores, with each device at its stated output.
+        #[arg(long)]
+        stated_state: bool,
+        /// With `--stated-state`: how many of the largest bus mismatches to list.
+        #[arg(long, default_value_t = 20, requires = "stated_state")]
+        top: usize,
+        /// With `--stated-state`: how in-service HVDC lines enter the balance.
+        #[arg(
+            long,
+            value_enum,
+            default_value = "fixed-injection",
+            requires = "stated_state"
+        )]
+        hvdc: HvdcArg,
         /// Merge buses first. SPEC is `switches` (closed switches), `exact`
         /// (and branches with r = 0 and x = 0), `psse` (and PSS/E zero
         /// impedance lines: non-transformer, r = 0, |x| at most the case's
         /// THRSHZ), `psse=<x>` (the same at threshold x), or `impedance=<z>`
-        /// (and non-transformer branches with |r + jx| at most z).
+        /// (and non-transformer branches with |r + jx| at most z). With
+        /// `--stated-state`, a closed switch or a zero-impedance branch is
+        /// refused until a rule merges it, since the stored voltages do not
+        /// determine its flow.
         #[arg(long, value_name = "SPEC")]
         merge_buses: Option<String>,
     },
@@ -1035,14 +1053,23 @@ fn main() -> std::process::ExitCode {
             from,
             kind,
             scheme,
+            stated_state,
+            top,
+            hvdc,
             merge_buses,
-        } => run_verify(
-            &input,
-            from,
-            kind.into(),
-            scheme.into(),
-            merge_buses.as_deref(),
-        ),
+        } => {
+            if stated_state {
+                run_verify_stated_state(&input, from, top, hvdc.into(), merge_buses.as_deref())
+            } else {
+                run_verify(
+                    &input,
+                    from,
+                    kind.into(),
+                    scheme.into(),
+                    merge_buses.as_deref(),
+                )
+            }
+        }
         Command::DcOpf {
             input,
             from,
@@ -1863,6 +1890,67 @@ fn run_verify(
         stats.skipped_zero_impedance,
         sddm
     );
+    Ok(())
+}
+
+/// `powerio verify --stated-state`: the AC bus balance at the stored
+/// voltages, summed per island, with the largest bus mismatches and the
+/// equipment attached to each.
+fn run_verify_stated_state(
+    input: &Path,
+    from: Option<FormatArg>,
+    top: usize,
+    hvdc: powerio_tx::HvdcTreatment,
+    merge_buses: Option<&str>,
+) -> anyhow::Result<()> {
+    let mut network = balanced_case(input, from)?;
+    let mut merged_buses = std::collections::BTreeMap::new();
+    if let Some(spec) = merge_buses {
+        let merge = network.merge_buses(&bus_merge_rule(spec, &network)?)?;
+        report_diagnostics(&merge.diagnostics);
+        network = merge.network;
+        merged_buses = merge.merged_buses;
+    }
+    report_diagnostics(&network.calc_hvdc_injections().to_diagnostics(hvdc));
+    let options = powerio_matrix::StatedStateOptions::default()
+        .with_hvdc_treatment(hvdc)
+        .with_top_k(top)
+        .with_merged_buses(merged_buses);
+    let mismatch = powerio_matrix::calc_stated_state_mismatch(&network, &options)?;
+    let energized = mismatch.buses.iter().filter(|b| b.island.is_some()).count();
+    println!(
+        "stated state ({}): {energized} buses in {} islands; sum |dP| = {:.3} MW, sum |dQ| = {:.3} MVAr, max |dS| = {:.3} MVA",
+        network.name(),
+        mismatch.islands.len(),
+        mismatch.calc_total_abs_p_mw(),
+        mismatch.calc_total_abs_q_mvar(),
+        mismatch.calc_max_magnitude_mva(),
+    );
+    println!("island  buses  dP_MW  dQ_MVAr  sum|dP|_MW  sum|dQ|_MVAr  largest_bus");
+    for (index, island) in mismatch.islands.iter().enumerate() {
+        println!(
+            "{index}  {}  {:.3}  {:.3}  {:.3}  {:.3}  {}",
+            island.n_buses,
+            island.p_mw,
+            island.q_mvar,
+            island.abs_p_mw,
+            island.abs_q_mvar,
+            island.largest_bus
+        );
+    }
+    println!("bus  island  dP_MW  dQ_MVAr  |dS|_MVA  flags");
+    for &row in &mismatch.top {
+        let bus = &mismatch.buses[row];
+        println!(
+            "{}  {}  {:.3}  {:.3}  {:.3}  {}",
+            bus.bus,
+            bus.island.map_or_else(|| "-".to_owned(), |i| i.to_string()),
+            bus.p_mw,
+            bus.q_mvar,
+            bus.calc_magnitude_mva(),
+            bus.flags.names().join(",")
+        );
+    }
     Ok(())
 }
 
