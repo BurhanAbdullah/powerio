@@ -597,6 +597,7 @@ pub(crate) fn emit_value_text_with_options(
     format: DistTargetFormat,
     options: &EmitOptions,
 ) -> Result<TextEmission, powerio_core::Error> {
+    net.validate_component_locations()?;
     let mut conv = match format {
         DistTargetFormat::Gridlabd | DistTargetFormat::GridlabdArras => {
             return crate::glm::emit_glm_text(net);
@@ -611,6 +612,11 @@ pub(crate) fn emit_value_text_with_options(
         DistTargetFormat::PmdJson => crate::pmd::emit_pmd_json_text(net),
         DistTargetFormat::CimDist => crate::cim::emit_cim_dist_text(net),
     };
+    if !net.component_locations().is_empty() {
+        conv.push(&crate::diagnostics::codes::EMIT_DIST_COMPONENT_COORDINATES_DROPPED,
+            format!("{} component point(s) dropped: {} cannot carry their attachment, partial-axis and datum semantics",
+                net.component_locations().len(), format.name()));
+    }
     if *net.source_format() == Some(DistSourceFormat::Sincal) {
         conv.push(
             &crate::diagnostics::codes::EMIT_SINCAL_MULTICONDUCTOR_RETAINED_SOURCE_OMITTED,
