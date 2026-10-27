@@ -5725,19 +5725,33 @@ fn read_impedance_correction(
         return Ok((table, points));
     }
     let mut values = numbers(f, 1)?;
+    // RAW continuation lines continue one flat stream of T, FRE, FIM values;
+    // a point is allowed to straddle a physical line boundary. Keep the
+    // incomplete suffix until the next line rather than dropping it with
+    // `as_chunks`, which only yields complete triples.
+    let mut pending = Vec::new();
     loop {
-        for &[value, factor_re, factor_im] in values.as_chunks::<3>().0 {
+        pending.extend(values);
+        let complete_len = pending.len() / 3 * 3;
+        let mut consumed = 0;
+        for triple in pending[..complete_len].chunks_exact(3) {
+            let value = triple[0];
+            let factor_re = triple[1];
+            let factor_im = triple[2];
+            consumed += 3;
             if value == 0.0 && factor_re == 0.0 && factor_im == 0.0 {
                 return Ok((table, points));
             }
             points.push(ImpedanceCorrectionPoint::new(value, factor_re, factor_im));
         }
+        pending.drain(..consumed);
         let Some(line) = next_open_continuation_line(lines, warnings) else {
             warnings.push(
                 &codes::READ_PSSE_VALUE_SUBSTITUTED,
                 format!(
-                    "PSS/E impedance correction table {table} ends without its 0.0, 0.0, 0.0 point; read the {} point(s) it states",
-                    points.len()
+                    "PSS/E impedance correction table {table} ends without its 0.0, 0.0, 0.0 point; read the {} point(s) it states and discarded {} trailing field(s)",
+                    points.len(),
+                    pending.len()
                 ),
             );
             return Ok((table, points));
@@ -11706,4 +11720,30 @@ Q
             );
         }
     }
+
+    #[test]
+    fn impedance_correction_point_can_straddle_raw_continuation_lines() {
+        // The first line ends after T and FRE; FIM starts the continuation.
+        // The final all-zero triple is the table terminator, not a data point.
+        let first = fields("7, 0.5, 1.1");
+        let mut lines = RawLines::new(
+            "1.2, 1.0, 0.0, 1.5, 1.2, 0.0, 0.0, 0.0, 0.0\nQ\n",
+        );
+        let mut warnings = Diagnostics::new();
+        let (table, points) =
+            read_impedance_correction(&first, 35, &mut lines, &mut warnings).unwrap();
+
+        assert_eq!(table, 7);
+        assert_eq!(points.len(), 3);
+        assert_eq!(points[0].value, 0.5);
+        assert_eq!(points[0].factor_re, 1.1);
+        assert_eq!(points[0].factor_im, 1.2);
+        assert_eq!(points[1].value, 1.0);
+        assert_eq!(points[1].factor_re, 0.0);
+        assert_eq!(points[1].factor_im, 1.5);
+        assert_eq!(points[2].value, 1.2);
+        assert_eq!(points[2].factor_re, 0.0);
+        assert_eq!(points[2].factor_im, 0.0);
+    }
+
 }
