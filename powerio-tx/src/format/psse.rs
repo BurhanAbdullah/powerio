@@ -11724,9 +11724,7 @@ Q
         // The first line ends after T and FRE; FIM starts the continuation.
         // The final all-zero triple is the table terminator, not a data point.
         let first = fields("7, 0.5, 1.1");
-        let mut lines = RawLines::new(
-            "1.2, 1.0, 0.0, 1.5, 1.2, 0.0, 0.0, 0.0, 0.0\nQ\n",
-        );
+        let mut lines = RawLines::new("1.2, 1.0, 0.0, 1.5, 1.2, 0.0, 0.0, 0.0, 0.0\nQ\n");
         let mut warnings = Diagnostics::new();
         let (table, points) =
             read_impedance_correction(&first, 35, &mut lines, &mut warnings).unwrap();
