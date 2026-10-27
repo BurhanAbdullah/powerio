@@ -2,6 +2,80 @@
 
 ## Unreleased
 
+- A node breaker XIIDM or JIIDM case now writes PSS/E RAWX and revision 34
+  and 35 RAW. IIDM numbers nodes from 0 within each voltage level, so two
+  levels of one substation repeated node numbers and RAWX output failed. A
+  substation whose node numbers repeat or are not positive is now numbered
+  from 1, as PowSybl's exporter numbers it, with a diagnostic. Revision 33
+  output reports the substation records it drops without the RAWX error text.
+
+- IIDM current limits now reach PSS/E as MVA ratings instead of being dropped
+  as unlimited. A branch that states current limits and no MVA rating is
+  written with `sqrt(3) * Vnom * I / 1000` at its terminal's nominal voltage,
+  sorted into RATE1 to RATE12 as PowSybl's exporter writes them, and a
+  diagnostic reports the conversion. A three winding transformer leg that
+  states only current limits now reads as winding MVA ratings the same way,
+  where it was reported as unmapped; XIIDM output keeps the amperes.
+
+- PSS/E bus numbers and names now survive a trip through XIIDM or JIIDM. The
+  writers name a bus `B<n>` with its name as the IIDM name, as PowSybl's
+  PSS/E importer does, and the readers take the number back from `B<n>` (or
+  from `powerio-bus-<n>`, the id older PowerIO output used) and the name from
+  the IIDM name. Bus 10 no longer comes back as bus 5, nor "Bus 1" as
+  `powerio-bus-1`. A bus whose id states no number, when others do, is
+  numbered after them with a diagnostic.
+
+- The reference bus no longer moves on a trip through XIIDM or JIIDM when it
+  hosts only branches. The writers now name a branch or three winding
+  transformer terminal there as the slack terminal, as PowSybl does, where
+  they wrote none and the reader chose another bus (bus 6 instead of bus 1 in
+  PowSybl's eight bus PSS/E export).
+
+- Transformer tap control now crosses between PSS/E and IIDM in both
+  directions instead of being dropped one way and defaulted the other. A
+  PSS/E winding control becomes an IIDM tap changer with NTP steps spread
+  evenly from RMI to RMA, as PowSybl's importer builds it: COD 1 regulates
+  voltage at the controlled bus to the middle of VMA and VMI with their
+  difference as deadband, COD 2 regulates reactive power, COD 3 becomes a
+  phase tap changer regulating active power, and COD 0 a tap changer that
+  does not regulate. IIDM tap changers read back as the same COD, CONT, RMA,
+  RMI, VMA, VMI, and NTP, for two and three winding transformers. When the
+  present ratio lies between steps it becomes a step of its own, with a
+  diagnostic.
+
+- A PSS/E bus zone and owner now survive a trip through XIIDM or JIIDM, where
+  zone 2 and owner 3 came back as 1 and 1 without a diagnostic. The writers
+  state them as the IIDM bus properties `psse_zone` and `psse_owner`, as
+  other PSS/E fields IIDM has no field for are stated, and the readers take
+  them back.
+
+- Three winding transformers keep more through XIIDM and JIIDM. The star
+  point voltage is written as the transformer properties `v` and `angle`, as
+  PowSybl writes them, and read back; a winding out of service is written
+  as that leg's disconnected terminal, and a transformer with two connected
+  legs reads back in service with the third winding out instead of entirely
+  out of service; and winding ratings beyond rate A, B, and C (PSS/E RATE4
+  to RATE12) are written and read as further limit groups, as two winding
+  branches already were. Each of these was reported as dropped before.
+
+- Storage, such as an IIDM battery, is now written to PSS/E RAW and RAWX as
+  a load that consumes what the storage injects, as PowSybl's exporter
+  writes a battery, with a diagnostic naming the storage fields a load
+  cannot state. It was dropped, which changed the bus injections.
+
+- An area's swing bus (PSS/E `ISW`) and interchange tolerance (`PTOL`) now
+  survive XIIDM and JIIDM as the area properties `psse_isw` and
+  `psse_ptol`, where both were reported as dropped. A swing bus property
+  that names no bus of the case is reported on read.
+
+- PSS/E output now names the values it changes instead of changing them
+  silently. A two-terminal DC line whose received (or sent) power the
+  record's drop model does not reproduce is reported with the value a reread
+  gives, and its active power limits and MATPOWER loss model are reported
+  as dropped; a case date, forecast distance, source format, or validation
+  level is reported as dropped; and an area with no area type, or another
+  one, is reported as read back as a control area.
+
 - `assign_island_references` with the per island policy now demotes a
   stated reference bus that hosts no in-service generator, then makes the
   bus of the island's largest `pmax` generator the reference. Before, an
