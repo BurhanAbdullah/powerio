@@ -5733,10 +5733,7 @@ fn read_impedance_correction(
     loop {
         pending.extend(values);
         let complete_len = pending.len() / 3 * 3;
-        for triple in pending[..complete_len].chunks_exact(3) {
-            let value = triple[0];
-            let factor_re = triple[1];
-            let factor_im = triple[2];
+        for &[value, factor_re, factor_im] in pending[..complete_len].as_chunks::<3>().0 {
             if value == 0.0 && factor_re == 0.0 && factor_im == 0.0 {
                 return Ok((table, points));
             }
@@ -11741,5 +11738,4 @@ Q
         assert_eq!(points[2].factor_re, 0.0);
         assert_eq!(points[2].factor_im, 0.0);
     }
-
 }
