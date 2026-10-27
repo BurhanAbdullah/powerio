@@ -217,6 +217,16 @@ enum Command {
         /// determine its flow.
         #[arg(long, value_name = "SPEC")]
         merge_buses: Option<String>,
+        /// With `--stated-state`: where a PSS/E two-terminal (LCC) converter's
+        /// reactive demand comes from: its bridge equations at the stored
+        /// voltages, or the line's stated reactive powers.
+        #[arg(
+            long,
+            value_enum,
+            default_value = "converter-model",
+            requires = "stated_state"
+        )]
+        lcc_q: LccQArg,
     },
     /// Emit the static DC OPF matrix/vector bundle for one case.
     #[command(name = "dcopf", visible_alias = "dc-opf")]
@@ -971,6 +981,21 @@ impl From<HvdcArg> for powerio_tx::HvdcTreatment {
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
+enum LccQArg {
+    ConverterModel,
+    Stated,
+}
+
+impl From<LccQArg> for powerio_matrix::LccReactivePower {
+    fn from(value: LccQArg) -> Self {
+        match value {
+            LccQArg::ConverterModel => Self::ConverterModel,
+            LccQArg::Stated => Self::Stated,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
 enum AngleDifferenceBoundsArg {
     PowermodelsPad,
     ShiftCenteredPad,
@@ -1057,9 +1082,17 @@ fn main() -> std::process::ExitCode {
             top,
             hvdc,
             merge_buses,
+            lcc_q,
         } => {
             if stated_state {
-                run_verify_stated_state(&input, from, top, hvdc.into(), merge_buses.as_deref())
+                run_verify_stated_state(
+                    &input,
+                    from,
+                    top,
+                    hvdc.into(),
+                    merge_buses.as_deref(),
+                    lcc_q.into(),
+                )
             } else {
                 run_verify(
                     &input,
@@ -1902,6 +1935,7 @@ fn run_verify_stated_state(
     top: usize,
     hvdc: powerio_tx::HvdcTreatment,
     merge_buses: Option<&str>,
+    lcc_q: powerio_matrix::LccReactivePower,
 ) -> anyhow::Result<()> {
     let mut network = balanced_case(input, from)?;
     let mut merged_buses = std::collections::BTreeMap::new();
@@ -1915,8 +1949,10 @@ fn run_verify_stated_state(
     let options = powerio_matrix::StatedStateOptions::default()
         .with_hvdc_treatment(hvdc)
         .with_top_k(top)
-        .with_merged_buses(merged_buses);
+        .with_merged_buses(merged_buses)
+        .with_lcc_reactive_power(lcc_q);
     let mismatch = powerio_matrix::calc_stated_state_mismatch(&network, &options)?;
+    report_diagnostics(&mismatch.diagnostics);
     let energized = mismatch.buses.iter().filter(|b| b.island.is_some()).count();
     println!(
         "stated state ({}): {energized} buses in {} islands; sum |dP| = {:.3} MW, sum |dQ| = {:.3} MVAr, max |dS| = {:.3} MVA",

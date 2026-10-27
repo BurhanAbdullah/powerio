@@ -4,8 +4,9 @@
 
 use num_complex::Complex64;
 use powerio_matrix::{
-    BuildOptions, Error, IndexedNetwork, StatedBusFlags, StatedStateMismatch, StatedStateOptions,
-    calc_admittance_matrix, calc_stated_branch_flows, calc_stated_state_mismatch,
+    BuildOptions, Error, IndexedNetwork, LccReactivePower, StatedBusFlags, StatedStateMismatch,
+    StatedStateOptions, calc_admittance_matrix, calc_stated_branch_flows,
+    calc_stated_state_mismatch,
 };
 use powerio_tx::{
     BalancedNetwork, Branch, Bus, BusId, BusMergeRule, BusType, Generator, Hvdc, HvdcTreatment,
@@ -448,6 +449,123 @@ fn a_low_impedance_branch_flags_both_terminals() {
         looser.buses[row_of(&looser, 11)].flags,
         StatedBusFlags::NONE
     );
+}
+
+/// Give the solved case's line a PSS/E two-terminal converter record: two
+/// bridges per converter on a 230 kV base, scheduled at `vschd` kV with
+/// compounding resistance `rcomp` Ω, under control mode `mdc`.
+fn with_lcc_record(mut net: BalancedNetwork, vschd: f64, rcomp: f64, mdc: i64) -> BalancedNetwork {
+    let tail = |values: &[&str]| {
+        serde_json::Value::Array(
+            values
+                .iter()
+                .map(|v| serde_json::Value::String((*v).into()))
+                .collect(),
+        )
+    };
+    let line = &mut net.hvdc_mut()[0];
+    line.extras
+        .insert("psse_dc_rdc".into(), serde_json::Value::from(2.0));
+    line.extras
+        .insert("psse_dc_vschd".into(), serde_json::Value::from(vschd));
+    line.extras
+        .insert("psse_dc_mdc".into(), serde_json::Value::from(mdc));
+    let rcomp = rcomp.to_string();
+    line.extras.insert(
+        "psse_dc_control_tail".into(),
+        tail(&["0.0", &rcomp, "0.1", "'I'", "0.0", "20", "1.0"]),
+    );
+    let converter = tail(&[
+        "2", "17.5", "12.5", "0.1", "8.0", "230.0", "0.35", "1.0", "1.2", "0.9", "0.0125", "0",
+        "0", "0", "1", "0.0",
+    ]);
+    line.extras
+        .insert("psse_dc_rectifier_tail".into(), converter.clone());
+    line.extras
+        .insert("psse_dc_inverter_tail".into(), converter);
+    net
+}
+
+fn stated_lcc_q() -> StatedStateOptions {
+    StatedStateOptions::default().with_lcc_reactive_power(LccReactivePower::Stated)
+}
+
+#[test]
+fn an_lcc_converter_record_draws_its_bridge_reactive_power() {
+    // A line with no converter record is unaffected by the converter model.
+    let net = solved();
+    let model = calc_stated_state_mismatch(&net, &StatedStateOptions::default()).unwrap();
+    let stated = calc_stated_state_mismatch(&net, &stated_lcc_q()).unwrap();
+    assert_eq!(model, stated);
+    assert_eq!(model.diagnostics, []);
+
+    // With a PSS/E two-terminal record, the bridge reactive demand replaces
+    // each end's terminal reactive power, positive from the bus into the
+    // converter, and the injection is its negative.
+    let net = with_lcc_record(solved(), 150.0, 0.0, 1);
+    let line = &net.hvdc()[0];
+    let point = line
+        .calc_lcc_operating_point(net.buses()[2].vm, net.buses()[6].vm)
+        .expect("the converters reach the schedule");
+    assert!(point.rectifier.q_mvar > 0.0 && point.inverter.q_mvar > 0.0);
+    let mut terminal = line.calc_bus_to_device_powers();
+    terminal.q_from = point.rectifier.q_mvar;
+    terminal.q_to = point.inverter.q_mvar;
+    let bridge = terminal.calc_bus_injections();
+    let [
+        (_, stated_p_from, stated_q_from),
+        (_, stated_p_to, stated_q_to),
+    ] = line.calc_terminal_injections();
+    // The active injections stay the line's stated ones.
+    assert_eq!((bridge[0].0, bridge[1].0), (stated_p_from, stated_p_to));
+
+    let model = calc_stated_state_mismatch(&net, &StatedStateOptions::default()).unwrap();
+    let stated = calc_stated_state_mismatch(&net, &stated_lcc_q()).unwrap();
+    assert_eq!(model.diagnostics, []);
+    // A mismatch is drawn minus injected, so a larger injection lowers it.
+    let (from, to) = (row_of(&model, 3), row_of(&model, 7));
+    let shift = |row: usize| model.buses[row].q_mvar - stated.buses[row].q_mvar;
+    assert!((shift(from) - (stated_q_from - bridge[0].1)).abs() < 1e-9);
+    assert!((shift(to) - (stated_q_to - bridge[1].1)).abs() < 1e-9);
+    for row in [from, to] {
+        assert!((model.buses[row].p_mw - stated.buses[row].p_mw).abs() < 1e-12);
+    }
+    // Both converters absorb their bridge demand, so each end injects its
+    // negative.
+    assert!((bridge[0].1 + point.rectifier.q_mvar).abs() < 1e-12);
+    assert!((bridge[1].1 + point.inverter.q_mvar).abs() < 1e-12);
+}
+
+#[test]
+fn an_lcc_record_at_a_negative_power_factor_keeps_the_stated_reactive_power() {
+    // A current schedule (MDC 2) of 100 MW / 150 kV = 0.667 kA through a
+    // compounding resistance of 300 Ω leaves the inverter at 150 - 200 = -50
+    // kV: an extinction angle past 90 degrees, a power factor below zero.
+    let net = with_lcc_record(solved(), 150.0, 300.0, 2);
+    assert!(
+        net.hvdc()[0]
+            .calc_lcc_operating_point(net.buses()[2].vm, net.buses()[6].vm)
+            .is_none()
+    );
+    let model = calc_stated_state_mismatch(&net, &StatedStateOptions::default()).unwrap();
+    let stated = calc_stated_state_mismatch(&net, &stated_lcc_q()).unwrap();
+    // The stated reactive powers stand in, so the case still closes, and
+    // nothing is NaN.
+    assert_eq!(model.buses, stated.buses);
+    assert_closed_except(&model, &[]);
+    assert!(
+        model
+            .buses
+            .iter()
+            .all(|bus| bus.p_mw.is_finite() && bus.q_mvar.is_finite())
+    );
+    let [warning] = &model.diagnostics[..] else {
+        panic!("one fallback warning: {:?}", model.diagnostics);
+    };
+    assert_eq!(warning.code(), "BUILD.STATED_STATE.LCC_MODEL_UNAVAILABLE");
+    assert!(warning.message().contains("row 0"), "{}", warning.message());
+    // Asking for the stated powers is not a fallback.
+    assert_eq!(stated.diagnostics, []);
 }
 
 /// Without the line the stored voltages still need its injection, so under
