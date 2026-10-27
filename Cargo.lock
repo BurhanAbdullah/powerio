@@ -2496,6 +2496,7 @@ dependencies = [
  "num-complex",
  "powerio-core",
  "quick-xml",
+ "regex",
  "schemars",
  "serde",
  "serde_json",

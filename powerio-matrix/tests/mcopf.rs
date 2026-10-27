@@ -977,6 +977,12 @@ fn bounded_load_laws_are_not_silently_projected_by_ivr_preparation() {
             v_min_pu: 0.95,
             v_max_pu: 1.05,
         },
+        Law::BoundedConstantPower {
+            v_nom: vec![230.0],
+            v_min_pu: 0.95,
+            v_max_pu: 1.05,
+            current_limit_pu: Some(1.1),
+        },
     ] {
         let mut net = network();
         net.loads_mut()[0].voltage_model = law;
@@ -1070,6 +1076,26 @@ fn projecting_bounded_load_laws_is_an_explicit_opt_in_with_one_diagnostic_per_lo
     assert_eq!(
         prepared.load_law_projections[0].projected_model,
         "exponential"
+    );
+
+    // A voltage-bounded constant-power law projects to constant power.
+    let mut net = network();
+    net.loads_mut()[0].voltage_model = Law::BoundedConstantPower {
+        v_nom: vec![230.0],
+        v_min_pu: 0.9,
+        v_max_pu: 1.1,
+        current_limit_pu: None,
+    };
+    let instance = McAcOpfInstance::from_network(net).unwrap();
+    assert!(build_mc_ac_opf_preparation(&instance, &McAcOpfAssemblyOptions::default()).is_err());
+    let prepared = build_mc_ac_opf_preparation(&instance, &opt_in).unwrap();
+    assert_eq!(
+        prepared.load_law_projections[0].source_model,
+        "bounded_constant_power"
+    );
+    assert_eq!(
+        prepared.load_law_projections[0].projected_model,
+        "constant_power"
     );
 
     // Loads that carry no bounded law are not touched.

@@ -287,7 +287,7 @@ pub struct McAcOpfPreparation {
 pub struct McOpfLoadLawProjection {
     /// Source load name.
     pub load: String,
-    /// Tag of the source law (`bounded_zip` or `bounded_exponential`).
+    /// Tag of the source law (`bounded_zip`, `bounded_exponential` or `bounded_constant_power`).
     pub source_model: String,
     /// Tag of the nominal law the preparation used.
     pub projected_model: String,
@@ -1110,6 +1110,7 @@ fn prepare_loads(
                 load.voltage_model,
                 DistLoadVoltageModel::BoundedZip { .. }
                     | DistLoadVoltageModel::BoundedExponential { .. }
+                    | DistLoadVoltageModel::BoundedConstantPower { .. }
             ) {
             projected = load.voltage_model.without_voltage_bounds();
             let tag = |model: &DistLoadVoltageModel| {
@@ -1480,7 +1481,7 @@ fn prepare_load_laws(
                         ],
                     ]
                 }
-                Law::BoundedZip { .. } | Law::BoundedExponential { .. } => {
+                Law::BoundedZip { .. } | Law::BoundedExponential { .. } | Law::BoundedConstantPower { .. } => {
                     return Err(unsupported(&load.name, "voltage-bounded load laws require piecewise IVR equations; a nominal-law approximation is not implicit (opt in with BoundedLoadLawPolicy::ProjectToNominal)"));
                 }
                 _ => return Err(unsupported(&load.name, "unknown load voltage law")),

@@ -264,3 +264,38 @@ fn dss_project_entry_names_reparse_or_are_refused() {
         assert_eq!(parsed.sources().len(), 2);
     }
 }
+
+#[test]
+fn dss_replay_copies_every_acquired_buffer_with_the_released_layout() {
+    let source = tree(
+        &[
+            (
+                "master.dss",
+                "New Circuit.c phases=1 basekv=.24\nRedirect loads.dss\n",
+            ),
+            (
+                "loads.dss",
+                "New Load.l phases=1 bus1=sourcebus.1.0 kv=.24 kw=1 kvar=0\n",
+            ),
+            ("unused.dss", "This buffer is a companion file.\n"),
+        ],
+        Some("master.dss"),
+    );
+    let module = powerio::parse(source).unwrap();
+    let output = powerio::emit(&module, "dss", Destination::memory("out").unwrap()).unwrap();
+    let EmittedOutput::Memory { artifacts } = output.output() else {
+        panic!("memory output expected")
+    };
+    let names: Vec<_> = artifacts.iter().map(|a| a.name().as_str()).collect();
+    assert_eq!(artifacts.len(), 4, "{names:?}");
+    assert!(names.contains(&"out/case.dss"));
+    assert!(names.contains(&"out/source/master.dss"));
+    assert!(names.contains(&"out/source/loads.dss"));
+    // Companions replay with the project even when no include names them.
+    assert!(names.contains(&"out/source/unused.dss"));
+    let entry = artifacts
+        .iter()
+        .find(|a| a.name().as_str() == "out/case.dss")
+        .unwrap();
+    assert_eq!(entry.bytes(), b"Redirect \"source/master.dss\"\n");
+}

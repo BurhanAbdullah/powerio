@@ -375,15 +375,13 @@ pub fn parse(
     let selected = source
         .format()
         .and_then(|id| parse_dist_target_format(id.as_str()));
-    let inferred_glm = source.format().is_none()
+    if matches!(
+        selected,
+        Some(DistTargetFormat::Gridlabd | DistTargetFormat::GridlabdArras)
+    ) || (source.format().is_none()
         && std::path::Path::new(source.name())
             .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("glm"));
-    if inferred_glm
-        || matches!(
-            selected,
-            Some(DistTargetFormat::Gridlabd | DistTargetFormat::GridlabdArras)
-        )
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("glm")))
     {
         let dialect = if selected == Some(DistTargetFormat::GridlabdArras) {
             crate::glm::GlmDialect::Arras4_3
@@ -399,7 +397,8 @@ pub fn parse(
         );
     }
     let mut warnings = crate::collect::Diagnostics::new();
-    match parse_to_network(&source, &mut warnings) {
+    let mut dss_replay = None;
+    match parse_to_network(&source, &mut warnings, &mut dss_replay) {
         Ok((network, format)) => {
             // Record the detected format before the common constructor builds
             // descriptors and the coarse `/value` source map.
@@ -407,7 +406,18 @@ pub fn parse(
                 Ok(format) => source.with_format(format),
                 Err(_) => source,
             };
-            powerio_core::PioModule::parsed(network, source, warnings.into_records())
+            let mut module =
+                powerio_core::PioModule::parsed(network, source, warnings.into_records())?;
+            if let Some(replay) = dss_replay {
+                module.insert_extension(
+                    "org.powerio.opendss",
+                    serde_json::json!({
+                        "version": 1, "absolute_dependency": replay.absolute_dependency,
+                        "dependencies": replay.dependencies.iter().map(powerio_core::SourceId::as_str).collect::<Vec<_>>(),
+                    }),
+                )?;
+            }
+            Ok(module)
         }
         Err(error) => {
             let core = powerio_core::Error::new(error.code(), error.to_string());
@@ -424,6 +434,7 @@ pub fn parse(
 fn parse_to_network(
     source: &powerio_core::Source,
     warnings: &mut crate::collect::Diagnostics,
+    dss_replay: &mut Option<crate::dss::read::ReplayContext>,
 ) -> crate::Result<(MulticonductorNetwork, DistTargetFormat)> {
     let declared = source
         .format()
@@ -472,7 +483,9 @@ fn parse_to_network(
         DistTargetFormat::Gridlabd | DistTargetFormat::GridlabdArras => Err(
             crate::Error::UnknownFormat("GLM project requires the project parser".into()),
         ),
-        DistTargetFormat::Dss => crate::dss::read::parse_dss_collecting(source, warnings),
+        DistTargetFormat::Dss => {
+            crate::dss::read::parse_dss_collecting(source, warnings, dss_replay)
+        }
         DistTargetFormat::BmopfJson => {
             let buffer = primary(source)?;
             crate::bmopf::read::parse_bmopf_collecting(source_text(&buffer)?, warnings)
@@ -656,15 +669,18 @@ pub(crate) fn emit_value_text(
 /// The JSON and CIM targets commit a single artifact — a path destination names the
 /// exact file, a memory destination names the artifact. The dss target is a
 /// directory inventory: the destination names the output root, the case text
-/// commits as `case.dss`, and generated companion files commit beside it.
-/// An unchanged multi-file DSS project retains its paths and bytes beneath
-/// `source/`; `case.dss` redirects to its entry file.
+/// commits as `case.dss`, and every companion file the emitter produced
+/// (OpenDSS `Buscoords` CSV) commits beside it, so nothing the case text
+/// refers to is missing from the output.
 /// GridLAB-D targets also write directory inventories. Unchanged modules
 /// replay every acquired buffer under its original relative path, preserving
 /// the entrypoint location and includes. Absolute includes cannot be relocated
 /// byte exactly and are refused. Fresh, edited, IR-restored and cross-profile
 /// modules write canonical `case.glm`; [`crate::glm::emit_canonical`] directly
 /// writes a single file from a network value.
+/// An unchanged multi-file DSS project retains the paths and bytes of every
+/// acquired file, dependencies and companions alike, beneath `source/`;
+/// `case.dss` redirects to its entry file.
 ///
 /// # Errors
 /// Unsupported electrical features, nonportable retained projects, or the
@@ -709,57 +725,10 @@ pub fn emit_with_options(
     }
     let conv = emit_text_with_options(module, format, options)?;
     if format == DistTargetFormat::Dss
-        && conv.fidelity == powerio_core::Fidelity::ExactSameFormat
-        && let Some(source) = module.source()
+        && options.is_default_for(format)
+        && let Some(artifacts) = crate::dss::retained_project(module)?
     {
-        let primary = source.primary_buffer()?;
-        let buffers = source.acquired_buffers();
-        if buffers.len() > 1 || primary.directory_segments().next().is_some() {
-            let mut artifacts = Vec::with_capacity(buffers.len() + 1);
-            for buffer in buffers {
-                let name = if buffer.id() == primary.id() {
-                    let mut segments: Vec<_> = primary.directory_segments().collect();
-                    let filename = std::path::Path::new(primary.name())
-                        .file_name()
-                        .and_then(std::ffi::OsStr::to_str)
-                        .filter(|name| powerio_core::ArtifactPath::new(*name).is_ok())
-                        .unwrap_or("case.dss");
-                    segments.push(filename);
-                    segments.join("/")
-                } else {
-                    buffer.name().to_owned()
-                };
-                let path = powerio_core::ArtifactPath::new(format!("source/{name}"))?;
-                if buffer.id() == primary.id() {
-                    let target = if path.as_str().contains('"') {
-                        let (token, representable) = crate::dss::dss_value_out(path.as_str());
-                        if !representable {
-                            return Err(powerio_core::Error::new(
-                                &powerio_core::codes::REQUEST_OUTPUT_INVALID_ARTIFACT_PATH,
-                                "the project entry filename cannot be represented in an OpenDSS redirect",
-                            ));
-                        }
-                        token
-                    } else {
-                        format!("\"{}\"", path.as_str())
-                    };
-                    artifacts.push(powerio_core::MemoryArtifact::new(
-                        powerio_core::ArtifactPath::new("case.dss")?,
-                        format!("Redirect {target}\n").into_bytes(),
-                    ));
-                }
-                artifacts.push(powerio_core::MemoryArtifact::new(
-                    path,
-                    buffer.bytes().to_vec(),
-                ));
-            }
-            return destination.__commit_artifacts(
-                true,
-                conv.fidelity,
-                artifacts,
-                conv.diagnostics,
-            );
-        }
+        return destination.__commit_artifacts(true, conv.fidelity, artifacts, conv.diagnostics);
     }
     match format {
         DistTargetFormat::Gridlabd | DistTargetFormat::GridlabdArras => {
