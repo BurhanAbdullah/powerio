@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Clarify that `BusType::Ref` follows the source format's reference/slack convention;
+  angle reference and balancing-source semantics are not universal invariants.
+
 - Distribution CIM tank imports refuse unsupported phase clocks and inactive
   or disconnected tank/parent/end states. Fresh tank output writes standard
   impedance magnitudes and clocks derived from the current winding layout;
