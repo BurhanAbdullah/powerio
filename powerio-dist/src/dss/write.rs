@@ -1432,7 +1432,7 @@ impl DssWriter {
             self.transformer_reactances(t, &mut s);
             let mut extras = t.extras.clone();
             // Typed reactances determine output after an IR load or mutation.
-            if nw > 3 && t.xsc_pct.len() == nw * (nw - 1) / 2 {
+            if t.xsc_pct.len() == nw * (nw - 1) / 2 {
                 extras.remove("xscarray");
             }
             if let Some((loss, imag)) = crate::model::transformer_no_load_percentages(t) {
@@ -1462,7 +1462,33 @@ impl DssWriter {
     /// Emit the complete pair table for four or more windings.
     fn transformer_reactances(&mut self, t: &DistTransformer, output: &mut String) {
         let nw = t.windings.len();
-        if nw > 3 {
+        // A scalar XHL, XHT or XLT of zero is trapped to the OpenDSS default
+        // (7, 35 and 30 percent) by the native setter. The complete array sets
+        // an actual zero without adding leakage.
+        if nw == 2 && t.xsc_pct.as_slice() == [0.0] {
+            output.push_str(" xscarray=(0)");
+        } else if nw <= 3 && t.xsc_pct.len() >= 3 {
+            let (xhl, xht) = (t.xsc_pct[0], t.xsc_pct[1]);
+            let xlt = self.star_xlt(t);
+            #[allow(clippy::float_cmp)] // Only an exact zero is trapped.
+            if xhl == 0.0 || xht == 0.0 || xlt == 0.0 {
+                let _ = write!(
+                    output,
+                    " xscarray=({}, {}, {})",
+                    num(xhl),
+                    num(xht),
+                    num(xlt)
+                );
+            } else {
+                let _ = write!(
+                    output,
+                    " xhl={} xht={} xlt={}",
+                    num(xhl),
+                    num(xht),
+                    num(xlt)
+                );
+            }
+        } else if nw > 3 {
             let expected = nw * (nw - 1) / 2;
             if t.xsc_pct.len() != expected {
                 self.warn(
@@ -1474,14 +1500,15 @@ impl DssWriter {
             let _ = write!(output, " xscarray=({})", values.join(", "));
         } else if let Some(xhl) = t.xsc_pct.first() {
             let _ = write!(output, " xhl={}", num(*xhl));
-            if t.xsc_pct.len() >= 3 {
-                let xlt = self.star_xlt(t);
-                let _ = write!(output, " xht={} xlt={}", num(t.xsc_pct[1]), num(xlt));
-            }
         } else {
+            // OpenDSS traps a scalar xhl=0 to its 7 percent default, so this
+            // deck states the default leakage rather than a zero.
             self.warn(
                 &C::EMIT_DSS_VALUE_DEFAULTED,
-                format!("transformer {}: xsc_pct is empty; emitted xhl=0", t.name),
+                format!(
+                    "transformer {}: xsc_pct is empty; emitted xhl=0, which OpenDSS reads as its default of 7 percent",
+                    t.name
+                ),
             );
             output.push_str(" xhl=0");
         }
@@ -1756,6 +1783,11 @@ impl DssWriter {
 
     fn add_default_load_voltage_bounds(&self, extras: &mut Extras) {
         if let Some(bounds) = self.options.default_load_voltage_bounds {
+            if bounds.vminpu == 0.0 {
+                // Vminpu=0 alone leaves the native Vlowpu=.5 impedance fallback.
+                // Unbounded P/I laws must retain their behavior below that threshold.
+                extras.entry("vlowpu".into()).or_insert_with(|| 0.0.into());
+            }
             extras
                 .entry("vminpu".into())
                 .or_insert_with(|| bounds.vminpu.into());
@@ -3066,6 +3098,7 @@ mod tests {
         let out = emit_dss_text(&net);
         let line = out.text.lines().find(|l| l.contains("Load.ld")).unwrap();
         assert!(line.contains("vminpu=0"), "{line}");
+        assert!(line.contains("vlowpu=0"), "{line}");
         assert!(line.contains("vmaxpu=2"), "{line}");
     }
 
