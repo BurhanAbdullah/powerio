@@ -5787,7 +5787,11 @@ fn is_impedance_correction_terminator(line: &str) -> bool {
         return true;
     }
     line.split_once('/').is_some_and(|(record, comment)| {
-        record.trim() == "0" && comment.trim_start().to_ascii_uppercase().starts_with("END OF")
+        record.trim() == "0"
+            && comment
+                .trim_start()
+                .to_ascii_uppercase()
+                .starts_with("END OF")
     })
 }
 
@@ -11789,7 +11793,10 @@ Q
                 .iter()
                 .any(|line| line.contains("non-ascending T values"))
         );
-        assert_eq!(impedance_table_variable(&points), ImpedanceCorrectionVariable::Angle);
+        assert_eq!(
+            impedance_table_variable(&points),
+            ImpedanceCorrectionVariable::Angle
+        );
     }
 
     #[test]
