@@ -5733,18 +5733,16 @@ fn read_impedance_correction(
     loop {
         pending.extend(values);
         let complete_len = pending.len() / 3 * 3;
-        let mut consumed = 0;
         for triple in pending[..complete_len].chunks_exact(3) {
             let value = triple[0];
             let factor_re = triple[1];
             let factor_im = triple[2];
-            consumed += 3;
             if value == 0.0 && factor_re == 0.0 && factor_im == 0.0 {
                 return Ok((table, points));
             }
             points.push(ImpedanceCorrectionPoint::new(value, factor_re, factor_im));
         }
-        pending.drain(..consumed);
+        pending.drain(..complete_len);
         let Some(line) = next_open_continuation_line(lines, warnings) else {
             warnings.push(
                 &codes::READ_PSSE_VALUE_SUBSTITUTED,
