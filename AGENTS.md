@@ -188,8 +188,9 @@ powerio-core/src              module.rs (PioModule<T>), source.rs, output.rs,
                               time_series.rs, scenario.rs, component_id.rs,
                               validation.rs (limits), bounded.rs, nonfinite.rs
 powerio-tx/src                network.rs (BalancedNetwork and its tables),
-                              indexed.rs, hvdc.rs, normalize.rs, operations.rs,
-                              dc.rs, gen_cost.rs, geo/ (layer.rs, pwd.rs),
+                              indexed.rs, hvdc.rs, lcc.rs, normalize.rs,
+                              operations.rs, dc.rs, gen_cost.rs,
+                              geo/ (layer.rs, pwd.rs),
                               contingency/ (.con, .sub, .mon: mod.rs, lexer.rs,
                               resolve.rs, expand.rs, sub.rs, mon.rs),
                               collect.rs, diagnostics.rs, error.rs, version.rs
@@ -214,7 +215,8 @@ powerio-matrix/src            matrix/ (bprime, bdoubleprime, ybus, lacpf,
                               ac_jacobian.rs, dcopf/ (prep, nodal, limits, bundle),
                               acopf.rs, opf.rs, io/ (mtx, meta, sensitivity, gridfm),
                               lindist3flow*.rs (LinDist3Flow OPF and PF),
-                              pipeline.rs, synth/, diagnostics.rs, error.rs
+                              pipeline.rs, stated_state.rs, synth/, diagnostics.rs,
+                              error.rs
 powerio/src                   lib.rs (parse, emit), value.rs (PioValue), ir.rs,
                               stored/ (dto.rs, convert.rs), formats.rs, transform.rs,
                               write.rs, gridfm.rs, dist_geo.rs, collect.rs, codes.rs
@@ -262,9 +264,10 @@ docs/                         the mdBook guide, the schema archive, release note
 - **Two tier fidelity.** Same format round trip is byte exact. Cross format
   emission keeps maximal fidelity and reports anything the target cannot
   represent through a `Diagnostic`; never drop it silently. The conversion
-  matrix test in `powerio-cli/tests/conversion_matrix_report.rs` pins the
-  expected warning counts; an intentional change edits the baseline in the
-  same PR.
+  matrix test in `powerio-cli/tests/conversion_matrix_report.rs` grades each
+  cell by its worst finding and pins every cell's level and finding codes in
+  `powerio-cli/tests/conversion_matrix.baseline`; an intentional change
+  regenerates that file with `POWERIO_MATRIX_BLESS=1` in the same PR.
 - **Adding a format.** A reader produces the value its supported profile
   declares. Balanced formats meet at `BalancedNetwork`; conductor resolved
   formats meet at `MulticonductorNetwork`. Register the token in

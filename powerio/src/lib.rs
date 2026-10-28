@@ -136,12 +136,13 @@ pub use powerio_tx::{
     Load, LoadVoltageModel, Location, MonitorScope, MonitorStatement, MonitoredParsed,
     MonitoredResolution, MonitoredSet, PsseEquipmentIndex, PwdDisplay, PwdSubstation, ResolvedCase,
     ResolvedComponent, ResolvedInterface, ResolvedVoltageScope, RetainedStatement, Selector,
-    SelectorGroup, Shunt, ShuntBlock, SkipRule, SolverParams, SourceFormat, Storage, Subsystem,
-    SubsystemParsed, SubsystemSelector, SubsystemSet, Switch, SwitchedShuntControl,
-    SwitchedShuntMode, Transformer3W, TransformerControl, TransformerControlMode, UnresolvedAction,
-    UnresolvedMonitor, UnresolvedMonitorReason, UnresolvedReason, Winding, apply_substation_points,
-    calc_series_admittance_of, classify_json_bytes, classify_json_text, repair_values,
-    to_geo_layer_from_pwd, to_lonlat_from_pwd_mercator,
+    SelectorGroup, SharedPsseEquipmentIndex, Shunt, ShuntBlock, SkipRule, SolverParams,
+    SourceFormat, Storage, Subsystem, SubsystemParsed, SubsystemSelector, SubsystemSet, Switch,
+    SwitchedShuntControl, SwitchedShuntMode, Transformer3W, TransformerControl,
+    TransformerControlMode, UnresolvedAction, UnresolvedMonitor, UnresolvedMonitorReason,
+    UnresolvedReason, Winding, apply_substation_points, calc_series_admittance_of,
+    classify_json_bytes, classify_json_text, repair_values, to_geo_layer_from_pwd,
+    to_lonlat_from_pwd_mercator,
 };
 /// Balanced network records and the public network and geographic submodules.
 /// Derived indexes, normalization data, solver tables, and component error
@@ -189,8 +190,9 @@ pub mod dist {
     }
 }
 pub use powerio_dist::{
-    BmopfEmitOptions, BmopfSchemaVersion, ConductorMatrix, DistGeoMeta, DistGraphEdgeKind,
-    MulticonductorNetwork, NeutralKronOptions, NeutralKronReport,
+    BmopfEmitOptions, BmopfSchemaVersion, ConductorMatrix, DistComponentLocation, DistGeoMeta,
+    DistGeographicPoint, DistGraphEdgeKind, DistLocationTarget, MulticonductorNetwork,
+    NeutralKronOptions, NeutralKronReport,
 };
 
 pub use powerio_prob::solution::{SocwrOpfDuals, SocwrOpfSolution, SocwrOpfValues};
@@ -241,7 +243,7 @@ pub use write::{EmitOptions, emit, emit_with_options};
 #[cfg(feature = "sincal")]
 mod sincal_write;
 #[cfg(feature = "sincal")]
-pub use sincal_write::{SincalContainer, SincalExperimentalOptions};
+pub use sincal_write::{ArchiveOptions, SincalContainer, SincalExperimentalOptions};
 mod ir;
 #[cfg(feature = "schema")]
 pub use ir::generate_ir_schema;
@@ -488,8 +490,9 @@ impl ParseOptions {
 /// named through [`powerio_core::Source::from_memory`].
 ///
 /// The family comes from the input's declared format when one was selected,
-/// and otherwise from the name and content: a `.dss` extension routes to the
-/// distribution parser, a `.json` document routes by its top level markers
+/// and otherwise from the name and content: `.dss` and `.glm` extensions route
+/// to the distribution parser (`.glm` defaults to the PNNL GridLAB-D profile;
+/// declare `gridlabd-arras` for Arras). A `.json` document routes by its top level markers
 /// ([`format::routing::classify_json_text`]), a name with no recognized
 /// extension whose content opens a JSON document (an in-memory source has no
 /// extension) routes the same way, a `.xml` document, a name with no
@@ -583,6 +586,15 @@ pub fn parse_with_options(
                 }
                 _ => source,
             };
+            // A PMD multinetwork document holds one network per time step.
+            let pmd = source.format().is_some_and(|f| {
+                format::routing::parse_distribution_format(f.as_str())
+                    == Some(format::routing::DistributionFormat::PmdJson)
+            });
+            if pmd && powerio_dist::pmd::is_multinetwork(&source) {
+                return powerio_dist::pmd::parse_multinetwork(source)
+                    .map(|module| module.map_value(PioValue::from));
+            }
             dist::parse(source).map(|module| module.map_value(PioValue::from))
         }
         RoutedFamily::PypsaDirectory => parse_pypsa(source),
@@ -953,6 +965,9 @@ fn routed_family(
         return Ok(RoutedFamily::Geo);
     }
     match extension.as_str() {
+        "glm" => Ok(RoutedFamily::Distribution(Some(
+            format::routing::DistributionFormat::Gridlabd,
+        ))),
         "dss" => Ok(RoutedFamily::Distribution(Some(
             format::routing::DistributionFormat::Dss,
         ))),

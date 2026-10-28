@@ -239,7 +239,10 @@ using the sole winding whose control mode is not fixed (regulation may be
 disabled). Ratio coordinates on a branch are in its effective t1/t2 tap
 units; three-winding ratio coordinates are bus-base per-unit winding taps. `impedance_correction_nominal` holds the nominal impedance once
 `apply_impedance_correction` has scaled it: `[r, x]` on a branch and the three
-pairwise `[r, x]` on a three winding transformer.
+pairwise `[r, x]` on a three winding transformer. `impedance_correction_applied`
+holds the corrected impedance that call wrote, in the same layout; a present
+impedance that differs from it was edited afterward and is the nominal value
+from then on.
 
 Schema definition: `BranchCharging`.
 
@@ -658,7 +661,11 @@ terminal names are the source's own strings; for OpenDSS the terminal names
 are its node numbers. An element's `terminal_map` lists, in conductor order,
 the terminals of the named bus it connects to.
 
-Schema definition: `MulticonductorNetwork`.
+Without component geography, this is the original network body. The additive
+located-network alternative below carries typed points without changing these
+fields or their meanings.
+
+Schema definitions: `MulticonductorNetwork/anyOf/0`, `MulticonductorNetworkBody`.
 
 | field | type | unit | sign | invariant | if absent |
 |---|---|---|---|---|---|
@@ -682,6 +689,45 @@ Schema definition: `MulticonductorNetwork`.
 | `options` | array of `[name, value]` string pairs | | | source order | required |
 | `extras` | object | | | | required |
 | `geo` | `DistGeoMeta` or null | | | | null |
+
+### LocatedMulticonductorNetwork
+
+The `powerio.MulticonductorNetwork` value can instead contain a nested
+`"powerio.LocatedMulticonductorNetwork"` record. It remains the same runtime
+network family. An older reader rejects the wrapper because its required
+electrical fields are absent at the root. This representation works wherever
+the network is stored, including calculation and collection values.
+
+Schema definition: `LocatedNetworkWire`.
+
+| field | type | unit | sign | invariant | if absent |
+|---|---|---|---|---|---|
+| `type` | string | | | exactly `"powerio.LocatedMulticonductorNetwork"` | required |
+| `value` | `LocatedNetworkFields` | | | | required |
+
+Schema definition: `LocatedNetworkFields`.
+
+| field | type | unit | sign | invariant | if absent |
+|---|---|---|---|---|---|
+| `network` | `MulticonductorNetworkBody` | | | original electrical network layout above | required |
+| `locations` | array of `DistComponentLocation` | | | at most 1,048,576; one point per exact component identity | required |
+
+Schema definition: `DistComponentLocation`.
+
+| field | type | unit | sign | invariant | if absent |
+|---|---|---|---|---|---|
+| `target` | `bus`, `line`, `line_code`, `switch`, `transformer`, `load`, `generator`, `ibr`, `shunt`, `capacitor`, `source` | | | names the component table | required |
+| `name` | string | | | exact existing component id/name; case sensitive | required |
+| `point` | `DistGeographicPoint` | | | independent of drawing positions, routes and electrical length | required |
+| `kind` | `source`, `synthetic`, `manual`, `derived`, or null | | | point origin | null |
+
+Schema definition: `DistGeographicPoint`.
+
+| field | type | unit | sign | invariant | if absent |
+|---|---|---|---|---|---|
+| `latitude` | float or null | decimal degrees | north positive | finite, in [-90, 90]; at least one axis present | null |
+| `longitude` | float or null | decimal degrees | east positive | finite, in [-180, 180]; zero is a stated coordinate | null |
+| `datum` | string or null | | | nonempty when stated; null means unknown, never implied WGS84 | null |
 
 ### DistBus
 

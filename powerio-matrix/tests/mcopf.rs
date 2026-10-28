@@ -647,6 +647,50 @@ fn canonical_wye_capacitor_nameplate_matches_the_admittance_builder() {
     assert!((p.shunts[0].b[0][0] - 0.1).abs() < 1e-14);
 }
 
+/// #685: a two-terminal delta bank is one phase-to-phase coil at line-to-line
+/// voltage, so both consumers stamp B = q / V^2 (50 var at 230 V), not half.
+#[test]
+fn two_terminal_delta_capacitor_stamps_its_full_rating_in_both_consumers() {
+    let capacitor = powerio_dist::DistCapacitor::new(
+        "cap",
+        "load",
+        names(&["a", "n"]),
+        Configuration::Delta,
+        50.0,
+        230.0,
+    );
+    let siemens = 50.0 / (230.0 * 230.0);
+
+    let mut alone = MulticonductorNetwork::new();
+    alone
+        .buses_mut()
+        .push(DistBus::new("load", names(&["a", "n"])));
+    alone.capacitors_mut().push(capacitor.clone());
+    let system = powerio_matrix::calc_multiconductor_admittance_matrix(&alone).unwrap();
+    let b = system.susceptance();
+    for (i, j, sign) in [(0, 0, 1.0), (1, 1, 1.0), (0, 1, -1.0), (1, 0, -1.0)] {
+        let stamped = b.get(i, j).copied().unwrap_or(0.0);
+        assert!(
+            (stamped - sign * siemens).abs() < 1e-15,
+            "Y[{i},{j}] = {stamped}"
+        );
+    }
+
+    // Preparation stamps the same coil on the 230 V, 1 kVA base (Z_base 52.9).
+    let mut n = network();
+    n.capacitors_mut().push(capacitor);
+    let p = prepare(n);
+    let per_unit = siemens * 230.0 * 230.0 / 1000.0;
+    for (actual, want) in p.shunts[0]
+        .b
+        .iter()
+        .flatten()
+        .zip([per_unit, -per_unit, -per_unit, per_unit])
+    {
+        assert!((*actual - want).abs() < 1e-14, "{actual} vs {want}");
+    }
+}
+
 #[test]
 fn per_coil_bmopf_capacitors_enter_ivr_as_the_same_canonical_shunt() {
     let text = r#"{"bus":{"s":{"terminal_names":["a","b","c","n"],"perfectly_grounded_terminals":["n"]}},"voltage_source":{"grid":{"bus":"s","terminal_map":["a","b","c","n"],"v_magnitude":[230,230,230,0],"v_angle":[0,-2.0943951023931953,2.0943951023931953,0]}},"capacitor":{"c":{"bus":"s","terminal_map":["a","b","c","n"],"configuration":"WYE","q_rated":[13,25,7],"v_nom":230}}}"#;
@@ -948,4 +992,159 @@ fn inverter_control_laws_intersect_selected_reactive_capability() {
             }
         }
     }
+}
+
+#[test]
+fn bounded_load_laws_are_not_silently_projected_by_ivr_preparation() {
+    use powerio_dist::DistLoadVoltageModel as Law;
+    let instance = McAcOpfInstance::from_network(network()).unwrap();
+    assert!(build_mc_ac_opf_preparation(&instance, &McAcOpfAssemblyOptions::default()).is_ok());
+    for law in [
+        Law::BoundedZip {
+            v_nom: vec![230.0],
+            alpha_z: vec![0.0],
+            alpha_i: vec![0.0],
+            alpha_p: vec![1.0],
+            beta_z: vec![0.0],
+            beta_i: vec![0.0],
+            beta_p: vec![1.0],
+            v_low_pu: 0.5,
+            v_min_pu: 0.95,
+            v_max_pu: 1.05,
+            cutoff_pu: 0.0,
+        },
+        Law::BoundedExponential {
+            v_nom: vec![230.0],
+            gamma_p: vec![1.0],
+            gamma_q: vec![2.0],
+            v_low_pu: 0.5,
+            v_min_pu: 0.95,
+            v_max_pu: 1.05,
+        },
+        Law::BoundedConstantPower {
+            v_nom: vec![230.0],
+            v_min_pu: 0.95,
+            v_max_pu: 1.05,
+            current_limit_pu: Some(1.1),
+        },
+    ] {
+        let mut net = network();
+        net.loads_mut()[0].voltage_model = law;
+        let instance = McAcOpfInstance::from_network(net).unwrap();
+        let error =
+            build_mc_ac_opf_preparation(&instance, &McAcOpfAssemblyOptions::default()).unwrap_err();
+        assert!(
+            error.to_string().contains("piecewise IVR equations"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn projecting_bounded_load_laws_is_an_explicit_opt_in_with_one_diagnostic_per_load() {
+    use powerio_dist::DistLoadVoltageModel as Law;
+    use powerio_matrix::BoundedLoadLawPolicy;
+    let bounded = |alpha_z: f64, alpha_p: f64| Law::BoundedZip {
+        v_nom: vec![230.0],
+        alpha_z: vec![alpha_z],
+        alpha_i: vec![0.0],
+        alpha_p: vec![alpha_p],
+        beta_z: vec![alpha_z],
+        beta_i: vec![0.0],
+        beta_p: vec![alpha_p],
+        v_low_pu: 0.5,
+        v_min_pu: 0.95,
+        v_max_pu: 1.05,
+        cutoff_pu: 0.0,
+    };
+    let opt_in = McAcOpfAssemblyOptions::default()
+        .with_bounded_load_laws(BoundedLoadLawPolicy::ProjectToNominal);
+    assert_eq!(
+        McAcOpfAssemblyOptions::default().bounded_load_laws,
+        BoundedLoadLawPolicy::Refuse
+    );
+
+    // The OpenDSS default (model=1) is constant power inside the band.
+    let mut net = network();
+    net.loads_mut()[0].voltage_model = bounded(0.0, 1.0);
+    let instance = McAcOpfInstance::from_network(net).unwrap();
+    assert!(
+        build_mc_ac_opf_preparation(&instance, &McAcOpfAssemblyOptions::default()).is_err(),
+        "the default stays strict"
+    );
+    let prepared = build_mc_ac_opf_preparation(&instance, &opt_in).unwrap();
+    assert_eq!(prepared.load_law_projections.len(), 1);
+    let projection = &prepared.load_law_projections[0];
+    assert_eq!(projection.source_model, "bounded_zip");
+    assert_eq!(projection.projected_model, "constant_power");
+    let diagnostics = prepared.diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code(), "BUILD.MULTI.LOAD_LAW_PROJECTED");
+    let load = prepared
+        .devices
+        .iter()
+        .find(|d| d.kind == McOpfDeviceKind::Load)
+        .unwrap();
+    assert!(load.coils.iter().all(|coil| coil.load_law.is_none()));
+
+    // A constant impedance band projects to the nominal ZIP law.
+    let mut net = network();
+    net.loads_mut()[0].voltage_model = bounded(1.0, 0.0);
+    let instance = McAcOpfInstance::from_network(net).unwrap();
+    let prepared = build_mc_ac_opf_preparation(&instance, &opt_in).unwrap();
+    assert_eq!(prepared.load_law_projections[0].projected_model, "zip");
+    let load = prepared
+        .devices
+        .iter()
+        .find(|d| d.kind == McOpfDeviceKind::Load)
+        .unwrap();
+    assert!(load.coils.iter().all(|coil| coil.load_law.is_some()));
+
+    // OpenDSS models 3 and 4 read as a bounded exponential law.
+    let mut net = network();
+    net.loads_mut()[0].voltage_model = Law::BoundedExponential {
+        v_nom: vec![230.0],
+        gamma_p: vec![0.0],
+        gamma_q: vec![2.0],
+        v_low_pu: 0.5,
+        v_min_pu: 0.95,
+        v_max_pu: 1.05,
+    };
+    let instance = McAcOpfInstance::from_network(net).unwrap();
+    assert!(build_mc_ac_opf_preparation(&instance, &McAcOpfAssemblyOptions::default()).is_err());
+    let prepared = build_mc_ac_opf_preparation(&instance, &opt_in).unwrap();
+    assert_eq!(
+        prepared.load_law_projections[0].source_model,
+        "bounded_exponential"
+    );
+    assert_eq!(
+        prepared.load_law_projections[0].projected_model,
+        "exponential"
+    );
+
+    // A voltage-bounded constant-power law projects to constant power.
+    let mut net = network();
+    net.loads_mut()[0].voltage_model = Law::BoundedConstantPower {
+        v_nom: vec![230.0],
+        v_min_pu: 0.9,
+        v_max_pu: 1.1,
+        current_limit_pu: None,
+    };
+    let instance = McAcOpfInstance::from_network(net).unwrap();
+    assert!(build_mc_ac_opf_preparation(&instance, &McAcOpfAssemblyOptions::default()).is_err());
+    let prepared = build_mc_ac_opf_preparation(&instance, &opt_in).unwrap();
+    assert_eq!(
+        prepared.load_law_projections[0].source_model,
+        "bounded_constant_power"
+    );
+    assert_eq!(
+        prepared.load_law_projections[0].projected_model,
+        "constant_power"
+    );
+
+    // Loads that carry no bounded law are not touched.
+    let instance = McAcOpfInstance::from_network(network()).unwrap();
+    let prepared = build_mc_ac_opf_preparation(&instance, &opt_in).unwrap();
+    assert_eq!(prepared.load_law_projections, []);
+    assert_eq!(prepared.diagnostics(), []);
 }

@@ -59,6 +59,7 @@ pub mod geo;
 pub mod hvdc;
 pub mod indexed;
 pub mod islands;
+pub mod lcc;
 pub mod merge;
 pub mod network;
 mod normalize;
@@ -109,8 +110,9 @@ pub use contingency::{
     InterfaceMember, JoinName, MonitorScope, MonitorStatement, MonitoredParsed,
     MonitoredResolution, MonitoredSet, PsseEquipmentIndex, ResolvedCase, ResolvedComponent,
     ResolvedInterface, ResolvedVoltageScope, RetainedStatement, ScaledQuantity, SelectorGroup,
-    SkipRule, Subsystem, SubsystemDispatchRule, SubsystemParsed, SubsystemSelector, SubsystemSet,
-    UnresolvedAction, UnresolvedMonitor, UnresolvedMonitorReason, UnresolvedReason,
+    SharedPsseEquipmentIndex, SkipRule, Subsystem, SubsystemDispatchRule, SubsystemParsed,
+    SubsystemSelector, SubsystemSet, UnresolvedAction, UnresolvedMonitor, UnresolvedMonitorReason,
+    UnresolvedReason,
 };
 pub use dc::BranchSusceptanceFormula;
 pub use diagnostics::{Diagnostic, DiagnosticCode, DiagnosticSeverity, EmitFamily};
@@ -140,6 +142,7 @@ pub use geo::{
 pub use hvdc::{HvdcInjections, HvdcTerminalInjection, HvdcTerminalPowers, HvdcTreatment};
 pub use indexed::{ConnectivityReport, IndexCore, IndexedNetwork};
 pub use islands::{Island, IslandPartition, IslandReferencePolicy, IslandReferenceReport};
+pub use lcc::{LccConverterState, LccOperatingPoint};
 pub use merge::{
     BusGroup, BusMerge, BusMergeRule, MergeSurvivor, MergedCharging, MergedFlows,
     PSSE_DEFAULT_ZERO_IMPEDANCE_THRESHOLD, RemovalReason, RemovedBranch, RemovedFlow,
@@ -171,4 +174,4 @@ pub use normalize::{
     NormalizeSettings, NormalizeSourceRows, NormalizedNetwork, POWER_MODELS_ANGLE_BOUND_PAD,
     correct_angle_difference_bounds, stated_angle_difference_bounds,
 };
-pub use operations::{BusSubset, Selector};
+pub use operations::{BusSubset, Selector, ZeroImpedanceReduction};
