@@ -4685,8 +4685,11 @@ mod tests {
         let net = parse_rawx_source(&source, None, &mut diagnostics).unwrap();
 
         assert_eq!(net.name(), "first line second line");
-        assert!(diagnostics.lines().iter().any(|line| {
-            line.contains("RAWX string value(s)")
-        }));
+        assert!(
+            diagnostics
+                .lines()
+                .iter()
+                .any(|line| { line.contains("RAWX string value(s)") })
+        );
     }
 }
