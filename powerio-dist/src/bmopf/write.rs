@@ -3308,6 +3308,52 @@ mod tests {
     use crate::model::{DistLoadVoltageModel, IbrPrimeMover, IbrTopology};
     use crate::testkit::parse_bmopf_str;
 
+    #[test]
+    fn pmd_time_series_normalization_requires_neutral_options() {
+        let source = json!({
+            "values": [1.0, 0.5],
+            "time": [0.0, 60.0],
+            "source_id": "loadshape.ls1",
+            "offset": 0.0,
+            "replace": false
+        });
+        let (profile, metadata) = normalized_bmopf_time_series(&source).unwrap();
+        assert_eq!(profile, json!({"values": [1.0, 0.5], "time": [0.0, 60.0]}));
+        assert_eq!(
+            metadata,
+            Some(json!({
+                "source_id": "loadshape.ls1",
+                "offset": 0.0,
+                "replace": false
+            }))
+        );
+
+        assert!(
+            normalized_bmopf_time_series(&json!({
+                "values": [1.0],
+                "offset": 0.25
+            }))
+            .is_none(),
+            "a nonzero offset changes profile semantics"
+        );
+        assert!(
+            normalized_bmopf_time_series(&json!({
+                "values": [1.0],
+                "replace": true
+            }))
+            .is_none(),
+            "replace=true cannot be represented by a multiplicative profile"
+        );
+        assert!(
+            normalized_bmopf_time_series(&json!({
+                "values": [1.0],
+                "unrecognized": "field"
+            }))
+            .is_none(),
+            "unknown profile properties must not leak into strict BMOPF JSON"
+        );
+    }
+
     /// A dropped field's diagnostic code must never claim the field was
     /// kept, and a kept-under-extras diagnostic must never claim the field
     /// was dropped. Exercises the writer's own field-dropped and
