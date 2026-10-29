@@ -744,7 +744,9 @@ impl Writer {
         if extras.get(table_name).is_some_and(|v| !v.is_object()) {
             self.warn(
                 &C::EMIT_BMOPF_VALUE_SUBSTITUTED,
-                format!("extras.`{table_name}` is not a table; replaced to retain time-series metadata"),
+                format!(
+                    "extras.`{table_name}` is not a table; replaced to retain time-series metadata"
+                ),
             );
             extras.insert(table_name.to_string(), Value::Object(Map::new()));
         }
@@ -755,7 +757,9 @@ impl Writer {
         if collision {
             self.warn(
                 &C::EMIT_BMOPF_VALUE_SUBSTITUTED,
-                format!("extras.`{table_name}.{name}` was replaced by retained time-series metadata"),
+                format!(
+                    "extras.`{table_name}.{name}` was replaced by retained time-series metadata"
+                ),
             );
         }
         extras
