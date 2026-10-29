@@ -770,6 +770,35 @@ impl Writer {
             .insert(name.to_string(), value);
     }
 
+    fn normalize_time_series_or_retain(
+        &mut self,
+        name: &str,
+        value: Value,
+        has_unplaced: bool,
+        extras: &mut Map<String, Value>,
+    ) -> Option<Value> {
+        let normalized = if has_unplaced {
+            None
+        } else {
+            normalized_bmopf_time_series(&value)
+        };
+        if let Some((profile, metadata)) = normalized {
+            if let Some(metadata) = metadata {
+                self.stash_named_extra(extras, "pmd_time_series_metadata", name, metadata);
+            }
+            Some(profile)
+        } else {
+            self.warn(
+                &C::EMIT_BMOPF_FIELD_DROPPED,
+                format!(
+                    "time_series {name}: PMD-specific options or fields cannot be represented by BMOPF; profile omitted and retained under extras.powerio_unmapped_time_series"
+                ),
+            );
+            self.stash_named_extra(extras, "powerio_unmapped_time_series", name, value);
+            None
+        }
+    }
+
     /// Untyped BMOPF ecosystem objects, one pass: the tables that lost
     /// their top-level slots in schema 0.1.0 re-emit under `extras`, while
     /// untyped transformer subtypes keep their place under `transformer`.
@@ -811,40 +840,12 @@ impl Writer {
                 );
             }
             let value = if u.class == "time_series" {
-                let normalized = if has_unplaced {
-                    None
-                } else {
-                    normalized_bmopf_time_series(&value)
+                let Some(value) =
+                    self.normalize_time_series_or_retain(&u.name, value, has_unplaced, extras)
+                else {
+                    continue;
                 };
-                match normalized {
-                    Some((profile, metadata)) => {
-                        if let Some(metadata) = metadata {
-                            self.stash_named_extra(
-                                extras,
-                                "pmd_time_series_metadata",
-                                &u.name,
-                                metadata,
-                            );
-                        }
-                        profile
-                    }
-                    None => {
-                        self.warn(
-                            &C::EMIT_BMOPF_FIELD_DROPPED,
-                            format!(
-                                "time_series {}: PMD-specific options or fields cannot be represented by BMOPF; profile omitted and retained under extras.powerio_unmapped_time_series",
-                                u.name
-                            ),
-                        );
-                        self.stash_named_extra(
-                            extras,
-                            "powerio_unmapped_time_series",
-                            &u.name,
-                            value,
-                        );
-                        continue;
-                    }
-                }
+                value
             } else {
                 value
             };
