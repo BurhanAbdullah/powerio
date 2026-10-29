@@ -339,7 +339,9 @@ fn pmd_loadshape_maps_to_bmopf_profile() {
     );
     assert_eq!(
         doc["time_series"]["ls1"]["values"],
-        serde_json::json!([0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05])
+        serde_json::json!([
+            0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05
+        ])
     );
     assert_eq!(
         doc["time_series"]["ls1"]["time"],
