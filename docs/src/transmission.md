@@ -127,15 +127,25 @@ calculated-bus records so fresh XIIDM emission preserves the selected buses.
 The older selector-based `subset` shares this filtering but still returns a
 network directly.
 
+To keep row indices fixed instead, `keep_island(&buses)` works in place: it
+de-energizes every other bus not already typed isolated and returns those
+buses, so the equipment outside the island stays in its table, out of
+service. `de_energize_buses(&buses)` is the step it builds on, the same one
+`assign_island_references` applies to an island with no source; it also takes
+the generators at those buses out of service.
+
 A power flow needs one reference bus per island, and an island with no source
 cannot be solved. `assign_island_references` with the per island policy gives
-each island exactly one:
+each island exactly one, on a bus that hosts an in-service generator:
 
-- an island that states one reference keeps it;
-- an island that states none takes the bus of its largest `pmax` in-service
-  generator;
-- an island that states several keeps the one hosting the most generation and
-  demotes the others;
+- a stated reference that hosts no in-service generator cannot balance its
+  island and is demoted to PQ first; the rules below count only the
+  references that remain;
+- an island with one reference keeps it;
+- an island with none takes the bus of its largest `pmax` in-service
+  generator, the smallest bus id breaking ties;
+- an island with several keeps the one hosting the most generation and
+  demotes the others to PV;
 - an island with no in-service generator is de-energized: its buses are typed
   isolated and the equipment on or touching them is taken out of service.
   Three winding transformers lose only windings on those buses; the whole
@@ -147,10 +157,10 @@ each island exactly one:
   the converter bus to keep the island.
 
 Every change is reported under `CANONICALIZE.ISLAND`. Normalization applies
-the same rule when asked, and leaves the unsupplied islands out of the
-normalized network; by default it keeps the case's references and designates
-one only when none survives. `powerio summary` lists the islands under
-`topology.islands`.
+the same rule when asked, picks the same reference buses, and leaves the
+unsupplied islands out of the normalized network; by default it keeps the
+case's references and designates one only when none survives.
+`powerio summary` lists the islands under `topology.islands`.
 
 ```python
 normalized = network.to_normalized(island_references="per_island")
@@ -181,4 +191,6 @@ their interpolation and angle/ratio classification. When winding 2 cannot
 be set to one without changing a ratio table's meaning, the writer chooses
 an equivalent nonunit ratio. RAW33/34 cannot state `ZCOD=1`; output freezes
 its present corrected pairwise impedances and reports the lost dependence
-on tap position. RAWX correction tables remain unsupported and are reported.
+on tap position. RAWX reads and writes the same tables as its `impcor`
+table, one `itable, tap, refact, imfact` row per point, with the RAW 35
+rules.

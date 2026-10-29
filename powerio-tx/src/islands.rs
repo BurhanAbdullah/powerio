@@ -25,11 +25,14 @@ pub enum IslandReferencePolicy {
     /// [`BalancedNetwork::assign_island_references`] changes nothing.
     #[default]
     Stated,
-    /// One reference per island. An island that states none takes the bus of
-    /// its in-service generator with the largest `pmax`; an island stating
-    /// several keeps the one with the most generation and demotes the
-    /// others; an island with no in-service generator cannot be solved and is
-    /// de-energized.
+    /// One reference per island, on a bus that hosts an in-service
+    /// generator. A stated reference that hosts none is demoted first. An
+    /// island left with no reference takes the bus of its in-service
+    /// generator with the largest `pmax` (the smallest bus id breaking ties);
+    /// an island left with several keeps the one with the most generation and
+    /// demotes the others; an island with no in-service generator cannot be
+    /// solved and is de-energized. Normalization under this policy picks the
+    /// same reference buses.
     PerIsland,
 }
 
@@ -54,6 +57,38 @@ impl Island {
     #[must_use]
     pub fn is_supplied(&self) -> bool {
         !self.generators.is_empty()
+    }
+
+    /// The one reference bus [`IslandReferencePolicy::PerIsland`] gives this
+    /// island, without changing the network. Only a stated reference that
+    /// hosts an in-service generator counts: the island keeps it when it
+    /// states one, takes the bus of its largest `pmax` in-service generator
+    /// (the smallest bus id breaking ties) when it states none, and keeps the
+    /// one hosting the most in-service `pmax` (the smallest id breaking ties)
+    /// when it states several. `None` when no in-service generator supplies
+    /// the island, which that policy de-energizes. `generators` is the
+    /// network's generator table.
+    #[must_use]
+    pub fn calc_reference_choice(&self, generators: &[Generator]) -> Option<BusId> {
+        match self.supplied_references(generators).as_slice() {
+            [bus] => Some(*bus),
+            [] => largest_generator_bus(generators, &self.generators),
+            references => kept_reference(references, generators, &self.generators),
+        }
+    }
+
+    /// The stated references that host one of the island's in-service
+    /// generators, in ascending id order.
+    fn supplied_references(&self, generators: &[Generator]) -> Vec<BusId> {
+        self.references
+            .iter()
+            .copied()
+            .filter(|&bus| {
+                self.generators
+                    .iter()
+                    .any(|&row| generators[row].bus == bus)
+            })
+            .collect()
     }
 }
 
@@ -86,7 +121,8 @@ pub struct IslandReferenceReport {
     pub partition: IslandPartition,
     /// Buses made the reference of their island.
     pub designated: Vec<BusId>,
-    /// Reference buses demoted because their island kept another.
+    /// Reference buses demoted, because they host no in-service generator
+    /// or because their island kept another, in ascending id order.
     pub demoted: Vec<BusId>,
     /// Buses of the islands that were de-energized, now typed isolated.
     pub de_energized: Vec<BusId>,
@@ -105,14 +141,15 @@ fn pmax_key(generator: &Generator) -> f64 {
 }
 
 /// The bus of the in-service generator with the largest `pmax` among `rows`,
-/// the smallest row breaking ties.
+/// the smallest bus id breaking ties, so the choice does not depend on row
+/// order.
 pub(crate) fn largest_generator_bus(generators: &[Generator], rows: &[usize]) -> Option<BusId> {
     rows.iter()
         .copied()
         .max_by(|&a, &b| {
             pmax_key(&generators[a])
                 .total_cmp(&pmax_key(&generators[b]))
-                .then(b.cmp(&a))
+                .then(generators[b].bus.cmp(&generators[a].bus))
         })
         .map(|row| generators[row].bus)
 }
@@ -280,14 +317,16 @@ impl BalancedNetwork {
     /// Give every island one reference bus under `policy`, returning what
     /// changed.
     ///
-    /// Under [`IslandReferencePolicy::PerIsland`]:
+    /// Under [`IslandReferencePolicy::PerIsland`], in a supplied island:
     ///
-    /// - An island that states one reference keeps it.
-    /// - An island that states none and holds an in-service generator gets
-    ///   the bus of its largest `pmax` generator as its reference.
-    /// - An island that states several keeps the one hosting the most
-    ///   in-service `pmax` (the smallest id breaking ties) and demotes the
-    ///   others to PV when they host an in-service generator, else PQ.
+    /// - A stated reference that hosts no in-service generator cannot balance
+    ///   the island and is demoted to PQ first. What follows counts only the
+    ///   references that remain.
+    /// - An island with one reference keeps it.
+    /// - An island with none gets the bus of its largest `pmax` in-service
+    ///   generator (the smallest bus id breaking ties) as its reference.
+    /// - An island with several keeps the one hosting the most in-service
+    ///   `pmax` (the smallest id breaking ties) and demotes the others to PV.
     /// - An island with no in-service generator has no source to balance it,
     ///   so it is de-energized: its buses are typed isolated, and the
     ///   in-service loads, shunts, static var compensators, storage, and every
@@ -295,7 +334,8 @@ impl BalancedNetwork {
     ///   winding transformer loses the windings on those buses and goes out
     ///   whole only when fewer than two windings remain.
     ///
-    /// Each change records one finding. [`IslandReferencePolicy::Stated`]
+    /// Each change records one finding. Normalization under the same policy
+    /// picks the same reference buses. [`IslandReferencePolicy::Stated`]
     /// changes nothing and reports the partition.
     #[allow(clippy::too_many_lines)] // one stanza per island outcome
     pub fn assign_island_references(
@@ -314,12 +354,6 @@ impl BalancedNetwork {
         let mut demoted: Vec<(BusId, BusType)> = Vec::new();
         let mut dead: BTreeSet<BusId> = BTreeSet::new();
         let mut diagnostics = Vec::new();
-        let hosts_generator: BTreeSet<BusId> = self
-            .generators()
-            .iter()
-            .filter(|generator| generator.in_service)
-            .map(|generator| generator.bus)
-            .collect();
         for island in &partition.islands {
             if !island.is_supplied() {
                 let load: f64 = self
@@ -337,28 +371,45 @@ impl BalancedNetwork {
                 dead.extend(island.buses.iter().copied());
                 continue;
             }
-            match island.references.as_slice() {
+            let supplied = island.supplied_references(self.generators());
+            let unsupplied: Vec<BusId> = island
+                .references
+                .iter()
+                .copied()
+                .filter(|bus| !supplied.contains(bus))
+                .collect();
+            if !unsupplied.is_empty() {
+                diagnostics.push(Diagnostic::of(
+                    &codes::CANONICALIZE_ISLAND_REFERENCE_DEMOTED,
+                    format!(
+                        "the island of {} bus(es) ({}) states reference bus(es) {} that host no \
+                         in-service generator and cannot balance it; they were demoted to PQ",
+                        island.buses.len(),
+                        bus_list(&island.buses),
+                        bus_list(&unsupplied)
+                    ),
+                ));
+                demoted.extend(unsupplied.iter().map(|&bus| (bus, BusType::Pq)));
+            }
+            let Some(kept) = island.calc_reference_choice(self.generators()) else {
+                continue;
+            };
+            match supplied.as_slice() {
                 [_] => {}
                 [] => {
-                    let Some(bus) = largest_generator_bus(self.generators(), &island.generators)
-                    else {
-                        continue;
-                    };
                     diagnostics.push(Diagnostic::of(
                         &codes::CANONICALIZE_ISLAND_REFERENCE_DESIGNATED,
                         format!(
-                            "the island of {} bus(es) ({}) states no reference bus; bus {bus} \
-                             hosts its largest pmax in-service generator and was designated the \
-                             reference",
+                            "the island of {} bus(es) ({}) states no reference bus that hosts an \
+                             in-service generator; bus {kept} hosts its largest pmax in-service \
+                             generator and was designated the reference",
                             island.buses.len(),
                             bus_list(&island.buses)
                         ),
                     ));
-                    designated.push(bus);
+                    designated.push(kept);
                 }
                 references => {
-                    let kept = kept_reference(references, self.generators(), &island.generators)
-                        .unwrap_or(references[0]);
                     let others: Vec<BusId> = references
                         .iter()
                         .copied()
@@ -367,27 +418,20 @@ impl BalancedNetwork {
                     diagnostics.push(Diagnostic::of(
                         &codes::CANONICALIZE_ISLAND_REFERENCE_DEMOTED,
                         format!(
-                            "the island of {} bus(es) states {} reference buses; bus {kept} \
-                             hosts the most generation and stays the reference, and bus(es) {} \
-                             were demoted",
+                            "the island of {} bus(es) states {} reference buses that host \
+                             generation; bus {kept} hosts the most and stays the reference, and \
+                             bus(es) {} were demoted to PV",
                             island.buses.len(),
                             references.len(),
                             bus_list(&others)
                         ),
                     ));
-                    for bus in others {
-                        let kind = if hosts_generator.contains(&bus) {
-                            BusType::Pv
-                        } else {
-                            BusType::Pq
-                        };
-                        demoted.push((bus, kind));
-                    }
+                    demoted.extend(others.into_iter().map(|bus| (bus, BusType::Pv)));
                 }
             }
         }
 
-        if !designated.is_empty() || !demoted.is_empty() || !dead.is_empty() {
+        if !designated.is_empty() || !demoted.is_empty() {
             let designated_set: BTreeSet<BusId> = designated.iter().copied().collect();
             let demoted_kind: HashMap<BusId, BusType> = demoted.iter().copied().collect();
             for bus in self.buses_mut() {
@@ -395,19 +439,19 @@ impl BalancedNetwork {
                     bus.kind = BusType::Ref;
                 } else if let Some(&kind) = demoted_kind.get(&bus.id) {
                     bus.kind = kind;
-                } else if dead.contains(&bus.id) {
-                    bus.kind = BusType::Isolated;
                 }
             }
         }
         if !dead.is_empty() {
-            self.de_energize(&dead);
+            self.de_energize_buses(&dead);
         }
 
+        let mut demoted: Vec<BusId> = demoted.into_iter().map(|(bus, _)| bus).collect();
+        demoted.sort_unstable();
         IslandReferenceReport {
             partition: self.calc_islands(),
             designated,
-            demoted: demoted.into_iter().map(|(bus, _)| bus).collect(),
+            demoted,
             de_energized: dead.into_iter().collect(),
             diagnostics,
         }
@@ -452,10 +496,59 @@ impl BalancedNetwork {
         )
     }
 
-    /// Take every element at or touching `buses` out of service. Only a table
-    /// with such an element in service is copied.
-    fn de_energize(&mut self, buses: &BTreeSet<BusId>) {
+    /// Keep `island` energized and de-energize every other bus not already
+    /// typed isolated, with [`de_energize_buses`](Self::de_energize_buses),
+    /// returning the buses de-energized in ascending order.
+    ///
+    /// This is the in-place counterpart of
+    /// [`subset_buses`](BalancedNetwork::subset_buses): every table keeps all
+    /// its rows, so a source row index still names the same element, and the
+    /// elements outside `island` stay in the network out of service. Pass the
+    /// buses of one [`Island`] of [`calc_islands`](Self::calc_islands), or
+    /// the union of several.
+    pub fn keep_island(&mut self, island: &BTreeSet<BusId>) -> Vec<BusId> {
+        let others: BTreeSet<BusId> = self
+            .buses()
+            .iter()
+            .filter(|bus| bus.kind != BusType::Isolated && !island.contains(&bus.id))
+            .map(|bus| bus.id)
+            .collect();
+        if !others.is_empty() {
+            self.de_energize_buses(&others);
+        }
+        others.into_iter().collect()
+    }
+
+    /// De-energize `buses`, as [`assign_island_references`] does to an island
+    /// with no source.
+    ///
+    /// Each bus is typed isolated, and the loads, shunts, static var
+    /// compensators, storage, and generators at them, and every branch and
+    /// HVDC line touching them, are taken out of service. A three winding
+    /// transformer loses the windings on those buses and goes out whole only
+    /// when fewer than two windings remain. Switches keep their state: a
+    /// closed switch joins nothing through an isolated bus. No row is added
+    /// or removed, so data keyed by source rows stays valid. Ids the network
+    /// does not declare are ignored, and only a table with an element to
+    /// change is copied.
+    ///
+    /// [`assign_island_references`]: BalancedNetwork::assign_island_references
+    pub fn de_energize_buses(&mut self, buses: &BTreeSet<BusId>) {
         let at = |bus: BusId| buses.contains(&bus);
+        if self
+            .buses()
+            .iter()
+            .any(|b| b.kind != BusType::Isolated && at(b.id))
+        {
+            for bus in self.buses_mut().iter_mut().filter(|b| at(b.id)) {
+                bus.kind = BusType::Isolated;
+            }
+        }
+        if self.generators().iter().any(|g| g.in_service && at(g.bus)) {
+            for generator in self.generators_mut().iter_mut().filter(|g| at(g.bus)) {
+                generator.in_service = false;
+            }
+        }
         if self.loads().iter().any(|l| l.in_service && at(l.bus)) {
             for load in self.loads_mut().iter_mut().filter(|l| at(l.bus)) {
                 load.in_service = false;
@@ -747,6 +840,44 @@ mod tests {
 
     #[test]
     fn of_two_references_in_one_island_the_larger_source_stays() {
+        let mut net = three_references();
+        let report = net.assign_island_references(IslandReferencePolicy::PerIsland);
+        assert_eq!(report.demoted, [BusId(1), BusId(3)]);
+        assert_eq!(kind(&net, 2), BusType::Ref);
+        assert_eq!(kind(&net, 1), BusType::Pv, "it hosts a generator");
+        assert_eq!(kind(&net, 3), BusType::Pq);
+        // Bus 3 hosts no generator and goes first; then bus 1 yields to bus 2.
+        assert_eq!(
+            codes(&report.diagnostics),
+            [
+                "CANONICALIZE.ISLAND.REFERENCE_DEMOTED",
+                "CANONICALIZE.ISLAND.REFERENCE_DEMOTED"
+            ]
+        );
+    }
+
+    /// Buses 1-2-3-4 in a line, the reference on bus 1 with no generator,
+    /// and generators of 50 MW on bus 3 and 120 MW on bus 4.
+    fn lone_generator_less_reference() -> BalancedNetwork {
+        let mut buses: Vec<Bus> = (1..=4)
+            .map(|id| Bus::new(BusId(id), BusType::Pq, 230.0))
+            .collect();
+        buses[0].kind = BusType::Ref;
+        let line = |from, to| Branch::new(BusId(from), BusId(to), 0.01, 0.1);
+        let mut net = BalancedNetwork::in_memory(
+            "generator-less-reference",
+            100.0,
+            buses,
+            vec![line(1, 2), line(2, 3), line(3, 4)],
+        );
+        net.generators_mut()
+            .extend([generator(3, 50.0), generator(4, 120.0)]);
+        net.loads_mut().push(Load::new(BusId(2), 60.0, 0.0));
+        net
+    }
+
+    /// Buses 1, 2, and 3 all stated references, generators on buses 1 and 2.
+    fn three_references() -> BalancedNetwork {
         let buses = (1..=3)
             .map(|id| Bus::new(BusId(id), BusType::Ref, 230.0))
             .collect();
@@ -755,15 +886,112 @@ mod tests {
             BalancedNetwork::in_memory("refs", 100.0, buses, vec![line(1, 2), line(2, 3)]);
         net.generators_mut()
             .extend([generator(1, 100.0), generator(2, 300.0)]);
+        net
+    }
+
+    #[test]
+    fn a_lone_generator_less_reference_yields_to_the_largest_generator() {
+        let mut net = lone_generator_less_reference();
+        let island = &net.calc_islands().islands[0];
+        assert_eq!(island.references, [BusId(1)]);
+        assert_eq!(
+            island.calc_reference_choice(net.generators()),
+            Some(BusId(4))
+        );
+
         let report = net.assign_island_references(IslandReferencePolicy::PerIsland);
-        assert_eq!(report.demoted, [BusId(1), BusId(3)]);
-        assert_eq!(kind(&net, 2), BusType::Ref);
-        assert_eq!(kind(&net, 1), BusType::Pv, "it hosts a generator");
-        assert_eq!(kind(&net, 3), BusType::Pq);
+        assert_eq!(report.demoted, [BusId(1)]);
+        assert_eq!(report.designated, [BusId(4)]);
+        assert_eq!(report.de_energized, []);
+        assert_eq!(kind(&net, 1), BusType::Pq);
+        assert_eq!(kind(&net, 4), BusType::Ref);
+        assert_eq!(
+            kind(&net, 3),
+            BusType::Pq,
+            "the smaller generator stays put"
+        );
         assert_eq!(
             codes(&report.diagnostics),
-            ["CANONICALIZE.ISLAND.REFERENCE_DEMOTED"]
+            [
+                "CANONICALIZE.ISLAND.REFERENCE_DEMOTED",
+                "CANONICALIZE.ISLAND.REFERENCE_DESIGNATED"
+            ]
         );
+        assert_eq!(report.partition.islands[0].references, [BusId(4)]);
+        net.validate().unwrap();
+        let again = net.assign_island_references(IslandReferencePolicy::PerIsland);
+        assert_eq!(again.diagnostics.as_slice(), []);
+
+        // Stated keeps the source's designation.
+        let mut stated = lone_generator_less_reference();
+        let report = stated.assign_island_references(IslandReferencePolicy::Stated);
+        assert_eq!(report.diagnostics.as_slice(), []);
+        assert_eq!(kind(&stated, 1), BusType::Ref);
+    }
+
+    #[test]
+    fn equal_generators_go_to_the_smallest_bus_id() {
+        let mut net = lone_generator_less_reference();
+        // A second 120 MW generator, on a smaller bus but a later row.
+        net.generators_mut().push(generator(2, 120.0));
+        let report = net.assign_island_references(IslandReferencePolicy::PerIsland);
+        assert_eq!(report.designated, [BusId(2)]);
+    }
+
+    /// The raw assignment and normalization under the per island policy
+    /// pick the same reference buses. Closed switches are kept so that bus
+    /// ids survive normalization.
+    #[test]
+    fn raw_and_normalized_per_island_references_agree() {
+        let references = |network: &BalancedNetwork| -> Vec<BusId> {
+            let mut ids: Vec<BusId> = network
+                .buses()
+                .iter()
+                .filter(|bus| bus.kind == BusType::Ref)
+                .map(|bus| bus.id)
+                .collect();
+            ids.sort_unstable();
+            ids
+        };
+        let settings = NormalizeSettings::default()
+            .with_island_references(IslandReferencePolicy::PerIsland)
+            .with_closed_switches(ClosedSwitchPolicy::Keep);
+        let fixtures = [
+            ("three islands", three_islands(), vec![1, 5]),
+            (
+                "dead tertiary",
+                line_with_a_tertiary(BusType::Isolated),
+                vec![1],
+            ),
+            ("live tertiary", line_with_a_tertiary(BusType::Pq), vec![1]),
+            (
+                "generator-less reference",
+                lone_generator_less_reference(),
+                vec![4],
+            ),
+            ("three references", three_references(), vec![2]),
+        ];
+        for (name, net, expected) in fixtures {
+            let expected: Vec<BusId> = expected.into_iter().map(BusId).collect();
+            let (normalized, _) = net.to_normalized_with(&settings).unwrap();
+            assert_eq!(
+                references(&normalized.network),
+                expected,
+                "{name}: normalized"
+            );
+            let mut raw = net.clone();
+            raw.assign_island_references(IslandReferencePolicy::PerIsland);
+            assert_eq!(references(&raw), expected, "{name}: raw");
+            let choices: Vec<BusId> = net
+                .calc_islands()
+                .islands
+                .iter()
+                .filter_map(|island| island.calc_reference_choice(net.generators()))
+                .collect();
+            let mut choices = choices;
+            choices.sort_unstable();
+            assert_eq!(choices, expected, "{name}: calc_reference_choice");
+        }
     }
 
     #[test]
@@ -910,5 +1138,140 @@ mod tests {
         assert_eq!(sub.loads().len(), 1);
         assert_eq!(sub.hvdc().as_slice(), []);
         sub.validate().unwrap();
+    }
+
+    /// Every source row of every table maps to its row in the cut, in order,
+    /// or to `None` exactly when the cut leaves it out.
+    #[test]
+    fn island_cut_row_maps_agree_with_the_cut_network() {
+        let fixtures = [
+            three_islands(),
+            line_with_a_tertiary(BusType::Isolated),
+            line_with_a_tertiary(BusType::Pq),
+        ];
+        for net in fixtures {
+            for island in net.calc_islands().islands {
+                let island: BTreeSet<BusId> = island.buses.iter().copied().collect();
+                let cut = net.subset_buses(&island);
+                let kept: BTreeSet<BusId> = cut.network.buses().iter().map(|b| b.id).collect();
+                assert!(island.is_subset(&kept));
+                macro_rules! check {
+                    ($map:ident, $table:ident, $kept:expr) => {{
+                        let source = net.$table();
+                        let result = cut.network.$table();
+                        assert_eq!(cut.$map.len(), source.len(), stringify!($map));
+                        let rows: Vec<usize> = cut.$map.iter().flatten().copied().collect();
+                        assert_eq!(rows, (0..result.len()).collect::<Vec<_>>());
+                        for (row, target) in cut.$map.iter().enumerate() {
+                            let element = &source[row];
+                            #[allow(clippy::redundant_closure_call)]
+                            let expected = ($kept)(element);
+                            assert_eq!(
+                                target.is_some(),
+                                expected,
+                                "{} row {row}",
+                                stringify!($map)
+                            );
+                            if let Some(target) = target {
+                                assert_eq!(&result[*target], element);
+                            }
+                        }
+                    }};
+                }
+                for (row, target) in cut.bus_rows.iter().enumerate() {
+                    let id = net.buses()[row].id;
+                    assert_eq!(target.is_some(), kept.contains(&id));
+                    if let Some(target) = target {
+                        assert_eq!(cut.network.buses()[*target].id, id);
+                    }
+                }
+                let at = |bus: &BusId| island.contains(bus);
+                let spans = |from: &BusId, to: &BusId| kept.contains(from) && kept.contains(to);
+                check!(load_rows, loads, |e: &Load| at(&e.bus));
+                check!(generator_rows, generators, |e: &Generator| at(&e.bus));
+                check!(branch_rows, branches, |e: &Branch| spans(&e.from, &e.to));
+                check!(switch_rows, switches, |e: &Switch| spans(&e.from, &e.to));
+                check!(hvdc_rows, hvdc, |e: &Hvdc| spans(&e.from, &e.to));
+                check!(transformer_3w_rows, transformers_3w, |e: &Transformer3W| e
+                    .windings
+                    .iter()
+                    .all(|w| kept.contains(&w.bus))
+                    && e.windings.iter().any(|w| at(&w.bus)));
+                assert_eq!(cut.shunt_rows.len(), net.shunts().len());
+                assert_eq!(cut.storage_rows.len(), net.storage().len());
+                assert_eq!(
+                    cut.static_var_compensator_rows.len(),
+                    net.static_var_compensators().len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn de_energizing_buses_keeps_every_row() {
+        let mut net = three_islands();
+        let rows = |net: &BalancedNetwork| {
+            [
+                net.buses().len(),
+                net.branches().len(),
+                net.switches().len(),
+                net.generators().len(),
+                net.loads().len(),
+                net.hvdc().len(),
+            ]
+        };
+        let before = rows(&net);
+        // Island B {3, 4, 5} holds generation; de-energizing takes it out too.
+        net.de_energize_buses(&[BusId(3), BusId(4), BusId(5), BusId(99)].into());
+        assert_eq!(rows(&net), before, "no row is added or removed");
+        for bus in [3, 4, 5] {
+            assert_eq!(kind(&net, bus), BusType::Isolated);
+        }
+        assert_eq!(kind(&net, 2), BusType::Pq);
+        assert!(!net.branches()[2].in_service, "the line 3-4");
+        assert!(net.switches()[0].closed, "switches keep their state");
+        assert!(net.generators()[0].in_service);
+        assert!(!net.generators()[1].in_service && !net.generators()[2].in_service);
+        assert!(!net.loads()[1].in_service && net.loads()[0].in_service);
+        let partition = net.calc_islands();
+        assert_eq!(partition.island_of(BusId(4)), None);
+        assert_eq!(partition.islands.len(), 2);
+        net.validate().unwrap();
+    }
+
+    #[test]
+    fn keeping_one_island_de_energizes_the_others_in_place() {
+        let mut net = three_islands();
+        let partition = net.calc_islands();
+        let island: BTreeSet<BusId> = partition.islands[1].buses.iter().copied().collect();
+        let cut = net.subset_buses(&island);
+        let dead = net.keep_island(&island);
+        // Bus 8 was already isolated; the buses of islands A and C go.
+        assert_eq!(dead, [1, 2, 6, 7, 9].map(BusId));
+        let after = net.calc_islands();
+        assert_eq!(after.islands.len(), 1);
+        assert_eq!(after.islands[0].buses, partition.islands[1].buses);
+        // The in-service elements are exactly the ones the cut keeps, at
+        // their source rows.
+        for (row, target) in cut.branch_rows.iter().enumerate() {
+            assert_eq!(net.branches()[row].in_service, target.is_some());
+        }
+        for (row, target) in cut.generator_rows.iter().enumerate() {
+            assert_eq!(net.generators()[row].in_service, target.is_some());
+        }
+        for (row, target) in cut.load_rows.iter().enumerate() {
+            assert_eq!(net.loads()[row].in_service, target.is_some());
+        }
+        for (row, target) in cut.hvdc_rows.iter().enumerate() {
+            assert_eq!(net.hvdc()[row].in_service, target.is_some());
+        }
+        assert_eq!(
+            net.keep_island(&island),
+            [],
+            "a second call changes nothing"
+        );
+        let report = net.assign_island_references(IslandReferencePolicy::PerIsland);
+        assert_eq!(report.de_energized, []);
+        net.validate().unwrap();
     }
 }

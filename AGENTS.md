@@ -188,8 +188,9 @@ powerio-core/src              module.rs (PioModule<T>), source.rs, output.rs,
                               time_series.rs, scenario.rs, component_id.rs,
                               validation.rs (limits), bounded.rs, nonfinite.rs
 powerio-tx/src                network.rs (BalancedNetwork and its tables),
-                              indexed.rs, normalize.rs, operations.rs, dc.rs,
-                              gen_cost.rs, geo/ (layer.rs, pwd.rs),
+                              indexed.rs, hvdc.rs, lcc.rs, normalize.rs,
+                              operations.rs, dc.rs, gen_cost.rs,
+                              geo/ (layer.rs, pwd.rs),
                               contingency/ (.con, .sub, .mon: mod.rs, lexer.rs,
                               resolve.rs, expand.rs, sub.rs, mon.rs),
                               collect.rs, diagnostics.rs, error.rs, version.rs
@@ -214,7 +215,8 @@ powerio-matrix/src            matrix/ (bprime, bdoubleprime, ybus, lacpf,
                               ac_jacobian.rs, dcopf/ (prep, nodal, limits, bundle),
                               acopf.rs, opf.rs, io/ (mtx, meta, sensitivity, gridfm),
                               lindist3flow*.rs (LinDist3Flow OPF and PF),
-                              pipeline.rs, synth/, diagnostics.rs, error.rs
+                              pipeline.rs, stated_state.rs, synth/, diagnostics.rs,
+                              error.rs
 powerio/src                   lib.rs (parse, emit), value.rs (PioValue), ir.rs,
                               stored/ (dto.rs, convert.rs), formats.rs, transform.rs,
                               write.rs, gridfm.rs, dist_geo.rs, collect.rs, codes.rs
@@ -233,6 +235,12 @@ docs/                         the mdBook guide, the schema archive, release note
 
 ## Things to know before editing
 
+- **How a change reaches review.** Follow CONTRIBUTING.md: an agreed plan in
+  an issue before a design decision (a small fix that restores documented
+  behavior goes straight to a pull request), one change per pull request
+  against `main`, by default at most three pull requests awaiting review per
+  author, the checks for the change run locally, and a description that
+  covers the whole diff. Agent-written pull requests follow it the same way.
 - **Workspace split.** `powerio-matrix` depends on `powerio-core`,
   `powerio-tx`, `powerio-dist`, and `powerio-prob`; the `powerio` facade
   re-exports matrix types behind the `matrix` feature. Do not introduce a
@@ -256,9 +264,10 @@ docs/                         the mdBook guide, the schema archive, release note
 - **Two tier fidelity.** Same format round trip is byte exact. Cross format
   emission keeps maximal fidelity and reports anything the target cannot
   represent through a `Diagnostic`; never drop it silently. The conversion
-  matrix test in `powerio-cli/tests/conversion_matrix_report.rs` pins the
-  expected warning counts; an intentional change edits the baseline in the
-  same PR.
+  matrix test in `powerio-cli/tests/conversion_matrix_report.rs` grades each
+  cell by its worst finding and pins every cell's level and finding codes in
+  `powerio-cli/tests/conversion_matrix.baseline`; an intentional change
+  regenerates that file with `POWERIO_MATRIX_BLESS=1` in the same PR.
 - **Adding a format.** A reader produces the value its supported profile
   declares. Balanced formats meet at `BalancedNetwork`; conductor resolved
   formats meet at `MulticonductorNetwork`. Register the token in
@@ -274,7 +283,7 @@ docs/                         the mdBook guide, the schema archive, release note
   IR version; older readers reject types they do not implement. Existing
   type layouts and meanings stay compatible throughout 0.11.x. The DTOs in
   `powerio/src/stored/dto.rs` define the document layout. Regenerate the schema
-  named by `IR_SCHEMA_ID`, currently `docs/schema/pio-ir/2/0.11.6/schema.json`.
+  named by `IR_SCHEMA_ID`, currently `docs/schema/pio-ir/2/0.11.7/schema.json`.
   Published snapshots, including `pio-ir/2/schema.json` from 0.11.0, remain
   byte-exact. The release in a catalog path is not a new IR version.
 - **Bindings stay typed and lazy.** C calls `pio_module_value`, checks the

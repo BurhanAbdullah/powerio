@@ -256,6 +256,33 @@ the whole batch before it applies anything and returns a `PioUpdateReport`
 listing the exact component IDs and fields it changed, and whether energized
 connectivity changed.
 
+AC optimal transmission switching has its own entry points.
+- **Build an instance.**
+  - `pio_module_to_ac_ots_instance` builds one with the default options from a
+    balanced network or AC OPF module.
+  - `pio_module_to_ac_ots_instance_with_options` takes a `PioAcOtsOptions`, and
+    also reconfigures an AC OTS module. NULL options are the same as
+    `pio_module_to_ac_ots_instance`.
+  - `pio_ac_ots_instance_create` combines an AC OPF instance handle with
+    options and keeps its objective exactly.
+- **Read an instance.** `pio_value_ac_ots_instance` returns the instance view.
+  - `pio_ac_ots_instance_options` reads its stated options and branch count.
+  - `pio_ac_ots_instance_branch_at` reads one branch's initial status, whether
+    it may switch, its costs, and its current limits.
+- **Check and fix a topology.** A final topology is one byte per branch: 0 is
+  open and 1 is closed.
+  - `pio_ac_ots_instance_validate_topology` checks it and writes its switching
+    cost.
+  - `pio_ac_ots_instance_fix_topology` returns the AC OPF module over it.
+- **Attach and read a solution.**
+  - `pio_ac_ots_solution_create` attaches that AC OPF problem's solution.
+  - `pio_value_ac_ots_solution` returns the solution view.
+  - `pio_ac_ots_solution_summary` reads the open and switched counts, the
+    switching cost, and the objective.
+  - `pio_ac_ots_solution_branch_closed_at` reads one final status.
+  - `pio_ac_ots_solution_materialize` returns the network with the final
+    statuses and solved values, ready for `pio_emit`.
+
 Named matrix and vector functions expose the public DC calculations directly:
 
 ```text
@@ -289,3 +316,37 @@ over the handle as `pio_dc_operators_incidence_matrix`,
 `pio_dc_operators_bus_phase_shift_injection`,
 `pio_dc_operators_branch_flow_dc`, and `pio_dc_operators_bus_injection_dc`;
 release the handle with `pio_dc_operators_release`.
+
+
+Distribution loads with voltage bands, dropout or current limits use
+`pio_multiconductor_network_load_details_at`. Its borrowed voltage-law view
+keeps nominal voltages, ZIP fractions or exponents, and every transition bound.
+Presence flags distinguish absent bounds from zero. The existing load view
+keeps its ABI 7 layout and rejects laws it cannot describe.
+
+`pio_mc_ac_pf_instance_load_details_at` returns prescribed power arrays and the
+same complete law. `pio_mc_ac_pf_instance_load_terminal_name_at` reads the full
+terminal map; power channels can have fewer entries than that map when it
+includes a reference conductor. Keep the network or instance handle alive while
+using any borrowed string or numeric array. These accessors do not serialize or
+clone the network.
+
+`pio_balanced_network_islands` partitions a balanced network into AC islands
+with the Rust `calc_islands` rule and returns a `PioIslands` handle.
+`pio_islands_count` and `pio_islands_at` read one `PioIslandView` per island,
+largest first: its bus positions and ids, its reference buses, its in service
+generators and HVDC ties, and whether a generator supplies it.
+`pio_islands_isolated_bus_ids` and `pio_islands_isolated_bus_indices` list the
+buses typed isolated, which belong to no island. Release the handle with
+`pio_islands_release`.
+
+`pio_calc_sensitivities` computes the DC PTDF and LODF through the routine
+the Python binding calls and returns a `PioSensitivities` handle. The formula
+is chosen as for the DC operators, and the solver is `auto`, `dense`, or
+`sparse`. Every reference bus is grounded, one per island, and its PTDF
+column is zero. `pio_sensitivities_ptdf` (branches by buses) and
+`pio_sensitivities_lodf` (branches by branches) are dense row major spans
+borrowed from the handle; `pio_sensitivities_bus_ids`,
+`pio_sensitivities_branch_rows`, `pio_sensitivities_branch_identity`, and
+`pio_sensitivities_reference_bus_indices` name the axes, which are the DC
+operators' axes. Release the handle with `pio_sensitivities_release`.

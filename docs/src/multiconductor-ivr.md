@@ -52,6 +52,25 @@ conductors, shunts, capacitor matrices, and ideal switches/sources. Currents
 remain explicit at exact-zero or singular impedance. There is no neutral
 reduction, impedance inversion, epsilon impedance, or ideal-switch contraction.
 
+Voltage-bounded ZIP, exponential and constant-power laws, including those read
+from ordinary OpenDSS loads, remain intact in the network and PF/OPF instance.
+The current IVR preparation profile refuses them explicitly because its power-law
+terms cannot represent their piecewise transitions, dropout or current limits.
+It does not silently approximate them by their nominal laws.
+
+A caller that accepts that approximation opts in explicitly:
+`McAcOpfAssemblyOptions::with_bounded_load_laws(BoundedLoadLawPolicy::ProjectToNominal)`
+replaces each bounded law by its nominal (middle-band) law. The low-voltage
+transitions, high-voltage continuation and dropout are then not modeled. The
+preparation lists one `McOpfLoadLawProjection` per load in
+`load_law_projections`, and `McAcOpfPreparation::diagnostics()` returns one
+`BUILD.MULTI.LOAD_LAW_PROJECTED` warning for each. The default,
+`BoundedLoadLawPolicy::Refuse`, is unchanged. Ordinary OpenDSS feeders, whose
+default `model=1` loads read as bounded laws, need this opt-in to reach OPF
+preparation. LinDist3Flow has the same choice through its `unsupported` policy:
+`reject` and `lower` refuse these loads, while `approximate` and `permissive`
+project them and record a `load_approximated` preparation action.
+
 Supported devices include WYE/DELTA/two-terminal P/I/Z/ZIP/exponential loads,
 generator capability and linear dispatch cost, single-phase/center-tapped/Yd/Dy
 and fixed n-winding transformers, type-A/B regulators, and supported open-delta
@@ -96,10 +115,12 @@ multiplier `t = 1`. The physical tap is `tap_nominal * t`, or `tap_nominal / t`
 for the inverse regulator convention. Fixed taps have no multiplier rows.
 Initial voltage seeds are suggestions; a free common mode in a seed is not a
 physical reference imposed on the optimization problem. With transformers
-present, the seeds come from a dense solve of the no-load voltage equations,
-whose memory grows with the square of the terminal count and whose time grows
-with its cube. Feeders beyond about ten thousand terminals can need
-gigabytes; a sparse seed solve is planned.
+present, the seeds come from a sparse solve of the no-load voltage equations
+(source voltages, closed conductors, and the transformer voltage rows at
+nominal tap). Each free common mode, such as a floating delta secondary, is
+seeded at zero. Memory follows the number of stored coefficients, a few per
+terminal on radial and meshed feeders, rather than the square of the terminal
+count.
 
 The downstream solver owns expression construction, objective/constraint
 scaling, sparse Jacobians/Hessians, optimization, status acceptance, and independent

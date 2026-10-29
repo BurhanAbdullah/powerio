@@ -18,27 +18,34 @@ use subset::filter_rows;
 
 use serde_json::Value;
 
+use crate::diagnostics::Diagnostic;
 use crate::merge::{BusMergeRule, MergeSurvivor, ZeroImpedanceRule, kind_priority};
 use crate::network::{
     BalancedNetwork, BalancedNetworkTables, Branch, Bus, BusId, BusType, Extras,
-    IMPEDANCE_CORRECTION_NOMINAL_EXTRA, ImpedanceCorrectionVariable, SourceFormat,
+    IMPEDANCE_CORRECTION_APPLIED_EXTRA, IMPEDANCE_CORRECTION_NOMINAL_EXTRA,
+    ImpedanceCorrectionVariable, SourceFormat, current_correction_nominal,
 };
 
-/// The nominal impedance an earlier impedance correction recorded in `extras`,
-/// or `current`, recorded there now.
+/// The nominal impedance an earlier impedance correction recorded in `extras`
+/// for the present impedance `current`, or `current`, recorded there now. An
+/// impedance edited since the correction wrote it is the new nominal.
 fn recorded_nominal<T>(extras: &mut Extras, current: T) -> T
 where
-    T: serde::Serialize + serde::de::DeserializeOwned,
+    T: PartialEq + serde::Serialize + serde::de::DeserializeOwned,
 {
-    if let Some(nominal) = extras
-        .get(IMPEDANCE_CORRECTION_NOMINAL_EXTRA)
-        .and_then(|value| T::deserialize(value).ok())
-    {
+    if let Some(nominal) = current_correction_nominal(extras, &current) {
         return nominal;
     }
     let value = serde_json::to_value(&current).expect("an impedance serializes to JSON");
     extras.insert(IMPEDANCE_CORRECTION_NOMINAL_EXTRA.to_owned(), value);
     current
+}
+
+/// Record the corrected impedance an impedance correction wrote, so a later
+/// edit of it is recognized.
+fn record_applied<T: serde::Serialize>(extras: &mut Extras, applied: &T) {
+    let value = serde_json::to_value(applied).expect("an impedance serializes to JSON");
+    extras.insert(IMPEDANCE_CORRECTION_APPLIED_EXTRA.to_owned(), value);
 }
 
 /// `(a.0 + j·a.1)·(b.0 + j·b.1)`.
@@ -60,6 +67,19 @@ fn combine_rate(a: f64, b: f64) -> f64 {
         (_, true) => a,
         _ => a.min(b),
     }
+}
+
+/// What [`reduce_zero_impedance_with_report`](BalancedNetwork::reduce_zero_impedance_with_report)
+/// did: the number of branches it removed and the merge's diagnostics, or
+/// the error that left the network unchanged.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct ZeroImpedanceReduction {
+    /// Branches removed, the jumpers and any branch they shorted. Zero when
+    /// the merge failed.
+    pub removed: usize,
+    /// What the merge changed, or the error that stopped it.
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 /// Which buses a [`subset`](BalancedNetwork::subset) keeps: inclusive ranges over area,
@@ -479,7 +499,21 @@ impl BalancedNetwork {
     /// collapsed (a unity-ratio transformer is a real device, not a jumper); a
     /// jumper between two windings of the same 3-winding transformer is also
     /// kept, since merging would collapse that transformer onto one node.
+    ///
+    /// When the merge fails, for example because a jumper shorts an ideal
+    /// transformer with a nonunity tap, nothing is merged and this returns
+    /// zero; [`reduce_zero_impedance_with_report`](Self::reduce_zero_impedance_with_report)
+    /// reports why.
     pub fn reduce_zero_impedance(&mut self, threshold: f64) -> usize {
+        self.reduce_zero_impedance_with_report(threshold).removed
+    }
+
+    /// [`reduce_zero_impedance`](Self::reduce_zero_impedance) with the merge's
+    /// diagnostics. When the merge fails the network is left unchanged,
+    /// `removed` is zero, and the diagnostics hold the error under its own
+    /// code, so a failure is no longer indistinguishable from a network with
+    /// no jumpers.
+    pub fn reduce_zero_impedance_with_report(&mut self, threshold: f64) -> ZeroImpedanceReduction {
         let rule = BusMergeRule::new(
             false,
             Some(ZeroImpedanceRule::ImpedanceMagnitude(threshold)),
@@ -489,9 +523,18 @@ impl BalancedNetwork {
             Ok(merge) => {
                 let removed = merge.removed_branches.len();
                 *self = merge.network;
-                removed
+                ZeroImpedanceReduction {
+                    removed,
+                    diagnostics: merge.diagnostics,
+                }
             }
-            Err(_) => 0,
+            Err(error) => ZeroImpedanceReduction {
+                removed: 0,
+                diagnostics: vec![Diagnostic::of(
+                    error.code(),
+                    format!("zero impedance reduction merged nothing: {error}"),
+                )],
+            },
         }
     }
 
@@ -660,9 +703,12 @@ impl BalancedNetwork {
     /// The first call records each scaled transformer's nominal
     /// impedance under `extras["impedance_correction_nominal"]`, and every
     /// call scales that nominal value: a repeated call changes nothing, and a
-    /// call after a tap or shift change evaluates the table there. The PSS/E
-    /// writer states the nominal impedance beside the table, as the format
-    /// does.
+    /// call after a tap or shift change evaluates the table there. The
+    /// corrected impedance is recorded under
+    /// `extras["impedance_correction_applied"]`; an impedance edited after
+    /// the call no longer matches it and becomes the new nominal value. The
+    /// PSS/E writer states the nominal impedance beside the table, as the
+    /// format does.
     pub fn apply_impedance_correction(&mut self) -> usize {
         // A normalized network states phase shifts in radians; the tables
         // state degrees.
@@ -685,6 +731,7 @@ impl BalancedNetwork {
             };
             let [r, x] = recorded_nominal(&mut branch.extras, [branch.r, branch.x]);
             (branch.r, branch.x) = complex_product((r, x), factor);
+            record_applied(&mut branch.extras, &[branch.r, branch.x]);
             scaled += 1;
         }
         for transformer in self.transformers_3w_mut().iter_mut() {
@@ -725,6 +772,8 @@ impl BalancedNetwork {
                         (r, x)
                     };
                 }
+                let applied = transformer.z.map(|z| [z.r, z.x]);
+                record_applied(&mut transformer.extras, &applied);
                 continue;
             }
             let [z12, z23, z31] = nominal;
@@ -746,6 +795,8 @@ impl BalancedNetwork {
                 transformer.z[pair].r = stars[a].0 + stars[b].0;
                 transformer.z[pair].x = stars[a].1 + stars[b].1;
             }
+            let applied = transformer.z.map(|z| [z.r, z.x]);
+            record_applied(&mut transformer.extras, &applied);
         }
         scaled
     }
@@ -1283,6 +1334,62 @@ mod tests {
         assert_eq!(net.buses().len(), 3);
         assert_eq!(net.branches().len(), 2);
         net.validate().unwrap();
+    }
+
+    #[test]
+    fn a_failed_zero_impedance_reduction_is_reported() {
+        // The jumper 1-2 would short an ideal off-nominal transformer between
+        // the same buses, which has no finite shunt equivalent, so the merge
+        // fails and nothing is merged.
+        let mut jumper = line(1, 2);
+        jumper.x = 0.0;
+        let mut ideal = line(1, 2);
+        ideal.x = 0.0;
+        ideal.tap = 1.05;
+        let mut second = line(2, 3);
+        second.x = 0.0;
+        let network = BalancedNetwork::in_memory(
+            "net",
+            100.0,
+            vec![bus(1, 1, 230.0), bus(2, 1, 230.0), bus(3, 1, 230.0)],
+            vec![jumper, ideal, second],
+        );
+
+        let mut old = network.clone();
+        assert_eq!(old.reduce_zero_impedance(1e-9), 0);
+        assert_eq!(old.buses().len(), 3);
+        assert_eq!(old.branches().len(), 3);
+
+        let mut reported = network.clone();
+        let report = reported.reduce_zero_impedance_with_report(1e-9);
+        assert_eq!(report.removed, 0);
+        assert_eq!(reported.buses().len(), 3, "nothing is merged");
+        assert_eq!(reported.branches().len(), 3);
+        let codes: Vec<&str> = report.diagnostics.iter().map(Diagnostic::code).collect();
+        assert_eq!(codes, ["BUILD.BRANCH.ZERO_IMPEDANCE"]);
+        assert!(
+            report.diagnostics[0]
+                .message()
+                .contains("zero impedance reduction merged nothing"),
+            "{}",
+            report.diagnostics[0].message()
+        );
+    }
+
+    #[test]
+    fn a_zero_impedance_reduction_reports_the_merge() {
+        let mut jumper = line(2, 3);
+        jumper.x = 0.0;
+        let mut net = BalancedNetwork::in_memory(
+            "net",
+            100.0,
+            vec![bus(1, 1, 230.0), bus(2, 1, 230.0), bus(3, 1, 230.0)],
+            vec![line(1, 2), jumper],
+        );
+        let report = net.reduce_zero_impedance_with_report(1e-9);
+        assert_eq!(report.removed, 1);
+        let codes: Vec<&str> = report.diagnostics.iter().map(Diagnostic::code).collect();
+        assert_eq!(codes, ["CANONICALIZE.MERGE.ZERO_IMPEDANCE"]);
     }
 
     #[test]

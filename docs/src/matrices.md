@@ -32,6 +32,7 @@ API is documented in the
 | Per-island PTDF | one matrix per component | `calc_ptdf_by_island` | partitions one global PTDF solve and returns source bus/branch index mappings |
 | PTDF | \\(m \times n\\) | `calc_ptdf` | routes through `Auto` solver selection; `calc_ptdf_lodf_with_options` exposes the choice |
 | LODF | \\(m \times m\\) | `calc_lodf` | routes through `Auto` solver selection; option based builds can prune small output entries |
+| selected PTDF rows, PTDF columns, LODF columns | \\(k \times n\\), \\(m \times k\\), \\(m \times k\\) | `calc_ptdf_rows`, `calc_ptdf_columns`, `calc_lodf_columns` | one solve per requested row or column, in the order requested; the full matrices are never formed |
 | AC power flow Jacobian | \\(2n \times 2n\\) | `calc_power_flow_jacobian` | polar or rectangular voltage coordinates |
 | multiconductor admittance | conductor by conductor | `calc_multiconductor_admittance_matrix` | from a `MulticonductorNetwork`; Rust only in 0.11 |
 | adjacency | \\(n \times n\\) | `calc_adjacency_matrix` | sparse graph adjacency |
@@ -42,15 +43,26 @@ PTDF and LODF need a linear solve, and `calc_ptdf`, `calc_lodf`,
 through the same solver selection. You pick the path with
 `SensitivitySolver`, the `solver` field on `SensitivityOptions`. `Dense`
 forces the dense grounded factorization. `Sparse` factors the grounded DC bus
-susceptance matrix once with a sparse Cholesky and reuses that factorization
-for every right hand side. `Auto` picks dense up to a reduced dimension of 512
-(with a memory ceiling) and sparse above it. The sparse path avoids forming
-the \\((n-r) \times (n-r)\\) dense inverse, though the PTDF and LODF outputs
-themselves can still be large. It also needs positive finite internal factor
-weights `w = -b`, so the grounded matrix `L = -B` is positive definite once
-reference coverage has been checked; the dense path can handle nonsingular
-indefinite cases. Every connected component must contain at least one
-reference bus. The DC OPF bundle (\\(A\\), \\(b\\), \\(L\\), costs, bounds,
+susceptance matrix once and reuses that factorization for every right hand
+side. `Auto` picks dense up to a reduced dimension of 512 (with a memory
+ceiling) and sparse above it. The sparse path avoids forming the
+\\((n-r) \times (n-r)\\) dense inverse, though the PTDF and LODF outputs
+themselves can still be large. With positive internal factor weights
+`w = -b` the grounded matrix `L = -B` is positive definite and the sparse path
+uses a Cholesky factorization. A negative weight, a series capacitor's, can
+make it indefinite; the sparse path then uses `LDLᵀ`, and LU with partial
+pivoting when that fails, reported as the `sparse_ldlt` and `sparse_lu`
+solver paths. Each factorization must solve a probe right hand side with a
+normwise backward error below 1e-10 and a relative forward error below 1e-4;
+a matrix every factorization fails is refused as singular. Every connected
+component must contain at least one reference bus.
+
+When only some branches or buses matter, `calc_ptdf_rows(case, options,
+branches)`, `calc_ptdf_columns(case, options, buses)`, and
+`calc_lodf_columns(case, options, outaged)` return just those rows or
+columns, indexed by dense branch and bus index in the order requested. They
+factor once and solve one right hand side per requested row or column, so a
+100k bus case never forms its \\(m \times n\\) PTDF or \\(m \times m\\) LODF. The DC OPF bundle (\\(A\\), \\(b\\), \\(L\\), costs, bounds,
 thermal limits, \\(C_g\\)) is prepared from a `DcOpfInstance` and documented
 in [DC OPF bundle](dcopf-bundle.md).
 
@@ -71,6 +83,60 @@ follows PowerModels, branches by buses, with \\(+1\\) at the from bus and
 The sensitivity and DC OPF builders use a transposed incidence factor
 internally, and that factor stays internal rather than becoming a second
 public incidence API.
+
+## Stated-state balance
+
+A case saved from a converged power flow stores bus voltages that balance
+its injections. `calc_stated_state_mismatch` evaluates every bus's AC
+balance at those stored voltages, with each device at its stated output, so
+a residual points at equipment PowerIO reads differently from the program
+that solved the case.
+
+- **Network side.** Every in service branch and three winding transformer
+  winding at its stated tap and shift, and every in service fixed and
+  switched shunt at its stated admittance, through the same branch
+  admittances as `calc_admittance_matrix`.
+- **Device side.** Generators at their stated `pg` and `qg`, loads through
+  their voltage model at the stored magnitude, static VAR compensators and
+  storage at their stated terminal power, and HVDC lines as fixed
+  injections unless `HvdcTreatment::Ignore` is selected. Each converter of a
+  line read from a PSS/E two-terminal record draws the reactive power its
+  bridge equations give at the stored AC voltages
+  (`Hvdc::calc_lcc_operating_point`: firing and extinction angles, overlap,
+  and the fundamental power factor), unless `LccReactivePower::Stated` keeps
+  the line's stated reactive powers. A record that reaches no operating point
+  at a positive power factor keeps the stated reactive powers too, with a
+  `BUILD.STATED_STATE.LCC_MODEL_UNAVAILABLE` warning. The active powers stay the
+  reader's `pf` and `pt`, which price the DC current differently from the
+  bridge model (see `powerio_tx::lcc`).
+- **Sign.** A bus mismatch is the power the network draws at the stored
+  voltages minus the stated injection, MW and MVAr, the mismatch MATPOWER's
+  `newtonpf` drives to zero. An injection equal to it closes the bus, and
+  `closure_injections(mask)` returns that injection at every bus carrying a
+  flag in `mask`.
+- **Flags.** Each bus carries `StatedBusFlags` naming the attached equipment a
+  residual is commonly traced to: `hvdc`, `vsc`, `facts`,
+  `generator_on_pq_bus`, `star_bus`, `merged_group`, `voltage_dependent_load`,
+  `switched_shunt`, `reference`, `storage`, and `low_impedance_branch` (a
+  branch below `low_impedance_threshold`, default \(10^{-3}\) per unit, whose
+  flow the rounding of the stored voltages can move).
+- **Totals.** The result sums each island of the in service topology,
+  largest first, and ranks the `top_k` largest bus mismatches. A bus typed
+  isolated has no balance and belongs to no island.
+- **Refusal.** The stored voltages do not determine the flow through a
+  branch with zero series impedance, so such a branch is refused with
+  `Error::UnmergedZeroImpedance`. The balance stamps branches only, so a
+  closed switch joining two buses is refused with `BUILD.SWITCH.CLOSED`, as
+  the PTDF and LODF builders refuse it. Merge the buses either joins first:
+  `BalancedNetwork::merge_buses` in Rust, or `--merge-buses switches` (closed
+  switches) or `--merge-buses exact` (and zero impedance branches) with
+  `powerio verify --stated-state`.
+
+`calc_stated_branch_flows` returns the active and reactive power entering
+both ends of every branch and winding at the stored voltages. From the
+command line, `powerio verify case.raw --stated-state` prints the island
+totals and the largest bus mismatches with their flags, and Python exposes
+both calculations on `BalancedNetwork`.
 
 ## GridFM datasets
 

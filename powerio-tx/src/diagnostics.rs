@@ -381,6 +381,8 @@ pub mod codes {
             "the PSS/E monitored element reader stopped recording notes at its budget";
         READ_MON_SOURCE_MALFORMED = "READ.MON.SOURCE_MALFORMED", Warning,
             "a line inside a PSS/E monitored element block states no branch";
+        READ_MON_VOLTAGE_BAND_ORDER_ASSUMED = "READ.MON.VOLTAGE_BAND_ORDER_ASSUMED", Remark,
+            "a four-value PSS/E monitored voltage range was read as the post-contingency band, then the pre-contingency band, an order no public source states";
         READ_MON_NOT_TEXT = "READ.MON.NOT_TEXT", Error,
             "a PSS/E monitored element file is not valid UTF-8 text", category = Parse;
 
@@ -484,6 +486,12 @@ pub mod codes {
             "an automatic contingency specification names fewer in-service elements of its target family than its order needs";
         BUILD_MON_STATEMENT_UNRESOLVED = "BUILD.MON.STATEMENT_UNRESOLVED", Warning,
             "a monitored element statement did not bind to exactly one element, or names a subsystem the subsystem set does not state";
+        BUILD_HVDC_FIXED_INJECTION = "BUILD.HVDC.FIXED_INJECTION", Remark,
+            "in service HVDC lines enter the bus balance as fixed injections at their stated terminal powers";
+        BUILD_HVDC_IGNORED = "BUILD.HVDC.IGNORED", Warning,
+            "in service HVDC lines were left out of the bus balance by request";
+        BUILD_HVDC_TERMINAL_INACTIVE = "BUILD.HVDC.TERMINAL_INACTIVE", Warning,
+            "an in service HVDC line names an isolated or undeclared terminal bus and injects nothing";
 
         // VALIDATE: the case's own internal consistency.
         /// Emitted by the stored document's payload validation in the facade;
