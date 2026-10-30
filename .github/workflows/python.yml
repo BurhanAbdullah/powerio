@@ -204,8 +204,7 @@ jobs:
             --allowlist "$GITHUB_WORKSPACE/python/stubtest_allowlist.txt"
 
   test:
-    # Python 3.9 is not available on the rolling ubuntu-latest image.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
