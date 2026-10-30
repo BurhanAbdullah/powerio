@@ -108,19 +108,11 @@ jobs:
   advisories:
     name: Advisories (cargo-deny)
     runs-on: ubuntu-latest
-    # Use Git's CLI transport and HTTP/1.1 for the RustSec advisory DB.
-    # The default libgit2 transport has intermittently failed on GitHub's
-    # HTTP/2 connection before cargo-deny can evaluate any advisories.
-    env:
-      GIT_CONFIG_COUNT: 1
-      GIT_CONFIG_KEY_0: http.version
-      GIT_CONFIG_VALUE_0: HTTP/1.1
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
       with:
         command: check advisories
-        use-git-cli: true
 
   # Own job so a stale schema fails in parallel with clippy and the tests
   # instead of masking them (the #255 merge failure hid both).
