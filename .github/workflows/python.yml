@@ -204,17 +204,11 @@ jobs:
             --allowlist "$GITHUB_WORKSPACE/python/stubtest_allowlist.txt"
 
   test:
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # Python 3.9 is not available on the Ubuntu 26.04 ubuntu-latest image.
-          # Keep the minimum-version test on the supported Ubuntu 24.04 image.
-          - python: "3.9"
-            os: ubuntu-24.04
-          - python: "3.12"
-            os: ubuntu-latest
-    runs-on: ${{ matrix.os }}
+        python: [ "3.9", "3.12" ]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
