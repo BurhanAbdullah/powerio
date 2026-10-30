@@ -35,8 +35,11 @@ DSS_CASES = sorted(Path("tests/data/dist/micro").glob("*.dss")) + [
     Path("tests/data/dist/opendss/ieee34/ieee34Mod1.dss"),
     Path("tests/data/dist/opendss/ieee123/IEEE123Master.dss"),
 ]
-PMD_CASES = sorted(Path("tests/data/dist/pmd").glob("*.json"))
-CASES = BMOPF_CASES + DSS_CASES + PMD_CASES
+# tests/data/dist/pmd contains native PowerModelsDistribution input documents,
+# not BMOPF documents. They are exercised by the PMD reader/connector tests;
+# passing them through the BMOPF writer is not a schema-validation test (and
+# multinetwork PMD input is intentionally not a supported BMOPF serialization).
+CASES = BMOPF_CASES + DSS_CASES
 
 
 def append_result(case: Path, mark: str) -> None:
