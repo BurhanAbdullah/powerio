@@ -74,7 +74,7 @@ jobs:
         working-directory: apps/converter
       - run: npm run build:ui
         working-directory: apps/converter
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: powerio-converter-site
           path: apps/converter/dist
@@ -106,7 +106,7 @@ jobs:
         working-directory: apps/converter
       - run: npm run test:browser -- --project=${{ matrix.browser }}
         working-directory: apps/converter
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: converter-failures-${{ matrix.browser }}
