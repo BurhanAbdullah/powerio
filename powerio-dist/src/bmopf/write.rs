@@ -3043,11 +3043,14 @@ fn normalized_bmopf_time_series(value: &Value) -> Option<(Value, Option<Value>)>
     let offset_is_default = offset
         .as_ref()
         .is_none_or(|value| value.as_f64() == Some(0.0));
-    // PMD defaults `replace` to true. Only an explicit false preserves
-    // BMOPF's multiplicative profile semantics; omission must stay in extras.
-    let replace_is_default = replace
-        .as_ref()
-        .is_some_and(|value| value.as_bool() == Some(false));
+    // PMD-only options identify a PMD loadshape. PMD defaults `replace` to
+    // true, so an omitted flag is unsafe when any PMD metadata is present.
+    // A native BMOPF profile has none of these keys and remains multiplicative.
+    let has_pmd_options = source_id.is_some() || offset.is_some() || replace.is_some();
+    let replace_is_default = match replace.as_ref() {
+        Some(value) => value.as_bool() == Some(false),
+        None => !has_pmd_options,
+    };
     let allowed = ["values", "time", "description"];
     if !offset_is_default
         || !replace_is_default
