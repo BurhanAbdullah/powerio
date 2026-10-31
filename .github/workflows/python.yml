@@ -204,11 +204,16 @@ jobs:
             --allowlist "$GITHUB_WORKSPACE/python/stubtest_allowlist.txt"
 
   test:
-    runs-on: ubuntu-latest
+    name: test (Python ${{ matrix.python }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python: [ "3.9", "3.12" ]
+        include:
+          - python: "3.9"
+            os: ubuntu-24.04
+          - python: "3.12"
+            os: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -234,7 +239,7 @@ jobs:
       - name: Check installed schema archive
         run: python -c 'from importlib.resources import files; import json; p = files("powerio").joinpath("schemas/bmopf/manifest.json"); assert len(json.loads(p.read_text())["schemas"]) == 2'
       - name: Run tests
-        run: pytest python/tests -q
+        run: pytest python/tests -q -rs
       # The core import path: parse/emit import nothing but the
       # interpreter. Without the gridfm feature, emitting the gridfm token
       # must fail with a PowerIOError that names the missing feature, not an
