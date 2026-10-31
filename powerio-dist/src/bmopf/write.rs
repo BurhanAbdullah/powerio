@@ -685,6 +685,15 @@ impl Writer {
         let Some(value) = extras.get("time_series") else {
             return;
         };
+        if self.options.schema_version != BmopfSchemaVersion::Bmopf020 {
+            self.warn(
+                &C::EMIT_BMOPF_FIELD_DROPPED,
+                format!(
+                    "{what}: BMOPF schema 0.1.0 has no load.time_series reference slot; references omitted"
+                ),
+            );
+            return;
+        }
         let Some(refs) = value.as_object() else {
             self.warn(
                 &C::EMIT_BMOPF_FIELD_DROPPED,
@@ -695,7 +704,7 @@ impl Writer {
         let compatible: BTreeSet<&str> = net
             .untyped_objects()
             .iter()
-            .filter(|u| u.class == "time_series" && bmopf_time_series_compatible(u))
+            .filter(|u| u.class == "time_series" && bmopf_time_series_compatible(net, u))
             .map(|u| u.name.as_str())
             .collect();
         let mut mapped = Map::new();
@@ -770,33 +779,26 @@ impl Writer {
             .insert(name.to_string(), value);
     }
 
-    fn normalize_time_series_or_retain(
+    fn normalize_time_series_for_emit(
         &mut self,
         name: &str,
         value: Value,
-        has_unplaced: bool,
+        is_pmd: bool,
         extras: &mut Map<String, Value>,
-    ) -> Option<Value> {
-        let normalized = if has_unplaced {
-            None
-        } else {
-            normalized_bmopf_time_series(&value)
-        };
-        if let Some((profile, metadata)) = normalized {
-            if let Some(metadata) = metadata {
-                self.stash_named_extra(extras, "pmd_time_series_metadata", name, metadata);
-            }
-            Some(profile)
-        } else {
+    ) -> Value {
+        let Some((profile, metadata)) = normalized_bmopf_time_series_for_source(&value, is_pmd) else {
             self.warn(
-                &C::EMIT_BMOPF_FIELD_DROPPED,
+                &C::EMIT_BMOPF_RETAINED_SOURCE_ONLY,
                 format!(
-                    "time_series {name}: PMD-specific options or fields cannot be represented by BMOPF; profile omitted and retained under extras.powerio_unmapped_time_series"
+                    "time_series {name}: profile is not representable by BMOPF; retained verbatim under extras.time_series"
                 ),
             );
-            self.stash_named_extra(extras, "powerio_unmapped_time_series", name, value);
-            None
+            return value;
+        };
+        if let Some(metadata) = metadata {
+            self.stash_named_extra(extras, "pmd_time_series_metadata", name, metadata);
         }
+        profile
     }
 
     /// Untyped BMOPF ecosystem objects, one pass: the tables that lost
@@ -839,21 +841,33 @@ impl Writer {
                     Map::new(),
                 );
             }
-            let value = if u.class == "time_series" {
-                let Some(value) =
-                    self.normalize_time_series_or_retain(&u.name, value, has_unplaced, extras)
-                else {
-                    continue;
-                };
-                value
+            // A profile only gets an active BMOPF slot when its complete
+            // semantics are representable in the selected schema. Otherwise
+            // preserve the original profile under extras.time_series.
+            let top_level = subtype.is_none() && self.raw_object_at_top_level(net, u);
+            let value = if u.class == "time_series" && top_level {
+                self.normalize_time_series_for_emit(
+                    &u.name,
+                    value,
+                    *net.source_format() == Some(crate::model::DistSourceFormat::PmdJson),
+                    extras,
+                )
             } else {
+                if u.class == "time_series" {
+                    self.warn(
+                        &C::EMIT_BMOPF_RETAINED_SOURCE_ONLY,
+                        format!(
+                            "time_series {}: profile is not representable in the selected BMOPF schema; retained verbatim under extras.time_series",
+                            u.name
+                        ),
+                    );
+                }
                 value
             };
             // An untyped transformer subtype lands in the top-level
             // `transformer` table, not under `extras`. Name the slot the
             // object really went to, so a warning points at the part of the
             // document a reader must look at.
-            let top_level = subtype.is_none() && self.raw_table_at_top_level(&u.class);
             let slot_path = match subtype {
                 Some(sub) => format!("transformer.{sub}"),
                 None if top_level => u.class.clone(),
@@ -911,6 +925,28 @@ impl Writer {
         self.options.schema_version == BmopfSchemaVersion::Bmopf020 && class != "capacitor"
     }
 
+    /// A raw object is top-level only when the selected schema declares its
+    /// table and, for time series, the profile has BMOPF multiplicative
+    /// semantics and satisfies the schema's required-values constraint.
+    fn raw_object_at_top_level(
+        &self,
+        net: &MulticonductorNetwork,
+        object: &crate::model::UntypedObject,
+    ) -> bool {
+        if !self.raw_table_at_top_level(&object.class) {
+            return false;
+        }
+        if object.class != "time_series" {
+            return true;
+        }
+        let is_pmd = *net.source_format() == Some(crate::model::DistSourceFormat::PmdJson);
+        let mut unplaced = Vec::new();
+        raw_bmopf_value(object, &mut unplaced)
+            .filter(|_| unplaced.is_empty())
+            .and_then(|value| normalized_bmopf_time_series_for_source(&value, is_pmd))
+            .is_some()
+    }
+
     /// `extras` is seeded from the source document's own `extras` object, so
     /// a value under one of the relocated table names is input, not something
     /// this writer built. A value that is not a table has no slot for a named
@@ -924,9 +960,9 @@ impl Writer {
         let classes: BTreeSet<&str> = net
             .untyped_objects()
             .iter()
+            .filter(|u| RAW_BMOPF_EXTRAS_TABLES.contains(&u.class.as_str()))
+            .filter(|u| !self.raw_object_at_top_level(net, u))
             .map(|u| u.class.as_str())
-            .filter(|class| RAW_BMOPF_EXTRAS_TABLES.contains(class))
-            .filter(|class| !self.raw_table_at_top_level(class))
             .collect();
         for class in classes {
             if extras.get(class).is_some_and(|v| !v.is_object()) {
@@ -3035,7 +3071,18 @@ fn classify(t: &DistTransformer) -> Kind {
 /// PMD's source ID is provenance, while nonzero offset and `replace=true`
 /// change profile semantics and cannot be represented by BMOPF.
 fn normalized_bmopf_time_series(value: &Value) -> Option<(Value, Option<Value>)> {
+    normalized_bmopf_time_series_for_source(value, false)
+}
+
+fn normalized_bmopf_time_series_for_source(
+    value: &Value,
+    is_pmd: bool,
+) -> Option<(Value, Option<Value>)> {
     let mut profile = value.as_object()?.clone();
+    // BMOPF requires values. A time-only record must remain source-only.
+    if !profile.contains_key("values") {
+        return None;
+    }
     let source_id = profile.remove("source_id");
     let offset = profile.remove("offset");
     let replace = profile.remove("replace");
@@ -3043,13 +3090,15 @@ fn normalized_bmopf_time_series(value: &Value) -> Option<(Value, Option<Value>)>
     let offset_is_default = offset
         .as_ref()
         .is_none_or(|value| value.as_f64() == Some(0.0));
-    // PMD-only options identify a PMD loadshape. PMD defaults `replace` to
-    // true, so an omitted flag is unsafe when any PMD metadata is present.
-    // A native BMOPF profile has none of these keys and remains multiplicative.
-    let has_pmd_options = source_id.is_some() || offset.is_some() || replace.is_some();
-    let replace_is_default = match replace.as_ref() {
-        Some(value) => value.as_bool() == Some(false),
-        None => !has_pmd_options,
+    // PMD defines replace=true when omitted, even if source_id and offset
+    // are absent. Require an explicit false for every PMD-origin profile.
+    let replace_is_default = if is_pmd {
+        replace.as_ref().and_then(Value::as_bool) == Some(false)
+    } else {
+        match replace.as_ref() {
+            Some(value) => value.as_bool() == Some(false),
+            None => source_id.is_none() && offset.is_none(),
+        }
     };
     let allowed = ["values", "time", "description"];
     if !offset_is_default
@@ -3075,14 +3124,18 @@ fn normalized_bmopf_time_series(value: &Value) -> Option<(Value, Option<Value>)>
     ))
 }
 
-fn bmopf_time_series_compatible(u: &crate::model::UntypedObject) -> bool {
-    if u.class != "time_series" {
+fn bmopf_time_series_compatible(
+    net: &MulticonductorNetwork,
+    object: &crate::model::UntypedObject,
+) -> bool {
+    if object.class != "time_series" {
         return false;
     }
+    let is_pmd = *net.source_format() == Some(crate::model::DistSourceFormat::PmdJson);
     let mut unplaced = Vec::new();
-    raw_bmopf_value(u, &mut unplaced)
+    raw_bmopf_value(object, &mut unplaced)
         .filter(|_| unplaced.is_empty())
-        .and_then(|value| normalized_bmopf_time_series(&value))
+        .and_then(|value| normalized_bmopf_time_series_for_source(&value, is_pmd))
         .is_some()
 }
 
