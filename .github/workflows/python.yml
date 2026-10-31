@@ -204,6 +204,7 @@ jobs:
             --allowlist "$GITHUB_WORKSPACE/python/stubtest_allowlist.txt"
 
   test:
+    name: test (Python ${{ matrix.python }} on ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
