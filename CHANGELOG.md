@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Map PMD load-shape references and default profiles into BMOPF time-series fields. Keep PMD-only metadata under `extras`, and report profiles with non-default semantics as unrepresentable instead of emitting invalid BMOPF JSON.
+- Activate PMD loadshape profiles in BMOPF 0.2.0 only when `replace = false` is explicit and `offset = 0`; map load references to `p_nom`/`q_nom`, retain source metadata, and preserve unsupported profiles verbatim under `extras.time_series` with diagnostics. Keep schema 0.1.0 references inactive.
+- Validate every snapshot of PMD multinetwork inputs independently, with snapshot-indexed schema and writer failures. Whole-TimeSeries emission remains explicitly unsupported.
 
 ## 0.11.7
 
