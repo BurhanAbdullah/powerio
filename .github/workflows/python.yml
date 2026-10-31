@@ -398,7 +398,7 @@ jobs:
       - name: Run gridfm tests
         env:
           POWERIO_BIN: target/release/powerio
-        run: pytest python/tests -q -k gridfm -rs
+        run: pytest python/tests/test_gridfm.py -q -rs
 
   wheels:
     name: wheels (${{ matrix.platform.target }} on ${{ matrix.platform.runner }})
