@@ -828,7 +828,6 @@ impl Writer {
                 );
                 continue;
             };
-            let has_unplaced = !unplaced.is_empty();
             for text in unplaced {
                 self.diagnostic(
                     &C::EMIT_BMOPF_FIELD_DROPPED,
@@ -3425,6 +3424,26 @@ mod tests {
             }))
             .is_some(),
             "a native BMOPF profile without PMD-only options remains multiplicative"
+        );
+        assert!(
+            normalized_bmopf_time_series_for_source(
+                &json!({"values": [0.5, 1.0], "time": [0.0, 1.0]}),
+                true,
+            )
+            .is_none(),
+            "PMD defaults replace to true even when optional metadata is absent"
+        );
+        assert!(
+            normalized_bmopf_time_series_for_source(
+                &json!({"values": [0.5, 1.0], "time": [0.0, 1.0], "replace": false}),
+                true,
+            )
+            .is_some(),
+            "PMD profiles activate only with explicit replace=false"
+        );
+        assert!(
+            normalized_bmopf_time_series(&json!({"time": [0.0, 1.0]})).is_none(),
+            "BMOPF requires the schema-mandated values property"
         );
         assert!(
             normalized_bmopf_time_series(&json!({
