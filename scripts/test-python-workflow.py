@@ -144,7 +144,7 @@ RELEASE_WORKFLOW = (ROOT / ".github/workflows/release-binaries.yml").read_text()
 
 def release_job(name: str) -> str:
     match = re.search(
-        rf"^  {re.escape(name)}:\\n(.*?)(?=^  [A-Za-z0-9_-]+:\\n|\\Z)",
+        rf"^  {re.escape(name)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
         RELEASE_WORKFLOW,
         re.M | re.S,
     )
@@ -154,7 +154,7 @@ def release_job(name: str) -> str:
 
 for name in ("build", "julia-tarballs"):
     macos_runners = re.findall(
-        r"^[ \\t]*- runner: (macos-[A-Za-z0-9.-]+)$",
+        r"^[ \t]*- runner: (macos-[A-Za-z0-9.-]+)$",
         release_job(name),
         re.M,
     )
