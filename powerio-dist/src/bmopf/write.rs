@@ -3043,9 +3043,11 @@ fn normalized_bmopf_time_series(value: &Value) -> Option<(Value, Option<Value>)>
     let offset_is_default = offset
         .as_ref()
         .is_none_or(|value| value.as_f64() == Some(0.0));
+    // PMD defaults `replace` to true. Only an explicit false preserves
+    // BMOPF's multiplicative profile semantics; omission must stay in extras.
     let replace_is_default = replace
         .as_ref()
-        .is_none_or(|value| value.as_bool() == Some(false));
+        .is_some_and(|value| value.as_bool() == Some(false));
     let allowed = ["values", "time", "description"];
     if !offset_is_default
         || !replace_is_default
@@ -3348,6 +3350,16 @@ mod tests {
             }))
             .is_none(),
             "replace=true cannot be represented by a multiplicative profile"
+        );
+
+        assert!(
+            normalized_bmopf_time_series(&json!({
+                "values": [1.0],
+                "time": [0.0],
+                "offset": 0.0
+            }))
+            .is_none(),
+            "an omitted replace inherits PMD's true default and cannot be represented"
         );
         assert!(
             normalized_bmopf_time_series(&json!({
