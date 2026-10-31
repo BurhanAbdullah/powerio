@@ -3444,6 +3444,14 @@ mod tests {
             "PMD profiles activate only with explicit replace=false"
         );
         assert!(
+            normalized_bmopf_time_series_for_source(
+                &json!({"values": [0.5, 1.0], "time": [0.0, 1.0], "replace": true}),
+                true,
+            )
+            .is_none(),
+            "PMD replace=true cannot be represented by BMOPF multiplicative profiles"
+        );
+        assert!(
             normalized_bmopf_time_series(&json!({"time": [0.0, 1.0]})).is_none(),
             "BMOPF requires the schema-mandated values property"
         );
