@@ -4137,13 +4137,11 @@ fn bmopf_geometry_without_element_identity_is_reported() {
     );
 }
 
-
 #[test]
 fn pmd_profile_without_replace_is_retained_even_without_source_id() {
-    let mut source: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(fixture("pmd/case3_balanced.json")).unwrap(),
-    )
-    .unwrap();
+    let mut source: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture("pmd/case3_balanced.json")).unwrap())
+            .unwrap();
     let profile = source["time_series"]["ls1"].as_object_mut().unwrap();
     profile.remove("source_id");
     profile.remove("offset");
@@ -4155,8 +4153,15 @@ fn pmd_profile_without_replace_is_retained_even_without_source_id() {
 
     assert!(doc.get("time_series").is_none(), "{doc}");
     assert!(doc["load"]["l1"].get("time_series").is_none(), "{doc}");
-    assert_eq!(doc["extras"]["time_series"]["ls1"], source["time_series"]["ls1"]);
-    assert!(schema_validator().is_valid(&doc), "{:?}", errors(&schema_validator(), &output.text));
+    assert_eq!(
+        doc["extras"]["time_series"]["ls1"],
+        source["time_series"]["ls1"]
+    );
+    assert!(
+        schema_validator().is_valid(&doc),
+        "{:?}",
+        errors(&schema_validator(), &output.text)
+    );
     assert!(output.warnings.iter().any(|warning| {
         warning.contains("EMIT.BMOPF.RETAINED_SOURCE_ONLY") && warning.contains("ls1")
     }));
@@ -4178,11 +4183,17 @@ fn pmd_loadshape_references_are_not_active_in_schema_010() {
     assert!(
         schema_validator_for(BmopfSchemaVersion::Bmopf010).is_valid(&doc),
         "{:?}",
-        errors(&schema_validator_for(BmopfSchemaVersion::Bmopf010), &output.text)
+        errors(
+            &schema_validator_for(BmopfSchemaVersion::Bmopf010),
+            &output.text
+        )
     );
-    assert!(output.warnings.iter().any(|warning| {
-        warning.contains("schema 0.1.0") && warning.contains("time_series")
-    }));
+    assert!(
+        output
+            .warnings
+            .iter()
+            .any(|warning| { warning.contains("schema 0.1.0") && warning.contains("time_series") })
+    );
 }
 
 #[test]
@@ -4203,7 +4214,11 @@ fn unsupported_pmd_profile_semantics_are_retained_verbatim() {
     assert!(doc.get("time_series").is_none(), "{doc}");
     assert!(doc["load"]["l1"].get("time_series").is_none(), "{doc}");
     assert_eq!(doc["extras"]["time_series"]["ls1"], expected);
-    assert!(schema_validator().is_valid(&doc), "{:?}", errors(&schema_validator(), &output.text));
+    assert!(
+        schema_validator().is_valid(&doc),
+        "{:?}",
+        errors(&schema_validator(), &output.text)
+    );
     assert!(output.warnings.iter().any(|warning| {
         warning.contains("EMIT.BMOPF.RETAINED_SOURCE_ONLY") && warning.contains("ls1")
     }));
@@ -4211,10 +4226,9 @@ fn unsupported_pmd_profile_semantics_are_retained_verbatim() {
 
 #[test]
 fn profiles_without_values_stay_in_extras_for_both_schema_versions() {
-    let parsed = parse_bmopf_str(
-        r#"{"bus":{},"voltage_source":{},"time_series":{"shape":{"time":[0,1]}}}"#,
-    )
-    .unwrap();
+    let parsed =
+        parse_bmopf_str(r#"{"bus":{},"voltage_source":{},"time_series":{"shape":{"time":[0,1]}}}"#)
+            .unwrap();
 
     for version in [BmopfSchemaVersion::Bmopf010, BmopfSchemaVersion::Bmopf020] {
         let output = emit_bmopf_json_with_options(
