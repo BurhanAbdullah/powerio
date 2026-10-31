@@ -3070,6 +3070,7 @@ fn classify(t: &DistTransformer) -> Kind {
 /// Normalize a raw profile into BMOPF's multiplicative time-series shape.
 /// PMD's source ID is provenance, while nonzero offset and `replace=true`
 /// change profile semantics and cannot be represented by BMOPF.
+#[cfg(test)]
 fn normalized_bmopf_time_series(value: &Value) -> Option<(Value, Option<Value>)> {
     normalized_bmopf_time_series_for_source(value, false)
 }
