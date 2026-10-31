@@ -4198,10 +4198,9 @@ fn pmd_loadshape_references_are_not_active_in_schema_010() {
 
 #[test]
 fn unsupported_pmd_profile_semantics_are_retained_verbatim() {
-    let mut source: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(fixture("pmd/case3_balanced.json")).unwrap(),
-    )
-    .unwrap();
+    let mut source: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture("pmd/case3_balanced.json")).unwrap())
+            .unwrap();
     let profile = source["time_series"]["ls1"].as_object_mut().unwrap();
     profile.insert("offset".into(), serde_json::json!(2.0));
     profile.insert("replace".into(), serde_json::json!(false));
