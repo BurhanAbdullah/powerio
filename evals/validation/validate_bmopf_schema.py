@@ -36,12 +36,6 @@ DSS_CASES = sorted(Path("tests/data/dist/micro").glob("*.dss")) + [
     Path("tests/data/dist/opendss/ieee123/IEEE123Master.dss"),
 ]
 PMD_CASES = sorted(Path("tests/data/dist/pmd").glob("*.json"))
-# A PMD multinetwork is a time series of networks, not one BMOPF network.
-# Emission must refuse it explicitly; it is not a schema-valid BMOPF case.
-EXPECTED_REFUSALS = {
-    Path("tests/data/dist/pmd/case3_balanced_multinetwork.json"):
-        "REQUEST.EMIT.UNSUPPORTED_VALUE_TYPE",
-}
 CASES = BMOPF_CASES + DSS_CASES + PMD_CASES
 
 
@@ -83,29 +77,40 @@ def declared_schema_version(doc: dict, schema_ids: dict[str, str]) -> str:
     )
 
 
-def validate_case(
-    validators_by_version, schema_ids: dict[str, str], case: Path
-) -> list[str] | None:
+def validate_case(validators_by_version, schema_ids: dict[str, str], case: Path) -> list[str]:
     module = powerio.parse(case)
-    try:
-        out = powerio.emit(module, "bmopf-json")
-    except Exception as err:  # noqa: BLE001
-        expected = EXPECTED_REFUSALS.get(case)
-        if expected and expected in str(err):
-            return None
-        raise
+    value = module.value
+    if isinstance(value, powerio.TimeSeries):
+        if not value:
+            return ["time series contains no snapshots"]
+        failures = []
+        for index, snapshot in enumerate(value):
+            try:
+                failures.extend(
+                    f"snapshot[{index}]: {error}"
+                    for error in validate_module(
+                        validators_by_version,
+                        schema_ids,
+                        powerio.PioModule.from_value(snapshot),
+                    )
+                )
+            except Exception as err:  # noqa: BLE001
+                failures.append(f"snapshot[{index}]: emission or validation failed: {err}")
+        return failures
+    return validate_module(validators_by_version, schema_ids, module)
+
+
+def validate_module(validators_by_version, schema_ids, module) -> list[str]:
+    out = powerio.emit(module, "bmopf-json")
     if not out.text.strip():
         return ["writer returned an empty document"]
-
     doc = json.loads(out.text)
     version = declared_schema_version(doc, schema_ids)
-    validator = validators_by_version[version]
     errors = sorted(
-        validator.iter_errors(doc),
-        key=lambda err: (tuple(err.absolute_path), err.message),
+        validators_by_version[version].iter_errors(doc),
+        key=lambda err: (tuple(str(part) for part in err.absolute_path), err.message),
     )
     return [f"{error_path(err)}: {err.message}" for err in errors]
-
 
 def check_paths(paths: Iterable[Path]) -> list[str]:
     missing = [path.as_posix() for path in paths if not path.is_file()]
@@ -144,12 +149,6 @@ def main() -> int:
             case_failures = validate_case(validators_by_version, schema_ids, case)
         except Exception as err:  # noqa: BLE001
             case_failures = [str(err)]
-
-        if case_failures is None:
-            mark = "ok"
-            append_result(case, mark)
-            print(f"{case}: expected refusal ({EXPECTED_REFUSALS[case]})")
-            continue
 
         mark = "ok" if not case_failures else "FAIL"
         append_result(case, mark)
