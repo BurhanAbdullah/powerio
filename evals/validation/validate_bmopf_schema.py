@@ -112,6 +112,7 @@ def validate_module(validators_by_version, schema_ids, module) -> list[str]:
     )
     return [f"{error_path(err)}: {err.message}" for err in errors]
 
+
 def check_paths(paths: Iterable[Path]) -> list[str]:
     missing = [path.as_posix() for path in paths if not path.is_file()]
     missing.extend(path.as_posix() for path in SCHEMA_PATHS if not path.is_file())
