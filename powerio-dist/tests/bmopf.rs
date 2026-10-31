@@ -4224,6 +4224,33 @@ fn unsupported_pmd_profile_semantics_are_retained_verbatim() {
 }
 
 #[test]
+fn pmd_profile_with_replace_true_is_retained_verbatim() {
+    let mut source: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture("pmd/case3_balanced.json")).unwrap())
+            .unwrap();
+    let profile = source["time_series"]["ls1"].as_object_mut().unwrap();
+    profile.insert("offset".into(), serde_json::json!(0.0));
+    profile.insert("replace".into(), serde_json::json!(true));
+    let expected = source["time_series"]["ls1"].clone();
+
+    let net = parse_pmd_str(&source.to_string()).unwrap();
+    let output = emit_bmopf_json(&net);
+    let doc: serde_json::Value = serde_json::from_str(&output.text).unwrap();
+
+    assert!(doc.get("time_series").is_none(), "{doc}");
+    assert!(doc["load"]["l1"].get("time_series").is_none(), "{doc}");
+    assert_eq!(doc["extras"]["time_series"]["ls1"], expected);
+    assert!(
+        schema_validator().is_valid(&doc),
+        "{:?}",
+        errors(&schema_validator(), &output.text)
+    );
+    assert!(output.warnings.iter().any(|warning| {
+        warning.contains("EMIT.BMOPF.RETAINED_SOURCE_ONLY") && warning.contains("ls1")
+    }));
+}
+
+#[test]
 fn profiles_without_values_stay_in_extras_for_both_schema_versions() {
     let parsed =
         parse_bmopf_str(r#"{"bus":{},"voltage_source":{},"time_series":{"shape":{"time":[0,1]}}}"#)
