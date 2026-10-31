@@ -786,7 +786,8 @@ impl Writer {
         is_pmd: bool,
         extras: &mut Map<String, Value>,
     ) -> Value {
-        let Some((profile, metadata)) = normalized_bmopf_time_series_for_source(&value, is_pmd) else {
+        let Some((profile, metadata)) = normalized_bmopf_time_series_for_source(&value, is_pmd)
+        else {
             self.warn(
                 &C::EMIT_BMOPF_RETAINED_SOURCE_ONLY,
                 format!(
