@@ -3357,12 +3357,21 @@ mod tests {
 
         assert!(
             normalized_bmopf_time_series(&json!({
+                "source_id": "loadshape.ls1",
                 "values": [1.0],
                 "time": [0.0],
                 "offset": 0.0
             }))
             .is_none(),
-            "an omitted replace inherits PMD's true default and cannot be represented"
+            "an omitted replace on a PMD loadshape inherits PMD's true default"
+        );
+        assert!(
+            normalized_bmopf_time_series(&json!({
+                "values": [1.0],
+                "time": [0.0]
+            }))
+            .is_some(),
+            "a native BMOPF profile without PMD-only options remains multiplicative"
         );
         assert!(
             normalized_bmopf_time_series(&json!({
