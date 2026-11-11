@@ -77,28 +77,20 @@ impl<T> TimeSeries<T> {
         // Require it to be strictly increasing so array order and elapsed
         // time cannot silently disagree. Partial axes remain label-driven:
         // their missing coordinates cannot be compared consistently.
-        let mut previous = None;
-        let mut all_have_durations = true;
-        for (index, point) in time_points.iter().enumerate() {
-            match point.duration() {
-                Some(duration) => {
-                    if let Some(previous) = previous
-                        && duration <= previous
-                    {
-                        return Err(Error::new(
-                            &crate::codes::VALIDATE_TIME_SERIES_NON_MONOTONIC_AXIS,
-                            format!(
-                                "time series duration at position {index} is not strictly greater than its predecessor"
-                            ),
-                        ));
-                    }
-                    previous = Some(duration);
+        if time_points.iter().all(|point| point.duration().is_some()) {
+            for (index, pair) in time_points.windows(2).enumerate() {
+                let previous = pair[0].duration().expect("complete axis");
+                let current = pair[1].duration().expect("complete axis");
+                if current <= previous {
+                    return Err(Error::new(
+                        &crate::codes::VALIDATE_TIME_SERIES_NON_MONOTONIC_AXIS,
+                        format!(
+                            "time series duration at position {} is not strictly greater than its predecessor",
+                            index + 1
+                        ),
+                    ));
                 }
-                None => all_have_durations = false,
             }
-        }
-        if !all_have_durations {
-            // Preserve label-only and partially observed time axes.
         }
 
         Ok(Self {
