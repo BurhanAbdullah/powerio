@@ -72,6 +72,29 @@ impl<T> TimeSeries<T> {
                 ),
             ));
         }
+
+        // A complete duration axis represents elapsed-time coordinates.
+        // Require it to be strictly increasing so array order and elapsed
+        // time cannot silently disagree. Partial axes remain label-driven:
+        // their missing coordinates cannot be compared consistently.
+        if time_points.iter().all(|point| point.duration().is_some()) {
+            for (index, pair) in time_points.windows(2).enumerate() {
+                let is_non_monotonic = pair[0]
+                    .duration()
+                    .zip(pair[1].duration())
+                    .is_some_and(|(previous, current)| current <= previous);
+                if is_non_monotonic {
+                    return Err(Error::new(
+                        &crate::codes::VALIDATE_TIME_SERIES_NON_MONOTONIC_AXIS,
+                        format!(
+                            "time series duration at position {} is not strictly greater than its predecessor",
+                            index + 1
+                        ),
+                    ));
+                }
+            }
+        }
+
         Ok(Self {
             time_points: Arc::new(time_points),
             values: Arc::new(values),
@@ -197,6 +220,39 @@ mod tests {
     fn shape_and_dimension_overflow_are_errors() {
         let point = TimePoint::new("t0", None).unwrap();
         assert!(TimeSeries::<u8>::new(vec![point], Vec::new()).is_err());
+    }
+
+    #[test]
+    fn complete_duration_axis_must_be_strictly_increasing() {
+        let point = |label: &str, seconds| {
+            TimePoint::new(label, Some(Duration::from_secs(seconds))).unwrap()
+        };
+
+        let ascending = TimeSeries::new(
+            vec![point("t0", 1), point("t1", 2), point("t2", 5)],
+            vec![10, 20, 50],
+        );
+        assert!(ascending.is_ok());
+
+        let duplicate =
+            TimeSeries::new(vec![point("t0", 1), point("t1", 1)], vec![10, 20]).unwrap_err();
+        assert_eq!(
+            duplicate.diagnostics()[0].code(),
+            "VALIDATE.TIME_SERIES.NON_MONOTONIC_AXIS"
+        );
+
+        let descending = TimeSeries::new(vec![point("t0", 2), point("t1", 1)], vec![20, 10]);
+        assert!(descending.is_err());
+    }
+
+    #[test]
+    fn partially_observed_duration_axis_remains_label_driven() {
+        let points = vec![
+            TimePoint::new("morning", Some(Duration::from_secs(10))).unwrap(),
+            TimePoint::new("unknown", None).unwrap(),
+            TimePoint::new("evening", Some(Duration::from_secs(2))).unwrap(),
+        ];
+        assert!(TimeSeries::new(points, vec![1, 2, 3]).is_ok());
     }
 
     #[test]

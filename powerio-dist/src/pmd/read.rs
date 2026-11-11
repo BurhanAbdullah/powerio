@@ -73,8 +73,34 @@ const MULTINETWORK_KEYS: &[&str] = &["multinetwork", "nw", "mn_lookup"];
 /// network document: the step's own sections, with the shared top level keys
 /// (`name`, `files`, `data_model`, and any others) filled in where the step
 /// does not state them. The step's `mn_lookup` time orders it, its key labels
-/// its time point, and its `time_elapsed` (hours, PMD's unit) becomes the
-/// time point's duration. A finding that every step repeats is reported once.
+/// its time point. The absolute `mn_lookup`/step `time` coordinate (hours)
+/// becomes the time point duration; `time_elapsed` is the step interval and
+/// remains in network extras. A finding that every step repeats is reported once.
+/// Absolute PMD multinetwork coordinate, in hours, converted to a Rust duration.
+/// `time_elapsed` is validated and retained separately because it is a step
+/// interval, not the timestamp that orders the outer time series.
+fn pmd_time_point_duration(
+    key: &str,
+    lookup: Option<&Map<String, Value>>,
+    time: Option<&Value>,
+    diagnostics: &mut crate::collect::Diagnostics,
+) -> Option<std::time::Duration> {
+    let coordinate = lookup.and_then(|values| values.get(key)).or(time);
+    coordinate.and_then(|value| {
+        let duration = value
+            .as_f64()
+            .filter(|hours| hours.is_finite() && *hours >= 0.0)
+            .and_then(|hours| std::time::Duration::try_from_secs_f64(hours * 3600.0).ok());
+        if duration.is_none() {
+            diagnostics.push(
+                &C::READ_PMD_SOURCE_MALFORMED,
+                format!("multinetwork time step {key}: absolute mn_lookup/time coordinate {value} is not a finite nonnegative number of hours; the time point has no duration"),
+            );
+        }
+        duration
+    })
+}
+
 pub(crate) fn parse_pmd_multinetwork_collecting(
     text: &str,
     diags: &mut crate::collect::Diagnostics,
@@ -124,25 +150,28 @@ pub(crate) fn parse_pmd_multinetwork_collecting(
         let time = merged.remove("time");
         let mut found = crate::collect::Diagnostics::new();
         let mut net = network_from_document(&merged, &mut found);
-        if let Some(time) = time {
-            net.extras_mut().insert("pmd_time".into(), time);
+        if let Some(time) = &time {
+            net.extras_mut().insert("pmd_time".into(), time.clone());
         }
-        let duration = elapsed.as_ref().and_then(|v| {
-            let duration = v
+        if let Some(elapsed) = &elapsed {
+            // PMD's time_elapsed is the length of this step, not its
+            // absolute time coordinate. Retain it separately so the typed
+            // TimePoint axis can use mn_lookup/time without turning equal
+            // step lengths into duplicate timestamps.
+            net.extras_mut()
+                .insert("pmd_time_elapsed".into(), elapsed.clone());
+            if elapsed
                 .as_f64()
-                .filter(|hours| hours.is_finite() && *hours >= 0.0)
-                .and_then(|hours| std::time::Duration::try_from_secs_f64(hours * 3600.0).ok());
-            if duration.is_none() {
+                .as_ref()
+                .is_none_or(|hours| !(hours.is_finite() && *hours >= 0.0))
+            {
                 found.push(
                     &C::READ_PMD_SOURCE_MALFORMED,
-                    format!(
-                        "multinetwork time step {key}: `time_elapsed` {v} is not a finite \
-                         nonnegative number of hours; the time point has no duration"
-                    ),
+                    format!("multinetwork time step {key}: time_elapsed {elapsed} is not a finite nonnegative number of hours"),
                 );
             }
-            duration
-        });
+        }
+        let duration = pmd_time_point_duration(key, lookup, time.as_ref(), &mut found);
         for record in found.into_records() {
             if seen.insert((record.code().to_string(), record.message().to_string())) {
                 diags.absorb([record]);

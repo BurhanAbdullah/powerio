@@ -204,7 +204,10 @@ jobs:
             --allowlist "$GITHUB_WORKSPACE/python/stubtest_allowlist.txt"
 
   test:
-    runs-on: ubuntu-latest
+    # Python 3.9 is not published for the Ubuntu 26.04 image currently
+    # behind ubuntu-latest. Keep this compatibility matrix on the supported
+    # 24.04 image until the 3.9 setup-python manifest includes newer runners.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -265,7 +268,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-latest]
+        # macOS 14 hosted runners retired on 2026-11-02; use the supported
+        # macOS 15 arm64 runner for the native extension compatibility job.
+        os: [macos-15, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

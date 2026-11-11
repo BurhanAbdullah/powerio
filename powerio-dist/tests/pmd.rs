@@ -1530,8 +1530,25 @@ fn pmd_multinetwork_reads_as_a_time_series() {
         .map(powerio_core::TimePoint::label)
         .collect();
     assert_eq!(labels, ["1", "2"]);
-    for point in series.time_points() {
-        assert_eq!(point.duration(), Some(std::time::Duration::from_secs(3600)));
+    let durations: Vec<_> = series
+        .time_points()
+        .iter()
+        .map(powerio_core::TimePoint::duration)
+        .collect();
+    assert_eq!(
+        durations,
+        [
+            Some(std::time::Duration::ZERO),
+            Some(std::time::Duration::from_secs(3600)),
+        ]
+    );
+    for (_, net) in series.iter() {
+        assert_eq!(
+            net.extras()
+                .get("pmd_time_elapsed")
+                .and_then(serde_json::Value::as_f64),
+            Some(1.0)
+        );
     }
     for (point, net) in series.iter() {
         let step = &file["nw"][point.label()];

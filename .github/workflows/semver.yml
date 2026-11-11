@@ -36,6 +36,10 @@ jobs:
         # The baseline is a release tag, built from its own commit.
         fetch-depth: 0
         persist-credentials: false
+    - name: Fetch canonical PowerIO release tags
+      run: |
+        git remote add canonical https://github.com/eigenergy/powerio.git
+        git fetch --force --tags canonical
     - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
     # Unpinned like cbindgen: each cargo-semver-checks release reads the
