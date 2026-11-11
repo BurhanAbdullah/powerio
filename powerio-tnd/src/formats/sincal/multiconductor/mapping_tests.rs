@@ -565,7 +565,7 @@ fn assembly_does_not_mix_equal_identities_from_different_variants() {
         let columns = statement
             .column_names()
             .map(|name| {
-                if *name == "Variant_ID" {
+                if name == "Variant_ID" {
                     "2".to_owned()
                 } else {
                     format!("\"{name}\"")
