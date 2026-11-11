@@ -76,6 +76,31 @@ const MULTINETWORK_KEYS: &[&str] = &["multinetwork", "nw", "mn_lookup"];
 /// its time point. The absolute `mn_lookup`/step `time` coordinate (hours)
 /// becomes the time point duration; `time_elapsed` is the step interval and
 /// remains in network extras. A finding that every step repeats is reported once.
+/// Absolute PMD multinetwork coordinate, in hours, converted to a Rust duration.
+/// `time_elapsed` is validated and retained separately because it is a step
+/// interval, not the timestamp that orders the outer time series.
+fn pmd_time_point_duration(
+    key: &str,
+    lookup: Option<&Map<String, Value>>,
+    time: Option<&Value>,
+    diagnostics: &mut crate::collect::Diagnostics,
+) -> Option<std::time::Duration> {
+    let coordinate = lookup.and_then(|values| values.get(key)).or(time);
+    coordinate.and_then(|value| {
+        let duration = value
+            .as_f64()
+            .filter(|hours| hours.is_finite() && *hours >= 0.0)
+            .and_then(|hours| std::time::Duration::try_from_secs_f64(hours * 3600.0).ok());
+        if duration.is_none() {
+            diagnostics.push(
+                &C::READ_PMD_SOURCE_MALFORMED,
+                format!("multinetwork time step {key}: absolute mn_lookup/time coordinate {value} is not a finite nonnegative number of hours; the time point has no duration"),
+            );
+        }
+        duration
+    })
+}
+
 pub(crate) fn parse_pmd_multinetwork_collecting(
     text: &str,
     diags: &mut crate::collect::Diagnostics,
@@ -137,8 +162,8 @@ pub(crate) fn parse_pmd_multinetwork_collecting(
                 .insert("pmd_time_elapsed".into(), elapsed.clone());
             if elapsed
                 .as_f64()
-                .filter(|hours| hours.is_finite() && *hours >= 0.0)
-                .is_none()
+                .as_ref()
+                .is_none_or(|hours| !(hours.is_finite() && *hours >= 0.0))
             {
                 found.push(
                     &C::READ_PMD_SOURCE_MALFORMED,
@@ -146,22 +171,7 @@ pub(crate) fn parse_pmd_multinetwork_collecting(
                 );
             }
         }
-        let coordinate = lookup
-            .and_then(|values| values.get(key))
-            .or(time.as_ref());
-        let duration = coordinate.and_then(|value| {
-            let duration = value
-                .as_f64()
-                .filter(|hours| hours.is_finite() && *hours >= 0.0)
-                .and_then(|hours| std::time::Duration::try_from_secs_f64(hours * 3600.0).ok());
-            if duration.is_none() {
-                found.push(
-                    &C::READ_PMD_SOURCE_MALFORMED,
-                    format!("multinetwork time step {key}: absolute mn_lookup/time coordinate {value} is not a finite nonnegative number of hours; the time point has no duration"),
-                );
-            }
-            duration
-        });
+        let duration = pmd_time_point_duration(key, lookup, time.as_ref(), &mut found);
         for record in found.into_records() {
             if seen.insert((record.code().to_string(), record.message().to_string())) {
                 diags.absorb([record]);
