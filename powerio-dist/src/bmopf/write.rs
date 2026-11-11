@@ -672,6 +672,76 @@ impl Writer {
         RAW_BMOPF_EXTRAS_TABLES.contains(&u.class.as_str()) || u.class.starts_with("transformer.")
     }
 
+    /// BMOPF 0.2.0 profiles accept only values, time, and description.
+    /// PMD ENGINEERING load shapes also carry source_id, offset, and replace;
+    /// keep those source-specific fields under free-form extras while emitting
+    /// a schema-valid profile. The PMD reader's retained source object remains
+    /// untouched, so a PMD-to-PMD round trip still reproduces the original.
+    fn schema_time_series_profile(
+        &mut self,
+        name: &str,
+        value: Value,
+        extras: &mut Map<String, Value>,
+    ) -> Value {
+        let Value::Object(profile) = value else {
+            self.warn(
+                &C::EMIT_BMOPF_RECORD_DROPPED,
+                format!("time_series {name}: profile is not an object; dropped from BMOPF output"),
+            );
+            return Value::Object(Map::new());
+        };
+        let mut supported = Map::new();
+        let mut source_only = Map::new();
+        for (key, value) in profile {
+            if matches!(key.as_str(), "values" | "time" | "description") {
+                supported.insert(key, value);
+            } else {
+                source_only.insert(key, value);
+            }
+        }
+        if !source_only.is_empty() {
+            let metadata = extras
+                .entry("pmd_time_series_metadata".into())
+                .or_insert_with(|| Value::Object(Map::new()));
+            if let Some(profiles) = metadata.as_object_mut() {
+                let retained = profiles
+                    .entry(name.to_owned())
+                    .or_insert_with(|| Value::Object(Map::new()));
+                if let Some(fields) = retained.as_object_mut() {
+                    for (key, value) in source_only {
+                        fields.entry(key).or_insert(value);
+                    }
+                    self.diagnostic(
+                        &C::EMIT_BMOPF_RETAINED_SOURCE_ONLY,
+                        format!("time_series {name}"),
+                        format!(
+                            "time_series {name}: PMD-only profile metadata retained under \
+                             extras.pmd_time_series_metadata.{name}"
+                        ),
+                        Map::new(),
+                    );
+                } else {
+                    self.warn(
+                        &C::EMIT_BMOPF_FIELD_DROPPED,
+                        format!(
+                            "time_series {name}: PMD-only metadata could not be retained because \
+                             extras.pmd_time_series_metadata.{name} is not an object"
+                        ),
+                    );
+                }
+            } else {
+                self.warn(
+                    &C::EMIT_BMOPF_FIELD_DROPPED,
+                    format!(
+                        "time_series {name}: PMD-only metadata could not be retained because \
+                         extras.pmd_time_series_metadata is not an object"
+                    ),
+                );
+            }
+        }
+        Value::Object(supported)
+    }
+
     /// Untyped BMOPF ecosystem objects, one pass: the tables that lost
     /// their top-level slots in schema 0.1.0 re-emit under `extras`, while
     /// untyped transformer subtypes keep their place under `transformer`.
@@ -688,7 +758,7 @@ impl Writer {
                 continue;
             }
             let mut unplaced = Vec::new();
-            let Some(value) = raw_bmopf_value(u, &mut unplaced) else {
+            let Some(mut value) = raw_bmopf_value(u, &mut unplaced) else {
                 self.warn(
                     &C::EMIT_BMOPF_RECORD_DROPPED,
                     format!(
@@ -716,6 +786,9 @@ impl Writer {
             // object really went to, so a warning points at the part of the
             // document a reader must look at.
             let top_level = subtype.is_none() && self.raw_table_at_top_level(&u.class);
+            if u.class == "time_series" && top_level {
+                value = self.schema_time_series_profile(&u.name, value, extras);
+            }
             let slot_path = match subtype {
                 Some(sub) => format!("transformer.{sub}"),
                 None if top_level => u.class.clone(),
@@ -3118,7 +3191,7 @@ fn json_enum<T: serde::Serialize>(value: T) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{DistLoadVoltageModel, IbrPrimeMover, IbrTopology};
+    use crate::model::{DistLoadVoltageModel, IbrPrimeMover, IbrTopology, UntypedObject};
     use crate::testkit::parse_bmopf_str;
 
     /// A dropped field's diagnostic code must never claim the field was
@@ -3244,6 +3317,48 @@ mod tests {
         assert_eq!(
             v["load"]["exp"]["gamma_p"],
             serde_json::json!([1.2, 1.2, 1.2])
+        );
+    }
+
+    #[test]
+    fn pmd_time_series_metadata_is_retained_outside_the_strict_bmopf_profile() {
+        let mut net = MulticonductorNetwork::default();
+        net.untyped_objects_mut().push(UntypedObject::new(
+            "time_series",
+            "ls1",
+            vec![(
+                None,
+                json!({
+                    "values": [0.005, 0.01],
+                    "time": [0.0, 1.0],
+                    "source_id": "loadshape.ls1",
+                    "offset": 0.0,
+                    "replace": false
+                })
+                .to_string(),
+            )],
+        ));
+
+        let out = emit_bmopf_json_text(&net);
+        let document: Value = serde_json::from_str(&out.text).unwrap();
+        assert_eq!(
+            document["time_series"]["ls1"],
+            json!({"values": [0.005, 0.01], "time": [0.0, 1.0]})
+        );
+        assert_eq!(
+            document["extras"]["pmd_time_series_metadata"]["ls1"],
+            json!({
+                "source_id": "loadshape.ls1",
+                "offset": 0.0,
+                "replace": false
+            })
+        );
+        assert!(
+            out.render_diagnostics()
+                .iter()
+                .any(|message| message.contains("PMD-only profile metadata retained")),
+            "{:?}",
+            out.render_diagnostics()
         );
     }
 
