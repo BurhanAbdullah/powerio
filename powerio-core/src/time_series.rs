@@ -229,6 +229,45 @@ mod tests {
     }
 
     #[test]
+    fn complete_duration_axis_must_be_strictly_increasing() {
+        let point = |label: &str, seconds| {
+            TimePoint::new(label, Some(Duration::from_secs(seconds))).unwrap()
+        };
+
+        let ascending = TimeSeries::new(
+            vec![point("t0", 1), point("t1", 2), point("t2", 5)],
+            vec![10, 20, 50],
+        );
+        assert!(ascending.is_ok());
+
+        let duplicate = TimeSeries::new(
+            vec![point("t0", 1), point("t1", 1)],
+            vec![10, 20],
+        )
+        .unwrap_err();
+        assert_eq!(
+            duplicate.diagnostics()[0].code(),
+            "VALIDATE.TIME_SERIES.NON_MONOTONIC_AXIS"
+        );
+
+        let descending = TimeSeries::new(
+            vec![point("t0", 2), point("t1", 1)],
+            vec![20, 10],
+        );
+        assert!(descending.is_err());
+    }
+
+    #[test]
+    fn partially_observed_duration_axis_remains_label_driven() {
+        let points = vec![
+            TimePoint::new("morning", Some(Duration::from_secs(10))).unwrap(),
+            TimePoint::new("unknown", None).unwrap(),
+            TimePoint::new("evening", Some(Duration::from_secs(2))).unwrap(),
+        ];
+        assert!(TimeSeries::new(points, vec![1, 2, 3]).is_ok());
+    }
+
+    #[test]
     fn lookup_and_iteration_preserve_value_identity() {
         let points = vec![
             TimePoint::new("t0", Some(Duration::from_secs(1))).unwrap(),
