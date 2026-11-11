@@ -46,7 +46,7 @@ impl DatabaseSnapshot {
         let digest = records.source_sha256().to_owned();
         let excluded = records.excluded_tables().to_vec();
         let connection = records.into_connection()?;
-        configure_query_snapshot(&connection)?;
+        configure_query_snapshot(&mut connection)?;
         let mut snapshot = Self::from_connection(connection, requested_variant, &[11.5, 12.8])?;
         snapshot.excluded_tables = excluded;
         snapshot.source_digest = Some(digest);
@@ -285,7 +285,7 @@ fn connect(bytes: &[u8]) -> Result<Connection> {
     Ok(connection)
 }
 
-fn configure_query_snapshot(connection: &Connection) -> Result<()> {
+fn configure_query_snapshot(connection: &mut Connection) -> Result<()> {
     connection
         .set_limit(Limit::SQLITE_LIMIT_LENGTH, 1 << 20)
         .map_err(format_error)?;
