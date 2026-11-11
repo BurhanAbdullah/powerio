@@ -204,7 +204,10 @@ jobs:
             --allowlist "$GITHUB_WORKSPACE/python/stubtest_allowlist.txt"
 
   test:
-    runs-on: ubuntu-latest
+    # Python 3.9 is not published for the Ubuntu 26.04 image currently
+    # behind ubuntu-latest. Keep this compatibility matrix on the supported
+    # 24.04 image until the 3.9 setup-python manifest includes newer runners.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
