@@ -140,7 +140,6 @@ pub(super) fn table(
         .map_err(error)?;
     let cols = stmt
         .column_names()
-        .into_iter()
         .map(str::to_owned)
         .collect::<Vec<_>>();
     let mut rows = stmt.query([db.variant]).map_err(error)?;
