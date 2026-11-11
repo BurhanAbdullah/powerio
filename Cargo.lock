@@ -2617,6 +2617,7 @@ dependencies = [
  "powerio",
  "rusqlite",
  "serde_json",
+ "sqlite-wasm-rs",
  "wasm-bindgen",
 ]
 
