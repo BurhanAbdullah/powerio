@@ -41,7 +41,7 @@ fn relative_daily_profiles_preserve_unequal_wye_and_delta_branch_powers() {
         (14, powerio_dist::Configuration::Delta),
     ] {
         for model in [1, 2, 3] {
-            let db = relative_unequal(mode, model, "");
+            let mut db = relative_unequal(mode, model, "");
             let before = db.connection.serialize("main").unwrap().to_vec();
             assert!(db.network().is_err());
             for (hours, factor) in [
@@ -388,7 +388,7 @@ fn materialized_load_manipulators_never_multiply_static_inputs_twice() {
             }
         };
         let edit = "UPDATE Load SET Mpl_ID=7,fP=0.28,fQ=0.5;";
-        let db = make(edit);
+        let mut db = make(edit);
         let source_before = db.connection.serialize("main").unwrap().to_vec();
         let actual = db.network().unwrap();
         let expected = make("UPDATE Load SET fP=0.28,fQ=0.5;").network().unwrap();
