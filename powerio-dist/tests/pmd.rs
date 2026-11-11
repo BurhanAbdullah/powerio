@@ -1544,8 +1544,10 @@ fn pmd_multinetwork_reads_as_a_time_series() {
     );
     for (_, net) in series.iter() {
         assert_eq!(
-            net.extras().get("pmd_time_elapsed"),
-            Some(&serde_json::json!(1.0))
+            net.extras()
+                .get("pmd_time_elapsed")
+                .and_then(serde_json::Value::as_f64),
+            Some(1.0)
         );
     }
     for (point, net) in series.iter() {
