@@ -54,7 +54,7 @@ fn qsts_shaped_operating_points_share_one_network() {
         .map(|hour| {
             powerio_core::TimePoint::new(
                 format!("hour {hour}"),
-                Some(std::time::Duration::from_secs(3600)),
+                Some(std::time::Duration::from_secs(hour * 3600)),
             )
             .unwrap()
         })
@@ -89,6 +89,6 @@ fn qsts_shaped_operating_points_share_one_network() {
     );
     assert_eq!(
         operating_points.time_points()[23].duration(),
-        Some(std::time::Duration::from_secs(3600))
+        Some(std::time::Duration::from_secs(23 * 3600))
     );
 }
