@@ -564,7 +564,6 @@ fn assembly_does_not_mix_equal_identities_from_different_variants() {
         let statement = conn.prepare(&format!("SELECT * FROM {table}")).unwrap();
         let columns = statement
             .column_names()
-            
             .map(|name| {
                 if *name == "Variant_ID" {
                     "2".to_owned()
