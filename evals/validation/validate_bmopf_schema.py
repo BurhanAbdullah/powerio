@@ -46,6 +46,10 @@ def append_result(case: Path, mark: str) -> None:
             fh.write(f"{case.as_posix()}\tbmopf_schema\t{mark}\n")
 
 
+class NotApplicable(Exception):
+    """A valid typed value that the single-network BMOPF schema cannot express."""
+
+
 def schema_validator(schema_path: Path):
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     validator_cls = validators.validator_for(schema)
@@ -79,6 +83,31 @@ def declared_schema_version(doc: dict, schema_ids: dict[str, str]) -> str:
 
 def validate_case(validators_by_version, schema_ids: dict[str, str], case: Path) -> list[str]:
     module = powerio.parse(case)
+    if module.type_name == "powerio.TimeSeries<powerio.MulticonductorNetwork>":
+        # BMOPF describes one static network with optional multiplicative
+        # profiles; it cannot represent a sequence of complete network
+        # snapshots. Verify that the parser's typed series survives the
+        # loss-preserving PowerIO IR path instead of trying to flatten it.
+        series = module.value
+        serialized = powerio.serialize(module).text
+        if not serialized:
+            return ["TimeSeries serialization returned an empty PowerIO IR document"]
+        restored = powerio.deserialize(serialized)
+        if restored.type_name != module.type_name:
+            return [
+                "PowerIO IR round trip changed the typed value from "
+                f"{module.type_name} to {restored.type_name}"
+            ]
+        restored_series = restored.value
+        if len(restored_series) != len(series):
+            return ["PowerIO IR round trip changed the number of time steps"]
+        if restored_series.time_points != series.time_points:
+            return ["PowerIO IR round trip changed the absolute time axis"]
+        raise NotApplicable(
+            "typed TimeSeries snapshots are preserved by PowerIO IR; "
+            "BMOPF schema validation applies to one static network"
+        )
+
     out = powerio.emit(module, "bmopf-json")
     if not out.text.strip():
         return ["writer returned an empty document"]
@@ -128,6 +157,10 @@ def main() -> int:
     for case in CASES:
         try:
             case_failures = validate_case(validators_by_version, schema_ids, case)
+        except NotApplicable as reason:
+            append_result(case, "n/a")
+            print(f"{case}: n/a ({reason})")
+            continue
         except Exception as err:  # noqa: BLE001
             case_failures = [str(err)]
 
