@@ -158,6 +158,10 @@ jobs:
       with:
         components: clippy
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+    - name: Diagnose the exact Cargo.lock update for patched rusqlite
+      run: |
+        cargo update -p rusqlite --precise 0.41.1
+        git diff -- Cargo.lock
     - name: Build
       run: cargo build --verbose
     # Deny the workspace pedantic lints on the non-extension crates. The PyO3
