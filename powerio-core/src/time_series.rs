@@ -232,20 +232,14 @@ mod tests {
         );
         assert!(ascending.is_ok());
 
-        let duplicate = TimeSeries::new(
-            vec![point("t0", 1), point("t1", 1)],
-            vec![10, 20],
-        )
-        .unwrap_err();
+        let duplicate =
+            TimeSeries::new(vec![point("t0", 1), point("t1", 1)], vec![10, 20]).unwrap_err();
         assert_eq!(
             duplicate.diagnostics()[0].code(),
             "VALIDATE.TIME_SERIES.NON_MONOTONIC_AXIS"
         );
 
-        let descending = TimeSeries::new(
-            vec![point("t0", 2), point("t1", 1)],
-            vec![20, 10],
-        );
+        let descending = TimeSeries::new(vec![point("t0", 2), point("t1", 1)], vec![20, 10]);
         assert!(descending.is_err());
     }
 
