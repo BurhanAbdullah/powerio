@@ -363,7 +363,7 @@ fn operating_point_series_round_trips_typed() {
     let network = small_network();
     let time_points = vec![
         TimePoint::new("h0", Some(std::time::Duration::from_secs(3600))).unwrap(),
-        TimePoint::new("h1", Some(std::time::Duration::from_secs(3600))).unwrap(),
+        TimePoint::new("h1", Some(std::time::Duration::from_secs(7200))).unwrap(),
     ];
     let series = powerio_prob::BalancedOperatingPointBuilder::new(network, time_points)
         .load_active_powers(vec![40.0, 55.0])
