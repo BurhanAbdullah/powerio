@@ -513,7 +513,7 @@ fn balanced_network_time_series_round_trips() {
     let series = powerio_core::TimeSeries::new(
         vec![
             TimePoint::new("h0", Some(std::time::Duration::from_secs(3600))).unwrap(),
-            TimePoint::new("h1", Some(std::time::Duration::from_secs(3600))).unwrap(),
+            TimePoint::new("h1", Some(std::time::Duration::from_secs(7200))).unwrap(),
         ],
         vec![small_network(), second],
     )
