@@ -1,6 +1,6 @@
 //! Family-local ownership and error adaptation for shared schema validation.
 
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 use crate::formats::sincal::storage::DatabaseSnapshot;
 use rusqlite::Connection;
@@ -173,6 +173,12 @@ impl Deref for NativeDatabase {
 
     fn deref(&self) -> &Self::Target {
         &self.snapshot
+    }
+}
+
+impl DerefMut for NativeDatabase {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.snapshot
     }
 }
 
