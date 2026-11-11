@@ -82,8 +82,12 @@ def declared_schema_version(doc: dict, schema_ids: dict[str, str]) -> str:
 
 
 def validate_case(validators_by_version, schema_ids: dict[str, str], case: Path) -> list[str]:
-    module = powerio.parse(case)
-    if module.type_name == "powerio.TimeSeries<powerio.MulticonductorNetwork>":
+    # These fixtures are PMD ENGINEERING documents. State the reader explicitly:
+    # JSON content sniffing can otherwise route an ambiguous engineering document
+    # through a different JSON family and make the schema check exercise an echo
+    # path instead of the PMD-to-BMOPF conversion.
+    module = powerio.parse(case, format="pmd-json" if case in PMD_CASES else None)
+    if module.type_name.startswith("powerio.TimeSeries<"):
         # BMOPF describes one static network with optional multiplicative
         # profiles; it cannot represent a sequence of complete network
         # snapshots. Verify that the parser's typed series survives the
