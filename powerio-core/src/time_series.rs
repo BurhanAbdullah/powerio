@@ -72,6 +72,35 @@ impl<T> TimeSeries<T> {
                 ),
             ));
         }
+
+        // A complete duration axis represents elapsed-time coordinates.
+        // Require it to be strictly increasing so array order and elapsed
+        // time cannot silently disagree. Partial axes remain label-driven:
+        // their missing coordinates cannot be compared consistently.
+        let mut previous = None;
+        let mut all_have_durations = true;
+        for (index, point) in time_points.iter().enumerate() {
+            match point.duration() {
+                Some(duration) => {
+                    if let Some(previous) = previous
+                        && duration <= previous
+                    {
+                        return Err(Error::new(
+                            &crate::codes::VALIDATE_TIME_SERIES_NON_MONOTONIC_AXIS,
+                            format!(
+                                "time series duration at position {index} is not strictly greater than its predecessor"
+                            ),
+                        ));
+                    }
+                    previous = Some(duration);
+                }
+                None => all_have_durations = false,
+            }
+        }
+        if !all_have_durations {
+            // Preserve label-only and partially observed time axes.
+        }
+
         Ok(Self {
             time_points: Arc::new(time_points),
             values: Arc::new(values),
