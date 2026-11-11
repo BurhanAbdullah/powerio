@@ -79,9 +79,11 @@ impl<T> TimeSeries<T> {
         // their missing coordinates cannot be compared consistently.
         if time_points.iter().all(|point| point.duration().is_some()) {
             for (index, pair) in time_points.windows(2).enumerate() {
-                let previous = pair[0].duration().expect("complete axis");
-                let current = pair[1].duration().expect("complete axis");
-                if current <= previous {
+                let is_non_monotonic = pair[0]
+                    .duration()
+                    .zip(pair[1].duration())
+                    .is_some_and(|(previous, current)| current <= previous);
+                if is_non_monotonic {
                     return Err(Error::new(
                         &crate::codes::VALIDATE_TIME_SERIES_NON_MONOTONIC_AXIS,
                         format!(
