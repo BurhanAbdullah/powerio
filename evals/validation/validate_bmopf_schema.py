@@ -92,7 +92,7 @@ def validate_case(validators_by_version, schema_ids: dict[str, str], case: Path)
         serialized = powerio.serialize(module).text
         if not serialized:
             return ["TimeSeries serialization returned an empty PowerIO IR document"]
-        restored = powerio.deserialize(serialized)
+        restored = powerio.deserialize(serialized.encode("utf-8"))
         if restored.type_name != module.type_name:
             return [
                 "PowerIO IR round trip changed the typed value from "
