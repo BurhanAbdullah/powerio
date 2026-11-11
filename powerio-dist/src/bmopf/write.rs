@@ -701,7 +701,7 @@ impl Writer {
         }
         if !source_only.is_empty() {
             let metadata = extras
-                .entry("pmd_time_series_metadata".into())
+                .entry("pmd_time_series_metadata")
                 .or_insert_with(|| Value::Object(Map::new()));
             if let Some(profiles) = metadata.as_object_mut() {
                 let retained = profiles
