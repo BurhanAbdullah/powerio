@@ -77,6 +77,9 @@ rusqlite = { version = "0.41.1", default-features = false, features = ["bundled"
 # Keep the browser adapter on the JS-hosted 0.5 API. 0.6 removes the
 # wasm-bindgen host callbacks used by the browser conversion runtime.
 sqlite-wasm-rs = { version = "=0.5.5", default-features = false }
+# The resolver includes this adapter for the browser's wasm32-unknown-unknown target.
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+sqlite-wasm-rs.workspace = true
 # The workspace MSRV is 1.89; keep UUID on the current major.
 uuid = { version = "1", default-features = false, features = ["v5"] }
 schemars = { version = "1", features = ["derive"] }
