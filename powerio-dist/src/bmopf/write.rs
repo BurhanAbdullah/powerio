@@ -688,7 +688,7 @@ impl Writer {
                 continue;
             }
             let mut unplaced = Vec::new();
-            let Some(value) = raw_bmopf_value(u, &mut unplaced) else {
+            let Some(mut value) = raw_bmopf_value(u, &mut unplaced) else {
                 self.warn(
                     &C::EMIT_BMOPF_RECORD_DROPPED,
                     format!(
@@ -710,6 +710,32 @@ impl Writer {
                     ),
                     Map::new(),
                 );
+            }
+            // BMOPF 0.2.0 time-series profiles have a deliberately
+            // closed shape (values, optional time and description). Preserve
+            // producer metadata that is not part of that schema separately,
+            // rather than making an otherwise valid profile fail validation.
+            // The full source object remains in the IR's untyped record.
+            let mut profile_extras = None;
+            if u.class == "time_series"
+                && self.options.schema_version == BmopfSchemaVersion::Bmopf020
+                && let Value::Object(profile) = &mut value
+            {
+                let allowed = ["values", "time", "description"];
+                let extra = profile
+                    .keys()
+                    .filter(|key| !allowed.contains(&key.as_str()))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if !extra.is_empty() {
+                    let mut retained = Map::new();
+                    for key in extra {
+                        if let Some(value) = profile.remove(&key) {
+                            retained.insert(key, value);
+                        }
+                    }
+                    profile_extras = Some(Value::Object(retained));
+                }
             }
             // An untyped transformer subtype lands in the top-level
             // `transformer` table, not under `extras`. Name the slot the
@@ -758,6 +784,14 @@ impl Writer {
                         u.class, u.name
                     ),
                 );
+            }
+            if let Some(profile_extras) = profile_extras {
+                extras
+                    .entry("time_series".into())
+                    .or_insert_with(|| Value::Object(Map::new()))
+                    .as_object_mut()
+                    .expect("the writer creates the time_series extras table")
+                    .insert(u.name.clone(), profile_extras);
             }
         }
     }
