@@ -18,7 +18,10 @@ fn report_uses_production_mapping_and_keeps_input_bytes_unchanged() {
         [30, 31, 32, 33]
     );
     assert!(report.components.iter().all(|c| c.first_error.is_none()));
-    assert_eq!(db.connection_mut().serialize("main").unwrap().to_vec(), before);
+    assert_eq!(
+        db.connection_mut().serialize("main").unwrap().to_vec(),
+        before
+    );
 }
 
 #[test]
@@ -167,7 +170,10 @@ fn known_machine_ports_allow_audit_but_never_a_partial_network() {
                 .contains("SynchronousMachine")
         );
         assert!(db.network().is_err());
-        assert_eq!(db.connection_mut().serialize("main").unwrap().to_vec(), before);
+        assert_eq!(
+            db.connection_mut().serialize("main").unwrap().to_vec(),
+            before
+        );
     }
 }
 

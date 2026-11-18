@@ -39,7 +39,10 @@ fn steady_state_connection_is_an_exact_switch_not_a_small_impedance_line() {
     assert_eq!(switch.bus_to, "20");
     assert_eq!(switch.terminal_map_from, ["1", "2", "3"]);
     assert!(!switch.open);
-    assert_eq!(db.connection_mut().serialize("main").unwrap().to_vec(), before);
+    assert_eq!(
+        db.connection_mut().serialize("main").unwrap().to_vec(),
+        before
+    );
     let report = db.mapping_report().unwrap();
     assert!(report.all_components_map());
     let evidence = report.components[0].zero_sequence.as_ref().unwrap();

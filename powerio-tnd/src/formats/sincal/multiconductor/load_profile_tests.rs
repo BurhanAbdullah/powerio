@@ -78,7 +78,10 @@ fn relative_daily_profiles_preserve_unequal_wye_and_delta_branch_powers() {
                         )
                 ));
             }
-            assert_eq!(db.connection_mut().serialize("main").unwrap().to_vec(), before);
+            assert_eq!(
+                db.connection_mut().serialize("main").unwrap().to_vec(),
+                before
+            );
         }
     }
 }
