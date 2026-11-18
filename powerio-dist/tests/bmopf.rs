@@ -3780,6 +3780,34 @@ fn a_document_naming_no_schema_version_is_reported() {
     }
 }
 
+#[test]
+fn time_series_source_metadata_is_preserved_outside_the_strict_profile_schema() {
+    let text = doc_with(
+        r#", "time_series": {"profile": {
+            "values": [0.5, 1.0],
+            "time": [0.0, 60.0],
+            "source_id": "loadshape.profile",
+            "offset": 15.0,
+            "replace": false
+        }}"#,
+    );
+    let net = parse_bmopf_str(&text).unwrap();
+    let out = emit_bmopf_json(&net);
+    let doc: serde_json::Value = serde_json::from_str(&out.text).unwrap();
+
+    assert_eq!(
+        errors(&schema_validator(), &out.text),
+        Vec::<String>::new(),
+        "{}",
+        out.text
+    );
+    assert_eq!(doc["time_series"]["profile"]["values"], serde_json::json!([0.5, 1.0]));
+    assert_eq!(doc["time_series"]["profile"]["time"], serde_json::json!([0.0, 60.0]));
+    assert_eq!(doc["extras"]["time_series"]["profile"]["source_id"], "loadshape.profile");
+    assert_eq!(doc["extras"]["time_series"]["profile"]["offset"], 15.0);
+    assert_eq!(doc["extras"]["time_series"]["profile"]["replace"], false);
+}
+
 /// Schema 0.2.0 declares the IBR, control profile, DC and time series tables
 /// at the top level, so writing it relocates nothing; schema 0.1.0 has no
 /// table for them and files each under `extras`.
