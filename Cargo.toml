@@ -74,6 +74,9 @@ zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2
 # Shared SINCAL snapshot queries expose rusqlite row/connection types to the
 # family adapters; keep both their version and safety features consistent.
 rusqlite = { version = "0.41.1", default-features = false, features = ["bundled", "serialize", "hooks", "limits", "ffi-sqlite-wasm-rs"] }
+# Keep the browser adapter on the JS-hosted 0.5 API. 0.6 removes the
+# wasm-bindgen host callbacks used by the browser conversion runtime.
+sqlite-wasm-rs = { version = "=0.5.5", default-features = false }
 # The workspace MSRV is 1.89; keep UUID on the current major.
 uuid = { version = "1", default-features = false, features = ["v5"] }
 schemars = { version = "1", features = ["derive"] }
