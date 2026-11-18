@@ -23,3 +23,9 @@ rusqlite.workspace = true
 
 [lints]
 workspace = true
+
+# Keep rusqlite's browser backend on the JS-hosted adapter required by
+# the wasm-bindgen conversion runtime. sqlite-wasm-rs 0.6 no longer exports
+# the host callbacks used by this component.
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+sqlite-wasm-rs = { version = "=0.5.5", default-features = false }
