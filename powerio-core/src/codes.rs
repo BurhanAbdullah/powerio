@@ -67,7 +67,7 @@ crate::diagnostic_codes! {
     VALIDATE_TIME_POINT_INVALID_DURATION = "VALIDATE.TIME_POINT.INVALID_DURATION", Error,
         "a time point duration has an invalid nanosecond remainder", category = Data;
     VALIDATE_TIME_SERIES_SHAPE = "VALIDATE.TIME_SERIES.SHAPE", Error,
-        "time point and value counts differ", category = Data;
+        "time-series values and time points differ, or a complete duration axis descends", category = Data;
 
     VALIDATE_SCENARIO_INVALID_ID = "VALIDATE.SCENARIO.INVALID_ID", Error,
         "a scenario identity is empty, contains NUL, or exceeds its bound", category = Data;

@@ -72,6 +72,24 @@ impl<T> TimeSeries<T> {
                 ),
             ));
         }
+        // A complete elapsed-time axis must be non-decreasing. Equal
+        // durations are valid for simultaneous snapshots and multi-network
+        // representations; descending durations are not.
+        if time_points.iter().all(|point| point.duration.is_some()) {
+            for pair in time_points.windows(2) {
+                if let (Some(previous), Some(current)) = (pair[0].duration, pair[1].duration)
+                    && current < previous
+                {
+                    return Err(Error::new(
+                        &crate::codes::VALIDATE_TIME_SERIES_SHAPE,
+                        format!(
+                            "time series duration axis descends: {} ({previous:?}) followed by {} ({current:?})",
+                            pair[0].label, pair[1].label
+                        ),
+                    ));
+                }
+            }
+        }
         Ok(Self {
             time_points: Arc::new(time_points),
             values: Arc::new(values),
@@ -259,5 +277,39 @@ mod tests {
         assert_eq!(mapped.get(0), Some(&3));
         assert_eq!(mapped.entry(0).unwrap().0.label(), "t0");
         assert_eq!(CLONES.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn complete_duration_axis_is_non_decreasing() {
+        let make_point =
+            |label, seconds| TimePoint::new(label, Some(Duration::from_secs(seconds))).unwrap();
+        assert!(
+            TimeSeries::new(
+                vec![
+                    make_point("t0", 1),
+                    make_point("t1", 1),
+                    make_point("t2", 2)
+                ],
+                vec![0, 1, 2],
+            )
+            .is_ok()
+        );
+
+        let error = TimeSeries::new(vec![make_point("t0", 2), make_point("t1", 1)], vec![0, 1])
+            .unwrap_err();
+        assert_eq!(
+            error.diagnostics()[0].code(),
+            crate::codes::VALIDATE_TIME_SERIES_SHAPE.code,
+        );
+    }
+
+    #[test]
+    fn partially_specified_duration_axis_remains_label_driven() {
+        let points = vec![
+            TimePoint::new("t1", Some(Duration::from_secs(2))).unwrap(),
+            TimePoint::new("t0", None).unwrap(),
+            TimePoint::new("t2", Some(Duration::from_secs(1))).unwrap(),
+        ];
+        assert!(TimeSeries::new(points, vec![0, 1, 2]).is_ok());
     }
 }

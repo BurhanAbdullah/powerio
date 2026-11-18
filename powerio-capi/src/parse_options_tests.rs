@@ -43,7 +43,6 @@ fn records() -> Vec<u8> {
             let mut statement = db.prepare(&format!("SELECT * FROM {name}")).unwrap();
             let columns: Vec<_> = statement
                 .column_names()
-                .iter()
                 .map(|name| serde_json::json!({"name": name, "native_type": "synthetic"}))
                 .collect();
             let rows: Vec<Vec<serde_json::Value>> = statement

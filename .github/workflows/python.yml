@@ -204,7 +204,8 @@ jobs:
             --allowlist "$GITHUB_WORKSPACE/python/stubtest_allowlist.txt"
 
   test:
-    runs-on: ubuntu-latest
+    # Python 3.9 is not published for Ubuntu 26.04; keep that leg on 24.04.
+    runs-on: ${{ matrix.python == '3.9' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -265,7 +266,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-latest]
+        os: [macos-15, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
