@@ -80,9 +80,6 @@ sqlite-wasm-rs = { version = "=0.5.5", default-features = false }
 # The workspace MSRV is 1.89; keep UUID on the current major.
 uuid = { version = "1", default-features = false, features = ["v5"] }
 
-# Constrain rusqlite's transitive wasm dependency to the JS-hosted adapter.
-[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
-sqlite-wasm-rs = { workspace = true }
 schemars = { version = "1", features = ["derive"] }
 
 [workspace.lints.clippy]
