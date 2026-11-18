@@ -25,7 +25,7 @@ pub(super) fn network_database(edit: &str) -> Vec<u8> {
     let transformer = transformer_mapping_tests::native("");
     let path = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(path.path(), line_database("")).unwrap();
-    let conn = Connection::open(path.path()).unwrap();
+    let mut conn = Connection::open(path.path()).unwrap();
     for (db, name) in [
         (&source, "Infeeder"),
         (&load, "Load"),
@@ -564,7 +564,6 @@ fn assembly_does_not_mix_equal_identities_from_different_variants() {
         let statement = conn.prepare(&format!("SELECT * FROM {table}")).unwrap();
         let columns = statement
             .column_names()
-            .iter()
             .map(|name| {
                 if *name == "Variant_ID" {
                     "2".to_owned()

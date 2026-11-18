@@ -3,8 +3,8 @@ use powerio_core::Source;
 
 #[test]
 fn report_uses_production_mapping_and_keeps_input_bytes_unchanged() {
-    let db = native("");
-    let before = db.connection.serialize("main").unwrap().to_vec();
+    let mut db = native("");
+    let before = db.connection_mut().serialize("main").unwrap().to_vec();
     let report = db.mapping_report().unwrap();
     assert!(report.all_components_map());
     assert!(db.network().is_ok());
@@ -18,7 +18,7 @@ fn report_uses_production_mapping_and_keeps_input_bytes_unchanged() {
         [30, 31, 32, 33]
     );
     assert!(report.components.iter().all(|c| c.first_error.is_none()));
-    assert_eq!(db.connection.serialize("main").unwrap().to_vec(), before);
+    assert_eq!(db.connection_mut().serialize("main").unwrap().to_vec(), before);
 }
 
 #[test]
@@ -139,13 +139,13 @@ fn known_machine_ports_allow_audit_but_never_a_partial_network() {
     ] {
         // Move the source port to its own native node so no other equipment
         // can accidentally supply the machine's phase declaration.
-        let db = native(&format!(
+        let mut db = native(&format!(
             "INSERT INTO Node SELECT * FROM Node WHERE Node_ID=10;
              UPDATE Node SET Node_ID=90 WHERE rowid=(SELECT MAX(rowid) FROM Node);
              UPDATE Element SET Type='SynchronousMachine' WHERE Element_ID=32;
              UPDATE Terminal SET Node_ID=90, Flag_Terminal={selector} WHERE Element_ID=32;"
         ));
-        let before = db.connection.serialize("main").unwrap().to_vec();
+        let before = db.connection_mut().serialize("main").unwrap().to_vec();
         let topology = db.topology_draft().unwrap();
         let buses = topology.buses();
         let machine_bus = buses.iter().find(|bus| bus.id == "90").unwrap();
@@ -167,7 +167,7 @@ fn known_machine_ports_allow_audit_but_never_a_partial_network() {
                 .contains("SynchronousMachine")
         );
         assert!(db.network().is_err());
-        assert_eq!(db.connection.serialize("main").unwrap().to_vec(), before);
+        assert_eq!(db.connection_mut().serialize("main").unwrap().to_vec(), before);
     }
 }
 

@@ -22,6 +22,11 @@ pub(super) struct NativeDatabase {
 }
 
 impl NativeDatabase {
+    /// Mutable access to the query-only connection for APIs that require `&mut` (for example, snapshot serialization).
+    pub fn connection_mut(&mut self) -> &mut Connection {
+        &mut self.snapshot.connection
+    }
+
     pub fn from_snapshot(snapshot: DatabaseSnapshot) -> Result<Self> {
         // Structural admission of modern balanced schemas does not authorize
         // their conductor semantics here. Keep family support independent.
