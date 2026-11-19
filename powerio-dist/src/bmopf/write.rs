@@ -787,7 +787,7 @@ impl Writer {
             }
             if let Some(profile_extras) = profile_extras {
                 extras
-                    .entry("time_series".into())
+                    .entry("time_series")
                     .or_insert_with(|| Value::Object(Map::new()))
                     .as_object_mut()
                     .expect("the writer creates the time_series extras table")

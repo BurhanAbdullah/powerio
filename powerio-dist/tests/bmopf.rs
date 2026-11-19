@@ -3801,9 +3801,18 @@ fn time_series_source_metadata_is_preserved_outside_the_strict_profile_schema() 
         "{}",
         out.text
     );
-    assert_eq!(doc["time_series"]["profile"]["values"], serde_json::json!([0.5, 1.0]));
-    assert_eq!(doc["time_series"]["profile"]["time"], serde_json::json!([0.0, 60.0]));
-    assert_eq!(doc["extras"]["time_series"]["profile"]["source_id"], "loadshape.profile");
+    assert_eq!(
+        doc["time_series"]["profile"]["values"],
+        serde_json::json!([0.5, 1.0])
+    );
+    assert_eq!(
+        doc["time_series"]["profile"]["time"],
+        serde_json::json!([0.0, 60.0])
+    );
+    assert_eq!(
+        doc["extras"]["time_series"]["profile"]["source_id"],
+        "loadshape.profile"
+    );
     assert_eq!(doc["extras"]["time_series"]["profile"]["offset"], 15.0);
     assert_eq!(doc["extras"]["time_series"]["profile"]["replace"], false);
 }
