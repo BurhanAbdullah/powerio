@@ -672,6 +672,35 @@ impl Writer {
         RAW_BMOPF_EXTRAS_TABLES.contains(&u.class.as_str()) || u.class.starts_with("transformer.")
     }
 
+    fn bmopf_profile_extras(
+        &self,
+        u: &crate::model::UntypedObject,
+        value: &mut Value,
+    ) -> Option<Value> {
+        if u.class != "time_series" || self.options.schema_version != BmopfSchemaVersion::Bmopf020 {
+            return None;
+        }
+        let Value::Object(profile) = value else {
+            return None;
+        };
+        let allowed = ["values", "time", "description"];
+        let extra = profile
+            .keys()
+            .filter(|key| !allowed.contains(&key.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if extra.is_empty() {
+            return None;
+        }
+        let mut retained = Map::new();
+        for key in extra {
+            if let Some(value) = profile.remove(&key) {
+                retained.insert(key, value);
+            }
+        }
+        Some(Value::Object(retained))
+    }
+
     /// Untyped BMOPF ecosystem objects, one pass: the tables that lost
     /// their top-level slots in schema 0.1.0 re-emit under `extras`, while
     /// untyped transformer subtypes keep their place under `transformer`.
@@ -716,27 +745,7 @@ impl Writer {
             // producer metadata that is not part of that schema separately,
             // rather than making an otherwise valid profile fail validation.
             // The full source object remains in the IR's untyped record.
-            let mut profile_extras = None;
-            if u.class == "time_series"
-                && self.options.schema_version == BmopfSchemaVersion::Bmopf020
-                && let Value::Object(profile) = &mut value
-            {
-                let allowed = ["values", "time", "description"];
-                let extra = profile
-                    .keys()
-                    .filter(|key| !allowed.contains(&key.as_str()))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                if !extra.is_empty() {
-                    let mut retained = Map::new();
-                    for key in extra {
-                        if let Some(value) = profile.remove(&key) {
-                            retained.insert(key, value);
-                        }
-                    }
-                    profile_extras = Some(Value::Object(retained));
-                }
-            }
+            let profile_extras = self.bmopf_profile_extras(u, &mut value);
             // An untyped transformer subtype lands in the top-level
             // `transformer` table, not under `extras`. Name the slot the
             // object really went to, so a warning points at the part of the
