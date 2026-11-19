@@ -617,7 +617,7 @@ mod tests {
                 {"name": "Variant_ID", "native_type": "INTEGER"},
                 {"name": "r", "native_type": "REAL"}], "rows": rows
         }]);
-        let connection = TableRecords::decode(&serde_json::to_vec(&d).unwrap())
+        let mut connection = TableRecords::decode(&serde_json::to_vec(&d).unwrap())
             .unwrap()
             .into_connection()
             .unwrap();

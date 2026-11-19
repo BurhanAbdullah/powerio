@@ -5553,7 +5553,7 @@ mod tests {
 
     #[test]
     fn sincal_multiconductor_reaches_the_existing_python_module_type() {
-        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
         connection
             .execute_batch(include_str!(
                 "../../tests/data/sincal/synthetic-multiconductor.sql"

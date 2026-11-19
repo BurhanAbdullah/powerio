@@ -41,8 +41,8 @@ fn relative_daily_profiles_preserve_unequal_wye_and_delta_branch_powers() {
         (14, powerio_dist::Configuration::Delta),
     ] {
         for model in [1, 2, 3] {
-            let db = relative_unequal(mode, model, "");
-            let before = db.connection.serialize("main").unwrap().to_vec();
+            let mut db = relative_unequal(mode, model, "");
+            let before = db.connection_mut().serialize("main").unwrap().to_vec();
             assert!(db.network().is_err());
             for (hours, factor) in [
                 (0.0, 0.0),
@@ -78,7 +78,10 @@ fn relative_daily_profiles_preserve_unequal_wye_and_delta_branch_powers() {
                         )
                 ));
             }
-            assert_eq!(db.connection.serialize("main").unwrap().to_vec(), before);
+            assert_eq!(
+                db.connection_mut().serialize("main").unwrap().to_vec(),
+                before
+            );
         }
     }
 }
@@ -388,8 +391,8 @@ fn materialized_load_manipulators_never_multiply_static_inputs_twice() {
             }
         };
         let edit = "UPDATE Load SET Mpl_ID=7,fP=0.28,fQ=0.5;";
-        let db = make(edit);
-        let source_before = db.connection.serialize("main").unwrap().to_vec();
+        let mut db = make(edit);
+        let source_before = db.connection_mut().serialize("main").unwrap().to_vec();
         let actual = db.network().unwrap();
         let expected = make("UPDATE Load SET fP=0.28,fQ=0.5;").network().unwrap();
         assert_eq!(actual.loads()[0].p_nom, expected.loads()[0].p_nom);
@@ -399,7 +402,7 @@ fn materialized_load_manipulators_never_multiply_static_inputs_twice() {
             serde_json::json!({"id":7,"semantics":"materialized_input"})
         );
         assert_eq!(
-            db.connection.serialize("main").unwrap().to_vec(),
+            db.connection_mut().serialize("main").unwrap().to_vec(),
             source_before
         );
         // A saved UI definition is not applied again, even if a user later
