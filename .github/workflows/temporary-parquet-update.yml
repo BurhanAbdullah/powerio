@@ -1,0 +1,32 @@
+name: Temporary Parquet advisory lock update
+
+on:
+  push:
+    branches: [fix/parquet-60-2-0-advisory]
+
+permissions:
+  contents: write
+
+jobs:
+  update-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: fix/parquet-60-2-0-advisory
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - name: Update patched Parquet
+        run: cargo update -p parquet --precise 60.2.0
+      - name: Validate dependency resolution
+        run: cargo tree -i parquet
+      - name: Commit regenerated lockfile
+        run: |
+          if git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock already resolves to the requested version"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "fix(deps): update parquet to patched 60.2.0"
+          git push origin HEAD
